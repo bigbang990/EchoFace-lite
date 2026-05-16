@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+.env
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Data & runtime (keep structure, ignore contents)
+data/uploads/*
+!data/uploads/.gitkeep
+data/snapshots/*
+!data/snapshots/.gitkeep
+data/videos/*
+!data/videos/.gitkeep
+*.db
+*.sqlite3
+logs/*.log
+
+# Models cache (InsightFace downloads)
+models/
+.insightface/
+
+# OS
+.DS_Store
+Thumbs.db

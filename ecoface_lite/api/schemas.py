@@ -1,0 +1,87 @@
+"""Pydantic schemas — API boundary types decoupled from ORM models."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class PersonCreate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=255)
+    notes: str | None = Field(default=None, max_length=4000)
+
+
+class PersonOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    display_name: str
+    notes: str | None
+    source_image_path: str | None
+    source_image_hash: str | None = None
+    created_at: datetime
+
+
+class PersonEnrollOut(BaseModel):
+    """POST /persons — existing row returned with 200 when upload bytes match a prior enrollment."""
+
+    person: PersonOut
+    deduplicated: bool = False
+
+
+class DetectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    person_id: int | None
+    person_name: str | None = None
+    confidence: float
+    threshold_used: float
+    source_type: str
+    source_label: str | None
+    frame_index: int | None
+    snapshot_path: str | None
+    created_at: datetime
+
+
+class VideoProcessRequest(BaseModel):
+    """Path relative to configured `VIDEOS_DIR` or absolute path on server."""
+
+    video_relative_path: str = Field(min_length=1, max_length=1024)
+
+
+class ProcessingStatusOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    job_id: str
+    video_label: str | None
+    total_frames: int
+    processed_frames: int
+    alerts_created: int = 0
+    avg_fps: float | None = None
+    avg_confidence: float | None = None
+    total_faces_detected: int = 0
+    total_faces_rejected: int = 0
+    blur_rejections: int = 0
+    duplicate_suppressions: int = 0
+    processing_duration_seconds: float | None = None
+    status: str
+    error_message: str | None
+    created_at: datetime
+
+
+class AsyncVideoJobResponse(BaseModel):
+    job_id: str
+    status: str = "queued"
+    status_url: str
+
+
+class LiveTestMatchResponse(BaseModel):
+    matched: bool
+    person_id: int | None = None
+    person_name: str | None = None
+    similarity_score: float | None = None
+    threshold: float
+    detail: str
+    snapshot_path: str | None = None

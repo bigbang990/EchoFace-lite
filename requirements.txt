@@ -1,0 +1,31 @@
+# EcoFace Lite — Python 3.10.11
+# Pin versions lightly for reproducibility; relax pins as needed for your OS.
+
+fastapi>=0.109.0,<1.0.0
+uvicorn[standard]>=0.27.0,<1.0.0
+pydantic>=2.5.0,<3.0.0
+pydantic-settings>=2.1.0,<3.0.0
+
+# Database (async SQLite now; swap driver URL for PostgreSQL)
+sqlalchemy[asyncio]>=2.0.25,<2.1.0
+aiosqlite>=0.19.0,<0.21.0
+# Future: asyncpg>=0.29.0
+
+# AI / CV
+numpy>=1.24.0,<2.1.0
+opencv-python-headless>=4.8.0,<4.11.0
+onnxruntime>=1.16.0,<1.20.0
+insightface>=0.7.3,<0.8.0
+
+# HTTP / uploads
+python-multipart>=0.0.6,<0.1.0
+httpx>=0.26.0,<0.28.0
+requests>=2.31.0,<3.0.0
+
+# Dashboard
+streamlit>=1.30.0,<1.41.0
+Pillow>=10.0.0,<11.0.0
+
+# Dev / quality (optional; remove if you prefer minimal install)
+pytest>=8.0.0,<9.0.0
+ruff>=0.2.0,<0.8.0
