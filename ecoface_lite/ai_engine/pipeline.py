@@ -9,11 +9,11 @@ import numpy as np
 from ecoface_lite.ai_engine.confidence import ConfidencePolicy
 from ecoface_lite.ai_engine.detection_optimizer import DetectionOptimizer
 from ecoface_lite.ai_engine.diagnostics import diagnostics
-from ecoface_lite.ai_engine.detector import FaceDetector
+from ecoface_lite.ai_engine.detector import BoundingBox, FaceDetector
 from ecoface_lite.ai_engine.embedder import FaceEmbedder
 from ecoface_lite.ai_engine.event_validator import EventValidator
 from ecoface_lite.ai_engine.face_quality import FaceQualityAssessor
-from ecoface_lite.ai_engine.geometry import compute_face_geometry, scale_face_to_original
+from ecoface_lite.ai_engine.geometry import bbox_iou, compute_face_geometry, scale_face_to_original
 from ecoface_lite.ai_engine.matcher import FaceMatcher, MatchResult
 from ecoface_lite.ai_engine.pipeline_types import FaceDebugTrace, FrameMatch
 from ecoface_lite.ai_engine.preprocessing import FramePreprocessor
@@ -48,6 +48,7 @@ class RecognitionPipeline:
         self._recognition_session = recognition_session or RecognitionSession(settings)
         self._event_validator = event_validator or EventValidator(settings)
         self._detection_optimizer = DetectionOptimizer(settings)
+        self._embedding_cache: dict[int, tuple[np.ndarray, tuple[float, float, float, float], int]] = {}
 
     def enroll_reference_embedding(self, frame_bgr: np.ndarray) -> np.ndarray:
         """Pick the highest-confidence face and return its embedding (for gallery enrollment)."""
@@ -71,6 +72,20 @@ class RecognitionPipeline:
         metrics.increment("total_frames_processed")
         with metrics.timer("total_frame_processing_duration"):
             return self._process_frame_observed(frame_bgr, frame_index, gallery)
+
+    def _cached_embedding(self, track_id: int | None, face) -> np.ndarray | None:
+        if track_id is None:
+            return None
+        cached = self._embedding_cache.get(track_id)
+        if cached is None:
+            return None
+        emb, bbox, _frame_index = cached
+        previous = BoundingBox(*bbox)
+        overlap = bbox_iou(face.bbox, previous)
+        if overlap < 0.45:
+            metrics.increment("embedding_cache_invalidations")
+            return None
+        return emb
 
     def _process_frame_observed(
         self,
@@ -186,9 +201,14 @@ class RecognitionPipeline:
                 continue
             metrics.increment("accepted_faces")
             threshold = self._confidence_policy.threshold_for(prepared.diagnostics, quality)
-            with metrics.timer("embedding_generation_duration"):
-                emb = self._embedder.embed_face(prepared.bgr, face)
-            metrics.increment("embeddings_generated")
+            candidate_track_id = self._recognition_session.candidate_track_id(face, frame_index)
+            emb = self._cached_embedding(candidate_track_id, face)
+            if emb is None:
+                with metrics.timer("embedding_generation_duration"):
+                    emb = self._embedder.embed_face(prepared.bgr, face)
+                metrics.increment("embeddings_generated")
+            else:
+                metrics.increment("embedding_cache_hits")
             with metrics.timer("matching_duration"):
                 m = self._matcher.best_match(emb, gallery, threshold)
             if m is None:
@@ -277,6 +297,11 @@ class RecognitionPipeline:
                 )
                 continue
             recognition = self._recognition_session.observe(face, frame_index, m.person_id, m.confidence)
+            self._embedding_cache[recognition.track_id] = (
+                emb,
+                (face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2),
+                frame_index,
+            )
             with metrics.timer("event_validation_duration"):
                 event = self._event_validator.evaluate(recognition, frame_index)
             if event.should_emit:
