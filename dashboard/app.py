@@ -15,7 +15,7 @@ import cv2
 import requests
 import streamlit as st
 
-API_BASE = os.environ.get("ECOFACE_API_BASE", "http://127.0.0.1:8000/api/v1")
+API_BASE = os.environ.get("AI_API_URL")
 
 
 def _project_root() -> Path:
@@ -380,12 +380,29 @@ with observability_tab:
                     size_cols = st.columns(2)
                     size_cols[0].line_chart(metrics_data.get("recent_values", {}).get("avg_detected_face_area", []))
                     size_cols[1].line_chart(metrics_data.get("recent_values", {}).get("avg_rejected_face_area", []))
+                    st.subheader("Tracking Health")
+                    th1, th2, th3, th4 = st.columns(4)
+                    th1.metric("Active tracks", f"{averages.get('active_tracks', 0):.0f}")
+                    th2.metric("Recovered tracks", counters.get("recovered_tracks", 0))
+                    th3.metric("Tracker reuse rate", f"{averages.get('tracker_reuse_rate', 0):.1%}")
+                    th4.metric("Stale replacements", counters.get("stale_track_replacements", 0))
+                    st.subheader("Recognition Stability")
+                    rs1, rs2, rs3 = st.columns(3)
+                    rs1.metric("Identity switches", counters.get("identity_switches", 0))
+                    rs2.metric("Stable matches", counters.get("stable_matches", 0))
+                    rs3.metric("Embedding reuse", f"{averages.get('embedding_reuse_rate', 0):.1%}")
+                    st.subheader("Performance")
+                    pf1, pf2, pf3 = st.columns(3)
+                    pf1.metric("Detection cycles", counters.get("detection_cycles", 0))
+                    pf2.metric("Tracking cycles", counters.get("tracking_cycles", 0))
+                    pf3.metric("Embedding cache hits", counters.get("embedding_cache_hits", 0))
                     st.write("Tracking and visibility")
                     st.json(
                         {
                             "tracker_refresh_count": counters.get("tracker_refresh_count", 0),
                             "stale_track_replacements": counters.get("stale_track_replacements", 0),
                             "face_visibility_ratio": averages.get("face_visibility_ratio", 0),
+                            "avg_track_lifetime": averages.get("avg_track_lifetime", 0),
                             "overlay_debug_frame_count": counters.get("overlay_debug_frame_count", 0),
                             "rejected_face_snapshots_saved": counters.get("rejected_face_snapshots_saved", 0),
                         }

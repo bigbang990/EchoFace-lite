@@ -38,7 +38,7 @@ class InsightFaceEmbedder(FaceEmbedder):
 
         logger.info("Loading InsightFace (embed) model=%s", self._model_name)
         self._app = FaceAnalysis(name=self._model_name, providers=["CPUExecutionProvider"])
-        self._app.prepare(ctx_id=self._ctx_id, det_size=(640, 640))
+        self._app.prepare(ctx_id=self._ctx_id, det_size=(320, 320))
 
     def embed_face(self, frame_bgr: np.ndarray, face: DetectedFace) -> np.ndarray:
         if face.embedding is not None:

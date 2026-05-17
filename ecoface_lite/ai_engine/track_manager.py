@@ -1,15 +1,20 @@
+"""Backward-compatible shim — prefer `ecoface_lite.ai_engine.tracking`."""
+
 from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
 
 from ecoface_lite.ai_engine.detector import DetectedFace
-from ecoface_lite.ai_engine.geometry import bbox_iou
-from ecoface_lite.core.config import Settings
+from ecoface_lite.ai_engine.tracking.track_manager import FaceTrackManager
+
+__all__ = ["TrackManager", "TrackState", "FaceTrackManager"]
 
 
 @dataclass
 class TrackState:
+    """Legacy track state used by older imports; maps to TrackedFace fields."""
+
     track_id: int
     centroid: tuple[float, float]
     bbox: tuple[float, float, float, float]
@@ -65,54 +70,51 @@ class TrackState:
 
 
 class TrackManager:
-    def __init__(self, settings: Settings) -> None:
+    """Legacy wrapper delegating to FaceTrackManager for incremental migration."""
+
+    def __init__(self, settings) -> None:
         self._settings = settings
-        self._tracks: dict[int, TrackState] = {}
-        self._next_id = 1
+        self._inner = FaceTrackManager(settings)
+        self._legacy: dict[int, TrackState] = {}
 
     def update(self, face: DetectedFace, frame_index: int, person_id: int, confidence: float) -> TrackState:
-        self._expire(frame_index)
-        centroid = ((face.bbox.x1 + face.bbox.x2) / 2.0, (face.bbox.y1 + face.bbox.y2) / 2.0)
-        track = self._best_track(face, centroid)
-        if track is None:
-            track = TrackState(
-                track_id=self._next_id,
-                centroid=centroid,
-                bbox=(face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2),
-                first_frame_index=frame_index,
-                last_frame_index=frame_index,
-            )
-            self._tracks[track.track_id] = track
-            self._next_id += 1
-        track.update(face, centroid, frame_index, person_id, confidence, self._settings.temporal_window_size)
-        return track
+        tracks = self._inner.update_from_detections([face], frame_index)
+        track = tracks[0] if tracks else self._inner._spawn_track(face, frame_index)
+        track.record_identity_match(person_id, confidence, self._settings.tracking_ema_alpha)
+        legacy = self._to_legacy(track, frame_index, person_id, confidence)
+        self._legacy[legacy.track_id] = legacy
+        return legacy
 
     def candidate_track(self, face: DetectedFace, frame_index: int) -> TrackState | None:
-        self._expire(frame_index)
-        centroid = ((face.bbox.x1 + face.bbox.x2) / 2.0, (face.bbox.y1 + face.bbox.y2) / 2.0)
-        return self._best_track(face, centroid)
+        tracked = self._inner.candidate_track(face, frame_index)
+        if tracked is None:
+            return None
+        return self._legacy.get(tracked.numeric_track_id) or self._to_legacy(tracked, frame_index, -1, 0.0)
 
-    def _best_track(self, face: DetectedFace, centroid: tuple[float, float]) -> TrackState | None:
-        best: TrackState | None = None
-        best_score = 0.0
-        for track in self._tracks.values():
-            dx = centroid[0] - track.centroid[0]
-            dy = centroid[1] - track.centroid[1]
-            distance = (dx * dx + dy * dy) ** 0.5
-            distance_score = max(0.0, 1.0 - (distance / max(self._settings.temporal_max_track_distance, 1.0)))
-            track_bbox = type(face.bbox)(*track.bbox)
-            iou = bbox_iou(face.bbox, track_bbox)
-            score = (0.7 * iou) + (0.3 * distance_score)
-            if (iou >= self._settings.temporal_min_track_iou or distance <= self._settings.temporal_max_track_distance) and score > best_score:
-                best = track
-                best_score = score
-        return best
-
-    def _expire(self, frame_index: int) -> None:
-        expired = [
-            track_id
-            for track_id, track in self._tracks.items()
-            if frame_index - track.last_frame_index > self._settings.temporal_track_ttl_frames
-        ]
-        for track_id in expired:
-            del self._tracks[track_id]
+    def _to_legacy(
+        self,
+        track,
+        frame_index: int,
+        person_id: int,
+        confidence: float,
+    ) -> TrackState:
+        tid = track.numeric_track_id
+        existing = self._legacy.get(tid)
+        if existing is None:
+            existing = TrackState(
+                track_id=tid,
+                centroid=track.center_point,
+                bbox=track.bbox,
+                first_frame_index=track.first_seen_frame,
+                last_frame_index=frame_index,
+            )
+        if person_id >= 0:
+            existing.update(
+                self._inner.to_detected_face(track),
+                track.center_point,
+                frame_index,
+                person_id,
+                confidence,
+                self._settings.temporal_window_size,
+            )
+        return existing

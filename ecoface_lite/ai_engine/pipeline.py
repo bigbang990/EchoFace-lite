@@ -1,23 +1,38 @@
 """High-level pipeline orchestration (video frame → optional alert).
 
-Kept separate from FastAPI so the same pipeline can run from CLI, workers, or tests.
+Tracking-first architecture:
+  detect occasionally → track continuously → recognize intelligently
 """
 
 from __future__ import annotations
 
 import numpy as np
+
 from ecoface_lite.ai_engine.confidence import ConfidencePolicy
 from ecoface_lite.ai_engine.detection_optimizer import DetectionOptimizer
 from ecoface_lite.ai_engine.diagnostics import diagnostics
-from ecoface_lite.ai_engine.detector import BoundingBox, FaceDetector
+from ecoface_lite.ai_engine.detector import DetectedFace, FaceDetector
 from ecoface_lite.ai_engine.embedder import FaceEmbedder
 from ecoface_lite.ai_engine.event_validator import EventValidator
+from ecoface_lite.ai_engine.face_candidate_validator import FaceCandidateValidator
+from ecoface_lite.ai_engine.face_crop_validator import FaceCropValidator
 from ecoface_lite.ai_engine.face_quality import FaceQualityAssessor
-from ecoface_lite.ai_engine.geometry import bbox_iou, compute_face_geometry, scale_face_to_original
+from ecoface_lite.ai_engine.temporal_detector import TemporalDetectorFilter
+from ecoface_lite.ai_engine.geometry import compute_face_geometry, scale_face_to_original
+from ecoface_lite.ai_engine.embedding_fusion import EmbeddingFusion
+from ecoface_lite.ai_engine.global_identity_memory import GlobalIdentityMemory
+from ecoface_lite.ai_engine.identity_confidence_engine import IdentityConfidenceEngine
+from ecoface_lite.ai_engine.identity_matcher import MultiStageIdentityMatcher
 from ecoface_lite.ai_engine.matcher import FaceMatcher, MatchResult
+from ecoface_lite.ai_engine.pose_estimator import classify_pose_bucket
+from ecoface_lite.ai_engine.temporal_identity_state import get_temporal_identity
+from ecoface_lite.ai_engine.track_reassociator import TrackReassociator
 from ecoface_lite.ai_engine.pipeline_types import FaceDebugTrace, FrameMatch
 from ecoface_lite.ai_engine.preprocessing import FramePreprocessor
 from ecoface_lite.ai_engine.recognition_session import RecognitionSession
+from ecoface_lite.ai_engine.tracking.track_state import ACTIVE_RECOGNITION_STATES
+from ecoface_lite.ai_engine.tracking.tracked_face import TrackedFace
+from ecoface_lite.config.tracking import TrackingConfig, get_tracking_config
 from ecoface_lite.core.config import Settings
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
@@ -39,6 +54,7 @@ class RecognitionPipeline:
         event_validator: EventValidator | None = None,
     ) -> None:
         self._settings = settings
+        self._tracking_cfg: TrackingConfig = get_tracking_config(settings)
         self._detector = detector
         self._embedder = embedder
         self._matcher = matcher
@@ -48,10 +64,25 @@ class RecognitionPipeline:
         self._recognition_session = recognition_session or RecognitionSession(settings)
         self._event_validator = event_validator or EventValidator(settings)
         self._detection_optimizer = DetectionOptimizer(settings)
-        self._embedding_cache: dict[int, tuple[np.ndarray, tuple[float, float, float, float], int]] = {}
+        self._face_validator = FaceCandidateValidator(settings)
+        self._temporal_detector = TemporalDetectorFilter(settings)
+        self._crop_validator = FaceCropValidator(settings)
+        self._embedding_fusion = EmbeddingFusion(settings)
+        self._global_identity_memory = GlobalIdentityMemory(settings)
+        self._identity_matcher = MultiStageIdentityMatcher(
+            settings,
+            matcher,
+            self._embedding_fusion,
+            self._global_identity_memory,
+        )
+        self._identity_confidence = IdentityConfidenceEngine(settings)
+        self._track_reassociator = TrackReassociator(settings, self._global_identity_memory)
+
+    @property
+    def _track_manager(self):
+        return self._recognition_session.track_manager
 
     def enroll_reference_embedding(self, frame_bgr: np.ndarray) -> np.ndarray:
-        """Pick the highest-confidence face and return its embedding (for gallery enrollment)."""
         prepared = self._preprocessor.process(frame_bgr)
         faces = self._detector.detect(prepared.bgr)
         if not faces:
@@ -68,298 +99,550 @@ class RecognitionPipeline:
         frame_index: int,
         gallery: list[tuple[int, np.ndarray]],
     ) -> list[FrameMatch]:
-        """Run robust recognition and return stable alert candidates."""
         metrics.increment("total_frames_processed")
         with metrics.timer("total_frame_processing_duration"):
-            return self._process_frame_observed(frame_bgr, frame_index, gallery)
+            return self._process_frame_staged(frame_bgr, frame_index, gallery)
 
-    def _cached_embedding(self, track_id: int | None, face) -> np.ndarray | None:
-        if track_id is None:
-            return None
-        cached = self._embedding_cache.get(track_id)
-        if cached is None:
-            return None
-        emb, bbox, _frame_index = cached
-        previous = BoundingBox(*bbox)
-        overlap = bbox_iou(face.bbox, previous)
-        if overlap < 0.45:
-            metrics.increment("embedding_cache_invalidations")
-            return None
-        return emb
-
-    def _process_frame_observed(
+    def _process_frame_staged(
         self,
         frame_bgr: np.ndarray,
         frame_index: int,
         gallery: list[tuple[int, np.ndarray]],
     ) -> list[FrameMatch]:
-        matches: list[FrameMatch] = []
+        prepared, output_scale = self._stage_preprocess(frame_bgr)
+        active = self._track_manager.active_tracks()
+        stable_count = sum(1 for t in active if t.is_stable)
+        if self._detection_optimizer.should_detect(
+            frame_index,
+            active_tracks=len(active),
+            stable_tracks=stable_count,
+            avg_motion_stability=self._track_manager.average_motion_stability(),
+        ):
+            return self._stage_detection_path(prepared, frame_bgr, frame_index, gallery, output_scale)
+        return self._stage_tracking_path(prepared, frame_index, gallery, output_scale)
+
+    def _stage_preprocess(self, frame_bgr: np.ndarray):
         with metrics.timer("preprocessing_duration"):
             prepared = self._preprocessor.process(frame_bgr)
         output_scale = prepared.bgr.shape[1] / max(frame_bgr.shape[1], 1)
-        if not self._detection_optimizer.should_detect(frame_index):
-            self._detection_optimizer.observe_tracking_cycle()
-            metrics.increment("frames_skipped")
-            diagnostics.record("tracking", "detector_skipped_reused_tracks", frame_index=frame_index)
-            return matches
+        return prepared, output_scale
+
+    def _stage_detection_path(
+        self,
+        prepared,
+        frame_bgr: np.ndarray,
+        frame_index: int,
+        gallery: list[tuple[int, np.ndarray]],
+        output_scale: float,
+    ) -> list[FrameMatch]:
+        matches: list[FrameMatch] = []
         detection_frame, scale = self._detection_optimizer.prepare_for_detection(prepared.bgr)
         with metrics.timer("face_detection_duration"):
             raw_faces = self._detector.detect(detection_frame)
+        metrics.observe(
+            "detector_runtime_ms",
+            metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0,
+        )
         raw_faces = self._detection_optimizer.scale_faces(raw_faces, scale)
-        faces, detector_rejections = self._detection_optimizer.filter_faces(raw_faces, prepared.bgr.shape)
-        self._detection_optimizer.observe_detection_cycle(frame_index, len(raw_faces), len(faces), len(detector_rejections))
+        raw_faces = self._temporal_detector.apply(raw_faces, frame_index)
+
+        geometry_accepted: list[DetectedFace] = []
+        for face in raw_faces:
+            decision = self._face_validator.validate(
+                face, prepared.bgr.shape, frame_bgr=prepared.bgr, frame_index=frame_index
+            )
+            if decision.accepted:
+                geometry_accepted.append(face)
+            else:
+                label = decision.debug_label or decision.reason or "geometry_rejected"
+                matches.append(
+                    self._rejection_match(
+                        face,
+                        frame_index,
+                        prepared,
+                        output_scale,
+                        label,
+                        "yellow",
+                        ("DETECTED", "GEOMETRY_REJECTED"),
+                    )
+                )
+                metrics.increment("geometry_validation_rejections")
+
+        faces, detector_rejections = self._detection_optimizer.filter_faces(geometry_accepted, prepared.bgr.shape)
+        total_rejected = len(raw_faces) - len(faces)
+        self._detection_optimizer.observe_detection_cycle(
+            frame_index, len(raw_faces), len(faces), total_rejected
+        )
         metrics.increment("total_faces_detected", len(faces))
         metrics.observe("avg_faces_per_frame", len(faces))
+
         for rejected_face, reason in detector_rejections:
-            metrics.increment("rejected_faces")
-            metrics.increment("yellow_box_count")
-            width, height = _face_size(rejected_face)
-            metrics.observe("avg_rejected_face_area", width * height)
-            diagnostics.record(
-                "detector_filter",
-                reason,
-                frame_index=frame_index,
-                metadata={"det_score": rejected_face.det_score, "face_width": width, "face_height": height},
-            )
+            debug_label = f"REJECTED: {reason}" if reason and not reason.startswith("REJECTED:") else reason
             matches.append(
-                FrameMatch(
-                    frame_index=frame_index,
-                    person_id=None,
-                    confidence=None,
-                    threshold=self._settings.match_confidence_threshold,
-                    reason=reason,
-                    face=_scale_face_for_output(rejected_face, output_scale),
-                    trace=_trace(
-                        rejected_face,
-                        "yellow",
-                        ("DETECTED", "FILTERED"),
-                        reason,
-                        detector_confidence=rejected_face.det_score,
-                        frame_shape=prepared.bgr.shape,
-                        output_scale=output_scale,
-                    ),
+                self._rejection_match(
+                    rejected_face,
+                    frame_index,
+                    prepared,
+                    output_scale,
+                    debug_label or "detector_filter_rejected",
+                    "yellow",
+                    ("DETECTED", "FILTERED"),
                 )
             )
+
         if len(raw_faces) >= self._settings.detector_overload_face_count:
             logger.warning(
                 "Detector overload frame_index=%s raw_faces=%s accepted=%s rejected=%s",
                 frame_index,
                 len(raw_faces),
                 len(faces),
-                len(detector_rejections),
+                total_rejected,
             )
+
+        tracks = self._track_manager.update_from_detections(
+            faces,
+            frame_index,
+            frame_shape=prepared.bgr.shape,
+            frame_bgr=prepared.bgr,
+        )
+
         if not faces:
             diagnostics.record("frame", "no_face_detected", frame_index=frame_index)
-        for face in faces:
-            width, height = _face_size(face)
-            metrics.observe("avg_detected_face_area", width * height)
-            quality = self._quality_assessor.assess(prepared.bgr, face)
-            metrics.observe("face_quality_score", quality.blur_score)
-            if not quality.accepted:
-                metrics.increment("rejected_faces")
-                metrics.increment("yellow_box_count")
-                metrics.observe("avg_rejected_face_area", width * height)
-                if quality.reason == "blurry_face":
-                    metrics.increment("rejected_due_to_blur")
-                elif quality.reason == "face_too_small":
-                    metrics.increment("rejected_due_to_size")
-                elif quality.reason == "low_detection_confidence":
-                    metrics.increment("rejected_due_to_low_confidence")
-                diagnostics.record(
-                    "rejection",
-                    quality.reason or "quality_rejected",
-                    frame_index=frame_index,
-                    metadata={"blur_score": quality.blur_score, "det_score": face.det_score},
-                )
-                logger.info(
-                    "Frame rejected frame_index=%s reason=%s blur_score=%.3f det_score=%.3f",
-                    frame_index,
-                    quality.reason,
-                    quality.blur_score,
-                    face.det_score,
-                )
-                matches.append(
-                    FrameMatch(
-                        frame_index=frame_index,
-                        person_id=None,
-                        confidence=None,
-                        threshold=self._settings.match_confidence_threshold,
-                        reason=quality.reason,
-                        face=_scale_face_for_output(face, output_scale),
-                        trace=_trace(
-                            face,
-                            "yellow",
-                            ("DETECTED", "FILTERED", "QUALITY_REJECTED"),
-                            quality.reason,
-                            detector_confidence=face.det_score,
-                            blur_score=quality.blur_score,
-                            frame_shape=prepared.bgr.shape,
-                            output_scale=output_scale,
-                        ),
-                    )
-                )
-                continue
-            metrics.increment("accepted_faces")
-            threshold = self._confidence_policy.threshold_for(prepared.diagnostics, quality)
-            candidate_track_id = self._recognition_session.candidate_track_id(face, frame_index)
-            emb = self._cached_embedding(candidate_track_id, face)
-            if emb is None:
-                with metrics.timer("embedding_generation_duration"):
-                    emb = self._embedder.embed_face(prepared.bgr, face)
-                metrics.increment("embeddings_generated")
-            else:
-                metrics.increment("embedding_cache_hits")
-            with metrics.timer("matching_duration"):
-                m = self._matcher.best_match(emb, gallery, threshold)
-            if m is None:
-                metrics.increment("failed_matches")
-                metrics.increment("red_box_count")
-                diagnostics.record("matching", "no_match_above_threshold", frame_index=frame_index, threshold=threshold)
-                matches.append(
-                    FrameMatch(
-                        frame_index=frame_index,
-                        person_id=None,
-                        confidence=None,
-                        threshold=threshold,
-                        reason="no_match_above_threshold",
-                        face=_scale_face_for_output(face, output_scale),
-                        trace=_trace(
-                            face,
-                            "red",
-                            ("DETECTED", "FILTERED", "EMBEDDED", "MATCHED_FAILED"),
-                            "no_match_above_threshold",
-                            detector_confidence=face.det_score,
-                            blur_score=quality.blur_score,
-                            frame_shape=prepared.bgr.shape,
-                            output_scale=output_scale,
-                        ),
-                    )
-                )
-                continue
-            metrics.increment("successful_matches")
-            metrics.observe("confidence_score", m.confidence)
-            top_candidates = self._matcher.top_k(emb, gallery, k=3)
-            diagnostics.record(
-                "matching",
-                "top_k_candidates",
+
+        for face, track in zip(faces, tracks):
+            match = self._process_tracked_face(
+                face=face,
+                track=track,
+                prepared=prepared,
                 frame_index=frame_index,
-                person_id=m.person_id,
-                confidence=m.confidence,
-                threshold=threshold,
-                metadata={"candidates": [(c.person_id, c.confidence) for c in top_candidates]},
+                gallery=gallery,
+                output_scale=output_scale,
+                from_detection=True,
             )
-            diagnostics.record(
-                "matching",
-                "candidate_match",
-                frame_index=frame_index,
-                person_id=m.person_id,
-                confidence=m.confidence,
-                threshold=threshold,
-            )
-            decision = self._confidence_policy.decide(m.confidence, prepared.diagnostics, quality)
-            if not decision.accepted:
-                metrics.increment("rejected_due_to_low_confidence")
-                metrics.increment("red_box_count")
-                diagnostics.record(
-                    "matching",
-                    "below_adaptive_threshold",
-                    frame_index=frame_index,
-                    person_id=m.person_id,
-                    confidence=m.confidence,
-                    threshold=decision.adjusted_threshold,
-                )
-                logger.info(
-                    "Match confidence below threshold frame_index=%s person_id=%s confidence=%.3f threshold=%.3f",
-                    frame_index,
-                    m.person_id,
-                    m.confidence,
-                    decision.adjusted_threshold,
-                )
-                matches.append(
-                    FrameMatch(
-                        frame_index=frame_index,
-                        person_id=m.person_id,
-                        confidence=m.confidence,
-                        threshold=decision.adjusted_threshold,
-                        reason="below_adaptive_threshold",
-                        face=_scale_face_for_output(face, output_scale),
-                        trace=_trace(
-                            face,
-                            "red",
-                            ("DETECTED", "FILTERED", "EMBEDDED", "MATCHED", "VALIDATION_REJECTED"),
-                            "below_adaptive_threshold",
-                            detector_confidence=face.det_score,
-                            blur_score=quality.blur_score,
-                            frame_shape=prepared.bgr.shape,
-                            output_scale=output_scale,
-                        ),
-                    )
-                )
-                continue
-            recognition = self._recognition_session.observe(face, frame_index, m.person_id, m.confidence)
-            self._embedding_cache[recognition.track_id] = (
-                emb,
-                (face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2),
-                frame_index,
-            )
-            with metrics.timer("event_validation_duration"):
-                event = self._event_validator.evaluate(recognition, frame_index)
-            if event.should_emit:
-                metrics.increment("detection_events_validated")
-                metrics.increment("green_box_count")
-                diagnostics.record(
-                    "event",
-                    "validated",
-                    frame_index=frame_index,
-                    person_id=recognition.person_id,
-                    confidence=recognition.confidence,
-                    threshold=decision.adjusted_threshold,
-                )
-                logger.info(
-                    "Event validated frame_index=%s person_id=%s confidence=%.3f track_id=%s",
-                    frame_index,
-                    recognition.person_id,
-                    recognition.confidence,
-                    recognition.track_id,
-                )
-            else:
-                metrics.increment("red_box_count")
-                if event.reason == "cooldown":
-                    metrics.increment("cooldown_suppressions")
-                diagnostics.record(
-                    "event",
-                    event.reason,
-                    frame_index=frame_index,
-                    person_id=recognition.person_id,
-                    confidence=recognition.confidence,
-                    threshold=decision.adjusted_threshold,
-                )
-            matches.append(
-                FrameMatch(
-                    frame_index=frame_index,
-                    person_id=recognition.person_id if recognition.stable else m.person_id,
-                    confidence=recognition.confidence,
-                    threshold=decision.adjusted_threshold,
-                    stable=recognition.stable,
-                    should_alert=event.should_emit,
-                    track_id=recognition.track_id,
-                    reason=event.reason,
-                    face=_scale_face_for_output(face, output_scale),
-                    trace=_trace(
-                        face,
-                        "green" if event.should_emit else "red",
-                        ("DETECTED", "FILTERED", "EMBEDDED", "MATCHED", "VALIDATED")
-                        if event.should_emit
-                        else ("DETECTED", "FILTERED", "EMBEDDED", "MATCHED", "EVENT_NOT_EMITTED"),
-                        event.reason,
-                        detector_confidence=face.det_score,
-                        blur_score=quality.blur_score,
-                        frame_shape=prepared.bgr.shape,
-                        output_scale=output_scale,
-                    ),
-                )
-            )
+            if match is not None:
+                matches.append(match)
+
+        self._finalize_frame(frame_index)
+        self._export_tracking_metrics()
         return matches
+
+    def _stage_tracking_path(
+        self,
+        prepared,
+        frame_index: int,
+        gallery: list[tuple[int, np.ndarray]],
+        output_scale: float,
+    ) -> list[FrameMatch]:
+        self._detection_optimizer.observe_tracking_cycle()
+        metrics.increment("frames_skipped")
+        diagnostics.record("tracking", "detector_skipped_reused_tracks", frame_index=frame_index)
+
+        matches: list[FrameMatch] = []
+        tracks = self._track_manager.propagate(frame_index)
+        for track in tracks:
+            if track.state not in ACTIVE_RECOGNITION_STATES:
+                continue
+            if track.confirmation_hits < self._tracking_cfg.confirm_frames:
+                continue
+            face = self._track_manager.to_detected_face(track)
+            match = self._process_tracked_face(
+                face=face,
+                track=track,
+                prepared=prepared,
+                frame_index=frame_index,
+                gallery=gallery,
+                output_scale=output_scale,
+                from_detection=False,
+            )
+            if match is not None:
+                matches.append(match)
+
+        total = max(1, len(tracks))
+        metrics.observe("embedding_reuse_rate", metrics.snapshot().counters.get("embedding_cache_hits", 0) / total)
+        self._finalize_frame(frame_index)
+        self._export_tracking_metrics()
+        return matches
+
+    def _finalize_frame(self, frame_index: int) -> None:
+        for track in self._track_manager.consume_removed_tracks():
+            self._global_identity_memory.archive_lost_track(track, frame_index)
+        self._global_identity_memory.prune(frame_index)
+
+    def _process_tracked_face(
+        self,
+        *,
+        face: DetectedFace,
+        track: TrackedFace | None,
+        prepared,
+        frame_index: int,
+        gallery: list[tuple[int, np.ndarray]],
+        output_scale: float,
+        from_detection: bool,
+    ) -> FrameMatch | None:
+        width, height = _face_size(face)
+        metrics.observe("avg_detected_face_area", width * height)
+
+        if from_detection:
+            crop_check = self._crop_validator.validate(prepared.bgr, face)
+            if not crop_check.accepted:
+                label = f"REJECTED: {crop_check.reason}" if crop_check.reason else "REJECTED: bad_crop"
+                return self._rejection_match(
+                    face,
+                    frame_index,
+                    prepared,
+                    output_scale,
+                    label,
+                    "yellow",
+                    ("DETECTED", "CROP_REJECTED"),
+                )
+
+        quality = self._quality_assessor.assess(prepared.bgr, face)
+        if not quality.accepted:
+            return self._quality_rejection(face, frame_index, prepared, output_scale, quality, width, height)
+
+        metrics.increment("accepted_faces")
+        threshold = self._confidence_policy.threshold_for(prepared.diagnostics, quality)
+
+        if track is None:
+            track = self._track_manager.candidate_track(face, frame_index)
+
+        track_quality = None
+        if track is not None:
+            track_quality = self._track_manager.update_track_quality(track, face, prepared.bgr, frame_index)
+
+        need_embedding = track is None or self._track_manager.should_compute_embedding(
+            track, frame_index, face, quality=track_quality
+        )
+        if (
+            track is not None
+            and not need_embedding
+            and track.identity is not None
+            and track.stable_match_count >= self._tracking_cfg.min_stable_matches
+        ):
+            return self._match_from_track_identity(
+                face, track, prepared, frame_index, gallery, output_scale, from_detection, quality
+            )
+
+        emb: np.ndarray | None = None
+        if track is not None and not need_embedding and track.last_embedding is not None:
+            emb = track.last_embedding
+            metrics.increment("embedding_cache_hits")
+            metrics.increment("reused_embeddings")
+        elif need_embedding:
+            with metrics.timer("embedding_generation_duration"):
+                emb = self._embedder.embed_face(prepared.bgr, face)
+            metrics.increment("embeddings_generated")
+            if track is not None:
+                track.touch_embedding(emb, frame_index)
+        else:
+            with metrics.timer("embedding_generation_duration"):
+                emb = self._embedder.embed_face(prepared.bgr, face)
+            metrics.increment("embeddings_generated")
+
+        if emb is None:
+            return None
+
+        fusion_weight = (
+            self._identity_confidence.embedding_suppression_weight(
+                track,
+                blur_score=quality.blur_score,
+                quality_weight=track_quality.overall_score if track_quality is not None else quality.quality_score,
+            )
+            if track is not None
+            else (track_quality.overall_score if track_quality is not None else quality.quality_score)
+        )
+        pose_bucket = None
+        if face.landmarks is not None:
+            pose_bucket = classify_pose_bucket(face.landmarks, face.bbox)
+            if track is not None:
+                get_temporal_identity(track).record_pose_blur(pose_bucket, quality.blur_score)
+
+        if track is not None and track.visibility_age <= 2 and track.recovery_count == 0:
+            self._track_reassociator.try_recover_identity(track, emb, frame_index)
+
+        with metrics.timer("matching_duration"):
+            if track is not None:
+                decision_match = self._identity_matcher.match_track(
+                    track,
+                    emb,
+                    gallery,
+                    threshold,
+                    quality_weight=fusion_weight,
+                    frame_index=frame_index,
+                    pose_bucket=pose_bucket,
+                    blur_score=quality.blur_score,
+                )
+                m = None
+                id_conf = None
+                if decision_match is not None and decision_match.person_id is not None:
+                    id_conf = self._identity_confidence.evaluate(
+                        track,
+                        decision_match.confidence,
+                        threshold,
+                        quality=track_quality,
+                        person_id=decision_match.person_id,
+                    )
+                    accepted_stages = {"verified", "soft_verified", "locked", "weak_candidate"}
+                    if decision_match.stage in accepted_stages:
+                        if (
+                            decision_match.confidence >= threshold
+                            or decision_match.soft_match
+                            or (id_conf is not None and id_conf.soft_accept)
+                        ):
+                            conf = max(decision_match.confidence, id_conf.temporal_confidence)
+                            m = MatchResult(person_id=decision_match.person_id, confidence=conf)
+                            if decision_match.stage == "weak_candidate":
+                                metrics.increment("identity_recovery_weak_accept")
+            else:
+                m = self._matcher.best_match(emb, gallery, threshold)
+
+        if m is None:
+            metrics.increment("failed_matches")
+            metrics.increment("red_box_count")
+            diagnostics.record("matching", "no_match_above_threshold", frame_index=frame_index, threshold=threshold)
+            return FrameMatch(
+                frame_index=frame_index,
+                person_id=None,
+                confidence=None,
+                threshold=threshold,
+                reason="no_match_above_threshold",
+                track_id=track.numeric_track_id if track else None,
+                face=_scale_face_for_output(face, output_scale),
+                trace=_trace(
+                    face,
+                    "red",
+                    ("TRACKED" if not from_detection else "DETECTED", "FILTERED", "EMBEDDED", "MATCHED_FAILED"),
+                    "no_match_above_threshold",
+                    detector_confidence=face.det_score,
+                    blur_score=quality.blur_score,
+                    frame_shape=prepared.bgr.shape,
+                    output_scale=output_scale,
+                ),
+            )
+
+        metrics.increment("successful_matches")
+        metrics.observe("confidence_score", m.confidence)
+        temporal_accept = False
+        if track is not None:
+            id_snap = self._identity_confidence.evaluate(
+                track, m.confidence, threshold, quality=track_quality, person_id=m.person_id
+            )
+            temporal_accept = id_snap.soft_accept
+            metrics.observe("identity_stabilization_latency", float(track.visibility_age))
+        decision = self._confidence_policy.decide(m.confidence, prepared.diagnostics, quality)
+        if not decision.accepted and not temporal_accept:
+            metrics.increment("rejected_due_to_low_confidence")
+            metrics.increment("red_box_count")
+            return FrameMatch(
+                frame_index=frame_index,
+                person_id=m.person_id,
+                confidence=m.confidence,
+                threshold=decision.adjusted_threshold,
+                reason="below_adaptive_threshold",
+                track_id=track.numeric_track_id if track else None,
+                face=_scale_face_for_output(face, output_scale),
+                trace=_trace(
+                    face,
+                    "red",
+                    ("DETECTED", "FILTERED", "EMBEDDED", "MATCHED", "VALIDATION_REJECTED"),
+                    "below_adaptive_threshold",
+                    detector_confidence=face.det_score,
+                    blur_score=quality.blur_score,
+                    frame_shape=prepared.bgr.shape,
+                    output_scale=output_scale,
+                ),
+            )
+
+        if track is None:
+            tracks = self._track_manager.update_from_detections(
+                [face], frame_index, frame_shape=prepared.bgr.shape
+            )
+            track = tracks[0] if tracks else None
+        if track is not None:
+            track.touch_embedding(emb, frame_index)
+        recognition = (
+            self._recognition_session.observe_track(track, m.person_id, m.confidence)
+            if track is not None
+            else self._recognition_session.observe(face, frame_index, m.person_id, m.confidence)
+        )
+
+        unstable = recognition.stable_match_count < self._tracking_cfg.min_stable_matches or (
+            recognition.smoothed_confidence < self._settings.temporal_min_average_confidence
+        )
+        overlay_state = "green"
+        if unstable and recognition.confirmations > 0:
+            overlay_state = "yellow"
+            reason = "unstable"
+        elif not recognition.stable:
+            overlay_state = "red"
+
+        with metrics.timer("event_validation_duration"):
+            event = self._event_validator.evaluate(recognition, frame_index)
+
+        if event.should_emit:
+            metrics.increment("detection_events_validated")
+            metrics.increment("green_box_count")
+            overlay_state = "green"
+        elif overlay_state != "yellow":
+            metrics.increment("red_box_count")
+            if event.reason == "cooldown":
+                metrics.increment("cooldown_suppressions")
+
+        return FrameMatch(
+            frame_index=frame_index,
+            person_id=recognition.person_id if recognition.stable else m.person_id,
+            confidence=recognition.smoothed_confidence or recognition.confidence,
+            threshold=decision.adjusted_threshold,
+            stable=recognition.stable,
+            should_alert=event.should_emit,
+            track_id=recognition.track_id,
+            reason=event.reason if not event.should_emit else "accepted",
+            face=_scale_face_for_output(face, output_scale),
+            trace=_trace(
+                face,
+                overlay_state,
+                ("DETECTED", "TRACKED", "RECOGNIZED", "VALIDATED") if event.should_emit else ("DETECTED", "TRACKED", "RECOGNIZED"),
+                event.reason if not event.should_emit else None,
+                detector_confidence=face.det_score,
+                blur_score=quality.blur_score,
+                frame_shape=prepared.bgr.shape,
+                output_scale=output_scale,
+            ),
+        )
+
+    def _quality_rejection(self, face, frame_index, prepared, output_scale, quality, width, height) -> FrameMatch:
+        metrics.increment("rejected_faces")
+        metrics.increment("yellow_box_count")
+        metrics.observe("avg_rejected_face_area", width * height)
+        if quality.reason == "blurry_face":
+            metrics.increment("rejected_due_to_blur")
+        elif quality.reason == "face_too_small":
+            metrics.increment("rejected_due_to_size")
+        elif quality.reason == "low_detection_confidence":
+            metrics.increment("rejected_due_to_low_confidence")
+        diagnostics.record(
+            "rejection",
+            quality.reason or "quality_rejected",
+            frame_index=frame_index,
+            metadata={"blur_score": quality.blur_score, "det_score": face.det_score},
+        )
+        return FrameMatch(
+            frame_index=frame_index,
+            person_id=None,
+            confidence=None,
+            threshold=self._settings.match_confidence_threshold,
+            reason=quality.reason,
+            face=_scale_face_for_output(face, output_scale),
+            trace=_trace(
+                face,
+                "yellow",
+                ("DETECTED", "FILTERED", "QUALITY_REJECTED"),
+                quality.reason,
+                detector_confidence=face.det_score,
+                blur_score=quality.blur_score,
+                frame_shape=prepared.bgr.shape,
+                output_scale=output_scale,
+            ),
+        )
+
+    def _rejection_match(self, face, frame_index, prepared, output_scale, reason, color, stages) -> FrameMatch:
+        metrics.increment("rejected_faces")
+        metrics.increment("yellow_box_count")
+        width, height = _face_size(face)
+        metrics.observe("avg_rejected_face_area", width * height)
+        diagnostics.record(
+            "detector_filter",
+            reason,
+            frame_index=frame_index,
+            metadata={"det_score": face.det_score, "face_width": width, "face_height": height},
+        )
+        return FrameMatch(
+            frame_index=frame_index,
+            person_id=None,
+            confidence=None,
+            threshold=self._settings.match_confidence_threshold,
+            reason=reason,
+            face=_scale_face_for_output(face, output_scale),
+            trace=_trace(
+                face,
+                color,
+                stages,
+                reason,
+                detector_confidence=face.det_score,
+                frame_shape=prepared.bgr.shape,
+                output_scale=output_scale,
+            ),
+        )
+
+    def _match_from_track_identity(
+        self,
+        face: DetectedFace,
+        track: TrackedFace,
+        prepared,
+        frame_index: int,
+        gallery: list[tuple[int, np.ndarray]],
+        output_scale: float,
+        from_detection: bool,
+        quality,
+    ) -> FrameMatch:
+        """Reuse stabilized track identity without re-embedding or re-matching."""
+        metrics.increment("embedding_skips")
+        metrics.increment("embedding_cache_hits")
+        person_id = int(track.identity) if track.identity is not None else -1
+        confidence = track.smoothed_confidence or track.identity_confidence
+        recognition = self._recognition_session.stable_from_track(track)
+        threshold = self._confidence_policy.threshold_for(prepared.diagnostics, quality)
+        unstable = recognition.stable_match_count < self._tracking_cfg.min_stable_matches
+        overlay_state = "green" if recognition.stable else ("yellow" if unstable else "red")
+        with metrics.timer("event_validation_duration"):
+            event = self._event_validator.evaluate(recognition, frame_index)
+        if event.should_emit:
+            metrics.increment("detection_events_validated")
+            metrics.increment("green_box_count")
+            overlay_state = "green"
+        elif overlay_state != "yellow":
+            metrics.increment("red_box_count")
+        return FrameMatch(
+            frame_index=frame_index,
+            person_id=recognition.person_id if recognition.stable else person_id,
+            confidence=recognition.smoothed_confidence or confidence,
+            threshold=threshold,
+            stable=recognition.stable,
+            should_alert=event.should_emit,
+            track_id=recognition.track_id,
+            reason=event.reason if not event.should_emit else "accepted",
+            face=_scale_face_for_output(face, output_scale),
+            trace=_trace(
+                face,
+                overlay_state,
+                ("TRACKED", "RECOGNIZED", "CACHED") if not from_detection else ("DETECTED", "TRACKED", "CACHED"),
+                event.reason if not event.should_emit else None,
+                detector_confidence=face.det_score,
+                blur_score=quality.blur_score,
+                frame_shape=prepared.bgr.shape,
+                output_scale=output_scale,
+            ),
+        )
+
+    def _export_tracking_metrics(self) -> None:
+        active = self._track_manager.active_track_count
+        metrics.observe("active_tracks", active)
+        tracks = self._track_manager.active_tracks()
+        if tracks:
+            metrics.observe("avg_track_lifetime", sum(t.visibility_age for t in tracks) / len(tracks))
+            consistencies = [
+                float(t.metadata.get("temporal_consistency", 0.0))
+                for t in tracks
+                if t.metadata.get("temporal_consistency") is not None
+            ]
+            if consistencies:
+                metrics.observe("avg_temporal_consistency", sum(consistencies) / len(consistencies))
+            switches = sum(t.identity_switch_count for t in tracks)
+            metrics.observe("identity_switch_rate", switches / max(len(tracks), 1))
+
+    @staticmethod
+    def _face_key(face: DetectedFace) -> tuple[float, float, float, float]:
+        return (face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2)
 
     def test_match_frame(
         self,

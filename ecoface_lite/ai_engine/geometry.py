@@ -32,11 +32,23 @@ def scale_bbox_to_original(bbox: BoundingBox, scale: float) -> BoundingBox:
 
 
 def scale_face_to_original(face: DetectedFace, scale: float) -> DetectedFace:
+    landmarks = face.landmarks
+    scaled_landmarks = landmarks
+    if landmarks is not None and scale != 1.0:
+        import numpy as np
+
+        from ecoface_lite.ai_engine.detector import FaceLandmarks
+
+        inv = 1.0 / max(scale, 1e-6)
+        scaled_pts = landmarks.points * inv
+        scaled_landmarks = FaceLandmarks(points=scaled_pts.astype(np.float32))
     return DetectedFace(
         bbox=scale_bbox_to_original(face.bbox, scale),
         det_score=face.det_score,
         aligned_face=face.aligned_face,
         embedding=face.embedding,
+        landmarks=scaled_landmarks,
+        temporal_score=face.temporal_score,
     )
 
 

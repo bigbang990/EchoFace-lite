@@ -10,6 +10,7 @@ from ecoface_lite.ai_engine.matcher import FaceMatcher
 from ecoface_lite.ai_engine.pipeline import RecognitionPipeline
 from ecoface_lite.core.config import Settings, get_settings
 from ecoface_lite.core.logging import get_logger
+from ecoface_lite.core.metrics import metrics
 
 logger = get_logger(__name__)
 
@@ -23,7 +24,10 @@ def _create_face_analysis(settings: Settings) -> Any:
         settings.insightface_ctx_id,
     )
     app = FaceAnalysis(name=settings.insightface_model_name, providers=["CPUExecutionProvider"])
-    app.prepare(ctx_id=settings.insightface_ctx_id, det_size=(640, 640))
+    det_size = (settings.detector_input_width, settings.detector_input_height)
+    app.prepare(ctx_id=settings.insightface_ctx_id, det_size=det_size)
+    metrics.observe("detector_input_resolution", det_size[0] * det_size[1])
+    metrics.observe("detector_resolution", det_size[0] * det_size[1])
     return app
 
 

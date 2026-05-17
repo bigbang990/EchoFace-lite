@@ -158,7 +158,7 @@ async def process_prerecorded_video(
         inference_frame = _resize_for_inference(packet.bgr, settings.video_inference_width)
         frame_matches = pipeline.process_frame(inference_frame, packet.index, gallery)
         _save_rejected_debug_crops(settings, job_id, inference_frame, frame_matches, packet.index, emitted_count)
-        if preview_writer.should_write(emitted_count):
+        if preview_writer.should_write(packet.index):
             preview_writer.write(
                 inference_frame,
                 _overlay_items_from_matches(frame_matches),
@@ -177,6 +177,8 @@ async def process_prerecorded_video(
                 job_diagnostics.faces_detected += 1
             job_diagnostics.observe_confidence(m.confidence)
             if m.person_id is None or m.confidence is None:
+                continue
+            if not m.should_alert:
                 continue
             previous = last_event_frame_by_person.get(m.person_id)
             if previous is not None and packet.index - previous < settings.video_event_dedupe_frames:
@@ -255,16 +257,21 @@ def _overlay_items_from_matches(matches) -> list[OverlayItem]:
         blur_text = f" | blur {trace.blur_score:.1f}" if trace is not None and trace.blur_score is not None else ""
         track_text = f"T{match.track_id} | " if match.track_id is not None else ""
         if state == "green":
-            score = f"{match.confidence:.2f}" if match.confidence is not None else "n/a"
-            label = f"{track_text}GREEN | Person {match.person_id} | {score} | {size_text}{blur_text}"
+            pct = f"{(match.confidence or 0) * 100:.0f}%"
+            label = f"{track_text}{match.person_id} | {pct}"
         elif state == "yellow":
-            reason = match.reason or (trace.rejection_reason if trace is not None else "rejected")
+            reason = match.reason or (trace.rejection_reason if trace is not None else "unstable")
+            if reason and not reason.startswith("REJECTED:"):
+                reason = f"REJECTED: {reason}"
             score = f"{trace.detector_confidence:.2f}" if trace is not None and trace.detector_confidence is not None else "n/a"
-            label = f"{track_text}YELLOW | {reason} | det {score} | {size_text}{blur_text}"
+            label = f"{track_text}{reason} | det {score}"
+        elif match.track_id is not None:
+            det = trace.detector_confidence if trace is not None and trace.detector_confidence is not None else 0.0
+            label = f"T{match.track_id} | det {det:.2f}"
         elif match.confidence is not None:
-            label = f"{track_text}RED | unknown | {match.confidence:.2f} | {size_text}{blur_text}"
+            label = f"{track_text}RED | unknown | {match.confidence:.2f}"
         else:
-            label = f"{track_text}RED | {match.reason or 'unknown'} | {size_text}{blur_text}"
+            label = f"{track_text}RED | {match.reason or 'unknown'}"
         items.append(OverlayItem(face=match.face, match=match, label=label, state=state))
     return items
 

@@ -32,8 +32,9 @@ class VideoPreviewWriter:
     def latest_path(self) -> Path:
         return self._preview_dir / "latest.jpg"
 
-    def should_write(self, emitted_count: int) -> bool:
-        return emitted_count == 1 or emitted_count % max(1, self._settings.video_preview_interval) == 0
+    def should_write(self, frame_index: int) -> bool:
+        interval = max(1, self._settings.tracking_overlay_interval)
+        return frame_index == 0 or frame_index % interval == 0
 
     def write(self, frame_bgr: "np.ndarray", items: list[OverlayItem], frame_index: int) -> str:
         import cv2

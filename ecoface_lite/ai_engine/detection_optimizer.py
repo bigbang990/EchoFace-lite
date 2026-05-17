@@ -23,28 +23,75 @@ class DetectionOptimizer:
         self._last_detection_frame: int | None = None
         self._last_faces: list[DetectedFace] = []
 
-    def should_detect(self, frame_index: int) -> bool:
-        interval = max(1, self._settings.detector_interval_frames)
-        if self._last_detection_frame is None:
-            return True
-        due = frame_index - self._last_detection_frame >= interval
-        if due:
+    def active_track_count(self) -> int:
+        return len(self._last_faces)
+
+    def should_detect(
+        self,
+        frame_index: int,
+        *,
+        active_tracks: int = 0,
+        stable_tracks: int = 0,
+        avg_motion_stability: float = 0.0,
+    ) -> bool:
+        interval = self._adaptive_interval(active_tracks, stable_tracks, avg_motion_stability)
+        metrics.observe("detector_adaptive_interval", float(interval))
+        if frame_index % interval != 0:
+            return False
+        if self._last_detection_frame != frame_index:
             metrics.increment("tracker_refresh_count")
-        return due
+        return True
+
+    def _adaptive_interval(
+        self,
+        active_tracks: int,
+        stable_tracks: int,
+        avg_motion_stability: float,
+    ) -> int:
+        base = max(1, self._settings.detector_interval_frames)
+        min_iv = max(1, self._settings.detector_interval_min_frames)
+        max_iv = max(min_iv, self._settings.detector_interval_max_frames)
+        if active_tracks == 0:
+            return min_iv
+        if avg_motion_stability < self._settings.motion_high_threshold:
+            return max(min_iv, self._settings.detector_interval_motion_frames)
+        if stable_tracks >= max(1, active_tracks // 2) and active_tracks > 0:
+            return min(max_iv, self._settings.detector_interval_stable_frames)
+        return min(max_iv, base)
 
     def prepare_for_detection(self, frame_bgr: np.ndarray) -> tuple[np.ndarray, float]:
-        target_width = self._settings.detector_input_width
-        if target_width <= 0 or frame_bgr.shape[1] <= target_width:
-            return frame_bgr, 1.0
-        scale = target_width / frame_bgr.shape[1]
-        height = max(1, int(frame_bgr.shape[0] * scale))
-        resized = cv2.resize(frame_bgr, (target_width, height), interpolation=cv2.INTER_AREA)
+        enhanced = self._enhance_detector_input(frame_bgr)
+        target_width, target_height = self._select_detector_size(enhanced.shape)
+        metrics.observe("detector_input_resolution", target_width * target_height)
+        metrics.observe("detector_resolution", target_width * target_height)
+        if target_width <= 0 or enhanced.shape[1] <= target_width:
+            return enhanced, 1.0
+        scale = target_width / enhanced.shape[1]
+        height = max(1, int(enhanced.shape[0] * scale))
+        resized = cv2.resize(enhanced, (target_width, height), interpolation=cv2.INTER_AREA)
+        metrics.observe("coordinate_scale_factor", scale)
         return resized, scale
+
+    def _enhance_detector_input(self, frame_bgr: np.ndarray) -> np.ndarray:
+        if not self._settings.detector_input_enable_enhancement:
+            return frame_bgr
+        lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced_l = clahe.apply(l_channel)
+        merged = cv2.merge((enhanced_l, a_channel, b_channel))
+        enhanced = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
+        blurred = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=0.8)
+        sharpened = cv2.addWeighted(enhanced, 1.25, blurred, -0.25, 0)
+        gamma = 1.1
+        inv = 1.0 / gamma
+        table = np.array([((i / 255.0) ** inv) * 255 for i in range(256)], dtype=np.uint8)
+        return cv2.LUT(sharpened, table)
 
     def scale_faces(self, faces: list[DetectedFace], scale: float) -> list[DetectedFace]:
         if scale == 1.0:
             return faces
-        inv = 1.0 / scale
+        metrics.increment("coordinate_scaling_validations", len(faces))
         return [scale_face_to_original(face, scale) for face in faces]
 
     def filter_faces(self, faces: list[DetectedFace], frame_shape: tuple[int, ...]) -> tuple[list[DetectedFace], list[tuple[DetectedFace, str]]]:
@@ -67,6 +114,7 @@ class DetectionOptimizer:
         if raw_count:
             metrics.observe("detector_rejection_rate", rejected_count / raw_count)
             metrics.observe("face_visibility_ratio", accepted_count / raw_count)
+            metrics.observe("recall_per_resolution", accepted_count / raw_count)
         if raw_count > 0 and accepted_count == 0:
             metrics.increment("detector_missed_face_estimate")
         if raw_count >= self._settings.detector_overload_face_count:
@@ -74,6 +122,7 @@ class DetectionOptimizer:
 
     def observe_tracking_cycle(self) -> None:
         metrics.increment("tracking_cycles")
+        metrics.increment("tracking_only_cycles")
         metrics.observe("tracker_reuse_rate", 1.0)
 
     def evaluate(self, face: DetectedFace, frame_shape: tuple[int, ...]) -> DetectionFilterDecision:
@@ -82,15 +131,31 @@ class DetectionOptimizer:
         area = geometry.area
         metrics.observe("avg_face_size", area)
         metrics.observe("avg_detection_confidence", face.det_score)
-        if face.det_score < self._settings.detector_min_score:
+        score = face.temporal_score if face.temporal_score is not None else face.det_score
+        frame_area = max(1, width * height)
+        area_ratio = area / frame_area
+        if area_ratio < self._settings.detector_small_face_area_ratio:
+            min_score = self._settings.detector_small_face_threshold
+        elif area_ratio < self._settings.detector_medium_face_area_ratio:
+            min_score = self._settings.detector_medium_quality_threshold
+        else:
+            min_score = max(self._settings.detector_min_score, self._settings.detector_high_quality_threshold)
+        if score < min_score:
             return DetectionFilterDecision(False, "weak_detector_score")
         min_width, min_height, min_area = self._adaptive_thresholds(width, height)
+        dynamic_min_area = max(min_area, int(frame_area * self._settings.detector_min_face_area_ratio))
         if geometry.width < min_width or geometry.height < min_height:
             return DetectionFilterDecision(False, "detector_face_too_small")
-        if area < min_area:
+        if area < dynamic_min_area:
             return DetectionFilterDecision(False, "detector_face_area_too_small")
-        if geometry.aspect_ratio > self._settings.detector_max_aspect_ratio:
+        width_height_ratio = geometry.width / max(geometry.height, 1)
+        if (
+            width_height_ratio < self._settings.detector_min_aspect_ratio
+            or width_height_ratio > self._settings.detector_max_aspect_ratio
+        ):
             return DetectionFilterDecision(False, "detector_bad_aspect_ratio")
+        if self._outside_frame_ratio(face, width, height) > 0.35:
+            return DetectionFilterDecision(False, "detector_edge_face")
         margin = self._settings.detector_edge_margin_ratio
         if geometry.x1 <= width * margin or geometry.y1 <= height * margin or geometry.x2 >= width * (1.0 - margin) or geometry.y2 >= height * (1.0 - margin):
             return DetectionFilterDecision(False, "detector_edge_face")
@@ -100,6 +165,38 @@ class DetectionOptimizer:
             if (dx * dx + dy * dy) ** 0.5 > self._settings.detector_center_max_distance:
                 return DetectionFilterDecision(False, "detector_low_center_priority")
         return DetectionFilterDecision(True)
+
+    def _select_detector_size(self, frame_shape: tuple[int, ...]) -> tuple[int, int]:
+        active_tracks = self.active_track_count()
+        occupancy = self._occupancy_ratio(frame_shape)
+        metrics.observe("track_count", active_tracks)
+        metrics.observe("frame_occupancy_ratio", occupancy)
+        if active_tracks >= self._settings.detector_high_track_count or occupancy >= self._settings.detector_high_occupancy_ratio:
+            size = (self._settings.detector_large_width, self._settings.detector_large_height)
+        elif active_tracks >= self._settings.detector_medium_track_count or self._last_faces:
+            size = (self._settings.detector_medium_width, self._settings.detector_medium_height)
+        else:
+            size = (self._settings.detector_input_width, self._settings.detector_input_height)
+        return size
+
+    def _occupancy_ratio(self, frame_shape: tuple[int, ...]) -> float:
+        frame_area = max(1, int(frame_shape[0]) * int(frame_shape[1]))
+        face_area = 0
+        for face in self._last_faces:
+            geometry = compute_face_geometry(face, frame_shape)
+            face_area += geometry.area
+        return min(1.0, face_area / frame_area)
+
+    def _outside_frame_ratio(self, face: DetectedFace, frame_width: int, frame_height: int) -> float:
+        raw_width = max(1e-6, face.bbox.x2 - face.bbox.x1)
+        raw_height = max(1e-6, face.bbox.y2 - face.bbox.y1)
+        raw_area = raw_width * raw_height
+        clipped_x1 = max(0.0, min(float(frame_width), face.bbox.x1))
+        clipped_y1 = max(0.0, min(float(frame_height), face.bbox.y1))
+        clipped_x2 = max(0.0, min(float(frame_width), face.bbox.x2))
+        clipped_y2 = max(0.0, min(float(frame_height), face.bbox.y2))
+        clipped_area = max(0.0, clipped_x2 - clipped_x1) * max(0.0, clipped_y2 - clipped_y1)
+        return max(0.0, min(1.0, 1.0 - (clipped_area / raw_area)))
 
     def _adaptive_thresholds(self, width: int, height: int) -> tuple[int, int, int]:
         reference_width = 640.0

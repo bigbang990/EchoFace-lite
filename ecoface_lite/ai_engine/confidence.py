@@ -19,7 +19,9 @@ class ConfidencePolicy:
         self._settings = settings
 
     def threshold_for(self, diagnostics: FrameDiagnostics, quality: FaceQualityResult) -> float:
-        threshold = self._settings.match_confidence_threshold
+        threshold = self._settings.confidence_large_face_threshold
+        if quality.quality_score < 0.55:
+            threshold = self._settings.confidence_small_face_threshold
         if diagnostics.brightness < self._settings.confidence_low_light_threshold:
             threshold += self._settings.confidence_low_light_margin
         if quality.blur_score < self._settings.face_quality_min_blur_score * 1.5:
