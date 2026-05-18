@@ -19,6 +19,7 @@ class OverlayItem:
     match: "FrameMatch | None"
     label: str
     state: str
+    show_diagnostics: bool = False
 
 
 class VideoPreviewWriter:
@@ -76,3 +77,31 @@ class VideoPreviewWriter:
             1,
             cv2.LINE_AA,
         )
+        if not item.show_diagnostics:
+            return
+        trace = item.match.trace if item.match is not None else None
+        if trace is None:
+            return
+        diag_color = (180, 180, 180)
+        lines: list[str] = []
+        if trace.validation_tier is not None:
+            lines.append(f"T:{trace.validation_tier}")
+        if trace.quality_score is not None:
+            lines.append(f"Q:{trace.quality_score:.2f}")
+        if trace.fused_confidence is not None:
+            lines.append(f"C:{trace.fused_confidence:.2f}")
+        if trace.validator_reasons:
+            reasons_str = ",".join(trace.validator_reasons[:2])
+            lines.append(f"R:{reasons_str}")
+        if not lines:
+            return
+        line_h = 14
+        base_y = y2 + 2
+        for i, line in enumerate(lines):
+            ly = base_y + (i + 1) * line_h
+            if ly >= h - 2:
+                break
+            cv2.putText(
+                frame_bgr, line, (x1, ly),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, diag_color, 1, cv2.LINE_AA,
+            )

@@ -14,6 +14,14 @@ class FaceDebugTrace:
     detector_confidence: float | None = None
     blur_score: float | None = None
     rejection_reason: str | None = None
+    validation_tier: str | None = None
+    quality_score: float | None = None
+    fused_confidence: float | None = None
+    landmark_score: float | None = None
+    brightness_score: float | None = None
+    geometry_score: float | None = None
+    size_score: float | None = None
+    validator_reasons: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)

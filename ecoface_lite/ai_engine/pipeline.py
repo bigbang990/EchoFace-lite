@@ -36,6 +36,7 @@ from ecoface_lite.config.tracking import TrackingConfig, get_tracking_config
 from ecoface_lite.core.config import Settings
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
+from ecoface_lite.core.validator import FaceValidator, ValidationTier, ValidationResult
 
 logger = get_logger(__name__)
 
@@ -65,6 +66,8 @@ class RecognitionPipeline:
         self._event_validator = event_validator or EventValidator(settings)
         self._detection_optimizer = DetectionOptimizer(settings)
         self._face_validator = FaceCandidateValidator(settings)
+        self._unified_face_validator = FaceValidator(settings)
+        self._weak_pass_attempts: dict[int, int] = {}
         self._temporal_detector = TemporalDetectorFilter(settings)
         self._crop_validator = FaceCropValidator(settings)
         self._embedding_fusion = EmbeddingFusion(settings)
@@ -146,78 +149,108 @@ class RecognitionPipeline:
         raw_faces = self._detection_optimizer.scale_faces(raw_faces, scale)
         raw_faces = self._temporal_detector.apply(raw_faces, frame_index)
 
-        geometry_accepted: list[DetectedFace] = []
-        for face in raw_faces:
-            decision = self._face_validator.validate(
-                face, prepared.bgr.shape, frame_bgr=prepared.bgr, frame_index=frame_index
+        # ── Phase 2A: Unified Face Validator pre-filter ─────────────────────
+        validator_results: dict[str, ValidationResult] = {}
+        face_tier: dict[int, ValidationTier] = {}
+        strict_pass_faces: list[DetectedFace] = []
+        weak_pass_faces: list[DetectedFace] = []
+        track_only_faces: list[DetectedFace] = []
+
+        for idx, face in enumerate(raw_faces):
+            face_uuid = f"{frame_index}_{idx}"
+            result = self._unified_face_validator.validate(
+                face, prepared.bgr, prepared.bgr.shape, frame_index
             )
-            if decision.accepted:
-                geometry_accepted.append(face)
+            validator_results[face_uuid] = result
+            face_tier[id(face)] = result.tier
+
+            if result.tier == ValidationTier.REJECT:
+                matches.append(self._validator_rejection_match(
+                    face, frame_index, prepared, output_scale, result
+                ))
+                metrics.increment("validator_reject_count")
+            elif result.tier == ValidationTier.TRACK_ONLY:
+                track_only_faces.append(face)
+                metrics.increment("validator_track_only_count")
+            elif result.tier == ValidationTier.WEAK_PASS:
+                weak_pass_faces.append(face)
+                metrics.increment("validator_weak_pass_count")
             else:
-                label = decision.debug_label or decision.reason or "geometry_rejected"
+                strict_pass_faces.append(face)
+                metrics.increment("validator_strict_pass_count")
+
+        if validator_results:
+            vals = list(validator_results.values())
+            metrics.observe_rolling("validator_avg_quality_score",
+                sum(r.quality_score for r in vals) / len(vals))
+            metrics.observe_rolling("validator_avg_fused_confidence",
+                sum(r.fused_confidence for r in vals) / len(vals))
+
+        # ── Legacy validators (secondary safety net, feature-flagged) ───────
+        if self._settings.enable_legacy_face_validation:
+            legacy_faces = strict_pass_faces + weak_pass_faces
+            geometry_accepted: list[DetectedFace] = []
+            for face in legacy_faces:
+                decision = self._face_validator.validate(
+                    face, prepared.bgr.shape, frame_bgr=prepared.bgr, frame_index=frame_index
+                )
+                if decision.accepted:
+                    geometry_accepted.append(face)
+                else:
+                    label = decision.debug_label or decision.reason or "geometry_rejected"
+                    matches.append(
+                        self._rejection_match(
+                            face, frame_index, prepared, output_scale,
+                            label, "yellow", ("DETECTED", "GEOMETRY_REJECTED"),
+                        )
+                    )
+                    metrics.increment("geometry_validation_rejections")
+
+            faces, detector_rejections = self._detection_optimizer.filter_faces(
+                geometry_accepted, prepared.bgr.shape
+            )
+            total_rejected = len(raw_faces) - len(faces)
+            self._detection_optimizer.observe_detection_cycle(
+                frame_index, len(raw_faces), len(faces), total_rejected
+            )
+
+            for rejected_face, reason in detector_rejections:
+                debug_label = f"REJECTED: {reason}" if reason and not reason.startswith("REJECTED:") else reason
                 matches.append(
                     self._rejection_match(
-                        face,
-                        frame_index,
-                        prepared,
-                        output_scale,
-                        label,
-                        "yellow",
-                        ("DETECTED", "GEOMETRY_REJECTED"),
+                        rejected_face, frame_index, prepared, output_scale,
+                        debug_label or "detector_filter_rejected", "yellow",
+                        ("DETECTED", "FILTERED"),
                     )
                 )
-                metrics.increment("geometry_validation_rejections")
+        else:
+            faces = strict_pass_faces + weak_pass_faces + track_only_faces
+            total_rejected = len(raw_faces) - len(faces)
 
-        faces, detector_rejections = self._detection_optimizer.filter_faces(geometry_accepted, prepared.bgr.shape)
-        total_rejected = len(raw_faces) - len(faces)
-        self._detection_optimizer.observe_detection_cycle(
-            frame_index, len(raw_faces), len(faces), total_rejected
-        )
         metrics.increment("total_faces_detected", len(faces))
         metrics.observe("avg_faces_per_frame", len(faces))
-
-        for rejected_face, reason in detector_rejections:
-            debug_label = f"REJECTED: {reason}" if reason and not reason.startswith("REJECTED:") else reason
-            matches.append(
-                self._rejection_match(
-                    rejected_face,
-                    frame_index,
-                    prepared,
-                    output_scale,
-                    debug_label or "detector_filter_rejected",
-                    "yellow",
-                    ("DETECTED", "FILTERED"),
-                )
-            )
 
         if len(raw_faces) >= self._settings.detector_overload_face_count:
             logger.warning(
                 "Detector overload frame_index=%s raw_faces=%s accepted=%s rejected=%s",
-                frame_index,
-                len(raw_faces),
-                len(faces),
-                total_rejected,
+                frame_index, len(raw_faces), len(faces), total_rejected,
             )
 
         tracks = self._track_manager.update_from_detections(
-            faces,
-            frame_index,
-            frame_shape=prepared.bgr.shape,
-            frame_bgr=prepared.bgr,
+            faces, frame_index,
+            frame_shape=prepared.bgr.shape, frame_bgr=prepared.bgr,
         )
 
         if not faces:
             diagnostics.record("frame", "no_face_detected", frame_index=frame_index)
 
         for face, track in zip(faces, tracks):
+            tier = face_tier.get(id(face), ValidationTier.STRICT_PASS)
             match = self._process_tracked_face(
-                face=face,
-                track=track,
-                prepared=prepared,
-                frame_index=frame_index,
-                gallery=gallery,
-                output_scale=output_scale,
-                from_detection=True,
+                face=face, track=track, prepared=prepared,
+                frame_index=frame_index, gallery=gallery,
+                output_scale=output_scale, from_detection=True,
+                validation_tier=tier,
             )
             if match is not None:
                 matches.append(match)
@@ -258,7 +291,8 @@ class RecognitionPipeline:
                 matches.append(match)
 
         total = max(1, len(tracks))
-        metrics.observe("embedding_reuse_rate", metrics.snapshot().counters.get("embedding_cache_hits", 0) / total)
+        emb_hits = metrics.snapshot().counters.get("embedding_cache_hits", 0)
+        metrics.observe_rate("embedding_reuse_rate", float(emb_hits), float(total))
         self._finalize_frame(frame_index)
         self._export_tracking_metrics()
         return matches
@@ -278,11 +312,57 @@ class RecognitionPipeline:
         gallery: list[tuple[int, np.ndarray]],
         output_scale: float,
         from_detection: bool,
+        validation_tier: ValidationTier = ValidationTier.STRICT_PASS,
     ) -> FrameMatch | None:
         width, height = _face_size(face)
         metrics.observe("avg_detected_face_area", width * height)
 
-        if from_detection:
+        # ── TRACK_ONLY: tracking only, no embedding/matching ────────────
+        if validation_tier == ValidationTier.TRACK_ONLY:
+            metrics.increment("validator_embedding_skips")
+            return FrameMatch(
+                frame_index=frame_index, person_id=None, confidence=None,
+                threshold=self._settings.match_confidence_threshold,
+                reason="track_only", track_id=track.numeric_track_id if track else None,
+                face=_scale_face_for_output(face, output_scale),
+                trace=_trace(face, "yellow", ("DETECTED", "TRACK_ONLY"),
+                    "track_only", detector_confidence=face.det_score,
+                    frame_shape=prepared.bgr.shape, output_scale=output_scale,
+                    validation_tier=validation_tier.value),
+            )
+
+        # ── WEAK_PASS: track, defer embedding, enforce retry limit ──────
+        if validation_tier == ValidationTier.WEAK_PASS:
+            if track is not None:
+                tid = track.numeric_track_id
+                attempts = self._weak_pass_attempts.get(tid, 0) + 1
+                self._weak_pass_attempts[tid] = attempts
+                if attempts > self._settings.validator_weak_pass_retry_limit:
+                    metrics.increment("validator_embedding_skips")
+                    return FrameMatch(
+                        frame_index=frame_index, person_id=None, confidence=None,
+                        threshold=self._settings.match_confidence_threshold,
+                        reason="weak_pass_exhausted", track_id=tid,
+                        face=_scale_face_for_output(face, output_scale),
+                        trace=_trace(face, "yellow", ("DETECTED", "WEAK_PASS_EXHAUSTED"),
+                            "weak_pass_exhausted", detector_confidence=face.det_score,
+                            frame_shape=prepared.bgr.shape, output_scale=output_scale,
+                            validation_tier=validation_tier.value),
+                    )
+            metrics.increment("validator_embedding_skips")
+            return FrameMatch(
+                frame_index=frame_index, person_id=None, confidence=None,
+                threshold=self._settings.match_confidence_threshold,
+                reason="weak_pass_deferred", track_id=track.numeric_track_id if track else None,
+                face=_scale_face_for_output(face, output_scale),
+                trace=_trace(face, "yellow", ("DETECTED", "WEAK_PASS"),
+                    "weak_pass_deferred", detector_confidence=face.det_score,
+                    frame_shape=prepared.bgr.shape, output_scale=output_scale,
+                    validation_tier=validation_tier.value),
+            )
+
+        # ── STRICT_PASS: full pipeline (unchanged below) ────────────────
+        if from_detection and self._settings.enable_legacy_quality_checks:
             crop_check = self._crop_validator.validate(prepared.bgr, face)
             if not crop_check.accepted:
                 label = f"REJECTED: {crop_check.reason}" if crop_check.reason else "REJECTED: bad_crop"
@@ -296,9 +376,13 @@ class RecognitionPipeline:
                     ("DETECTED", "CROP_REJECTED"),
                 )
 
-        quality = self._quality_assessor.assess(prepared.bgr, face)
-        if not quality.accepted:
-            return self._quality_rejection(face, frame_index, prepared, output_scale, quality, width, height)
+        if self._settings.enable_legacy_quality_checks:
+            quality = self._quality_assessor.assess(prepared.bgr, face)
+            if not quality.accepted:
+                return self._quality_rejection(face, frame_index, prepared, output_scale, quality, width, height)
+        else:
+            from ecoface_lite.ai_engine.face_quality import FaceQualityResult
+            quality = FaceQualityResult(True, blur_score=50.0, quality_score=0.7)
 
         metrics.increment("accepted_faces")
         threshold = self._confidence_policy.threshold_for(prepared.diagnostics, quality)
@@ -639,6 +723,34 @@ class RecognitionPipeline:
                 metrics.observe("avg_temporal_consistency", sum(consistencies) / len(consistencies))
             switches = sum(t.identity_switch_count for t in tracks)
             metrics.observe("identity_switch_rate", switches / max(len(tracks), 1))
+        # Phase 2A: validator embedding skip rate
+        emb_skips = metrics.snapshot().counters.get("validator_embedding_skips", 0)
+        emb_total = metrics.snapshot().counters.get("embeddings_generated", 0) + emb_skips
+        metrics.observe_rate("validator_embedding_skip_rate", float(emb_skips), float(max(emb_total, 1)))
+
+    def _validator_rejection_match(self, face, frame_index, prepared, output_scale, result: ValidationResult) -> FrameMatch:
+        metrics.increment("rejected_faces")
+        metrics.increment("yellow_box_count")
+        width, height = _face_size(face)
+        metrics.observe("avg_rejected_face_area", width * height)
+        reason = result.primary_reason or "validator_rejected"
+        diagnostics.record(
+            "validator_rejection", reason, frame_index=frame_index,
+            metadata={"quality_score": result.quality_score, "det_score": face.det_score},
+        )
+        return FrameMatch(
+            frame_index=frame_index, person_id=None, confidence=None,
+            threshold=self._settings.match_confidence_threshold,
+            reason=reason, face=_scale_face_for_output(face, output_scale),
+            trace=_trace(
+                face, "yellow", ("DETECTED", "VALIDATOR_REJECTED"), reason,
+                detector_confidence=face.det_score, blur_score=result.blur_score,
+                frame_shape=prepared.bgr.shape, output_scale=output_scale,
+                validation_tier=result.tier.value, quality_score=result.quality_score,
+                fused_confidence=result.fused_confidence,
+                validator_reasons=result.rejection_reasons,
+            ),
+        )
 
     @staticmethod
     def _face_key(face: DetectedFace) -> tuple[float, float, float, float]:
@@ -682,6 +794,10 @@ def _trace(
     blur_score: float | None = None,
     frame_shape: tuple[int, ...] | None = None,
     output_scale: float = 1.0,
+    validation_tier: str | None = None,
+    quality_score: float | None = None,
+    fused_confidence: float | None = None,
+    validator_reasons: tuple[str, ...] | None = None,
 ) -> FaceDebugTrace:
     geometry = compute_face_geometry(face, frame_shape or (10_000, 10_000, 3))
     width = max(1, int(round(geometry.width / max(output_scale, 1e-6))))
@@ -694,6 +810,10 @@ def _trace(
         detector_confidence=detector_confidence,
         blur_score=blur_score,
         rejection_reason=reason,
+        validation_tier=validation_tier,
+        quality_score=quality_score,
+        fused_confidence=fused_confidence,
+        validator_reasons=validator_reasons,
     )
 
 

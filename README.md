@@ -88,14 +88,9 @@ Base prefix: `/api/v1`
 | GET | `/persons` | List enrolled persons |
 | POST | `/persons` | Multipart enroll (`display_name`, `notes`, `image`) |
 | GET | `/detections` | Recent detection events (`limit` query) |
-| POST | `/videos/process` | Legacy synchronous JSON processing for short clips only |
-| POST | `/videos/process/async` | Create a background job for a server-side video path |
-| POST | `/videos/upload-and-process` | Upload a video, persist it locally, create a background job, return immediately |
-| GET | `/videos/processing-status/{job_id}` | Poll job status, progress, errors, and alert count |
+| POST | `/videos/process` | JSON `{ "video_relative_path": "..." }` under `VIDEOS_DIR` |
 
-**Video processing workflow:** Dashboard → FastAPI upload/path endpoint → queued `processing_status` row → single local background worker → `VideoFileSource` frame iterator → frame skipping + resize → InsightFace pipeline → event dedupe + snapshot persistence → dashboard polling.
-
-**Why this fixes request timeouts:** the HTTP request only saves the file and creates a job row, then returns `{ job_id, status_url }`. CPU-heavy OpenCV/InsightFace work happens outside the API request lifecycle.
+**Future-friendly additions (not implemented yet to avoid scope creep):** `POST /jobs` + `GET /jobs/{id}` for long videos, `WebSocket`/`SSE` for live alerts, `POST /auth/token` when you add users/roles.
 
 ---
 
@@ -133,18 +128,10 @@ streamlit run dashboard/app.py
 
 **Typical demo flow**
 
-1. Upload a clip from Streamlit or put a prerecorded clip under `data/videos/`.
+1. Put a prerecorded clip under `data/videos/`.
 2. Enroll a missing person via Swagger `POST /persons` or Streamlit tab.
-3. Call `POST /videos/upload-and-process` or `POST /videos/process/async`.
-4. Poll `GET /videos/processing-status/{job_id}` until `completed` or `failed`.
-5. Inspect `GET /detections` and snapshot files under `data/snapshots/`.
-
-**CPU-friendly video settings**
-
-- `VIDEO_FRAME_SKIP` — process every Nth frame.
-- `VIDEO_INFERENCE_WIDTH` — downscale frames before AI inference.
-- `VIDEO_PROGRESS_INTERVAL` — reduce DB writes during long jobs.
-- `VIDEO_EVENT_DEDUPE_FRAMES` — suppress duplicate alerts for the same person across nearby frames.
+3. Call `POST /videos/process` with `{ "video_relative_path": "yourclip.mp4" }`.
+4. Inspect `GET /detections` and snapshot files under `data/snapshots/`.
 
 **Tests**
 
@@ -165,7 +152,7 @@ pytest -q
 
 ## 10. Future scalability (intentionally incremental)
 
-- **External job queue for long videos/cloud:** replace the in-process worker with Celery/RQ/Arq/SQS while reusing the same `video_service.run_async_video_job` entry point.
+- **Job queue for long videos:** keep service functions pure; add a worker process that imports the same services (no architecture break).
 - **PostgreSQL + Alembic:** add migrations; consider `pgvector` for similarity search at scale.
 - **AuthN/Z:** FastAPI dependencies for `get_current_user` + route groups; DB tables for org/camera RBAC.
 - **Multi-camera / RTSP:** implement `VideoSource` subclasses; reuse the same `RecognitionPipeline.process_frame` contract.
