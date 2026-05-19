@@ -1,0 +1,13 @@
+{
+  "frame_index": 399,
+  "reason": "face_too_small",
+  "detector_confidence": 0.8326789140701294,
+  "face_width": 55,
+  "face_height": 61,
+  "blur_score": 1298.1998200963483,
+  "stages": [
+    "DETECTED",
+    "FILTERED",
+    "QUALITY_REJECTED"
+  ]
+}
