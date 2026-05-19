@@ -1,38 +1,87 @@
-# Python
+# =========================
+# Runtime Data
+# =========================
+data/
+
+# Keep directory structure if needed
+!data/.gitkeep
+
+# =========================
+# Uploaded Media
+# =========================
+uploads/
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# =========================
+# Snapshots / Previews
+# =========================
+*_preview.jpg
+*_preview.png
+snapshots/
+previews/
+
+# =========================
+# Debug / Rejected Faces
+# =========================
+debug/
+rejected_faces/
+rejected_snapshots/
+
+# =========================
+# Experiment Outputs
+# =========================
+experiments/
+metrics_exports/
+logs/runtime/
+
+# =========================
+# Python Cache
+# =========================
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+*.pyo
 *.so
 .Python
 .venv/
 venv/
 ENV/
-.env
 *.egg-info/
 .eggs/
 dist/
 build/
+*$py.class
 
-# IDE
-.idea/
+# =========================
+# Streamlit
+# =========================
+.streamlit/secrets.toml
+
+# =========================
+# Environment
+# =========================
+.env
+.env.*
+
+# =========================
+# IDE / OS
+# =========================
 .vscode/
-*.swp
-
-# Data & runtime (keep structure, ignore contents)
-data/uploads/*
-!data/uploads/.gitkeep
-data/snapshots/*
-!data/snapshots/.gitkeep
-data/videos/*
-!data/videos/.gitkeep
-*.db
-*.sqlite3
-logs/*.log
-
-# Models cache (InsightFace downloads)
-models/
-.insightface/
-
-# OS
+.idea/
 .DS_Store
 Thumbs.db
+*.swp
+
+# =========================
+# Database
+# =========================
+*.db
+*.sqlite3
+
+# =========================
+# Models cache (InsightFace downloads)
+# =========================
+models/
+.insightface/

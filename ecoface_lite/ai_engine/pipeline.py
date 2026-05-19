@@ -12,6 +12,9 @@ from ecoface_lite.ai_engine.confidence import ConfidencePolicy
 from ecoface_lite.ai_engine.detection_optimizer import DetectionOptimizer
 from ecoface_lite.ai_engine.diagnostics import diagnostics
 from ecoface_lite.ai_engine.detector import DetectedFace, FaceDetector
+from ecoface_lite.ai_engine.detection.detectors import SCRFDDetector, MultiScaleDetector
+from ecoface_lite.ai_engine.detection.fusion import WeightedBoxFusion, DuplicateFilter, ConfidenceNormalizer
+from ecoface_lite.ai_engine.detection.temporal import WeakDetectionMemory
 from ecoface_lite.ai_engine.embedder import FaceEmbedder
 from ecoface_lite.ai_engine.event_validator import EventValidator
 from ecoface_lite.ai_engine.face_candidate_validator import FaceCandidateValidator
@@ -34,6 +37,8 @@ from ecoface_lite.ai_engine.tracking.track_state import ACTIVE_RECOGNITION_STATE
 from ecoface_lite.ai_engine.tracking.tracked_face import TrackedFace
 from ecoface_lite.config.tracking import TrackingConfig, get_tracking_config
 from ecoface_lite.core.config import Settings
+from ecoface_lite.core.detection_metrics import DetectionMetricsCollector, RecallMetricsCalculator, FalsePositiveLogger
+from ecoface_lite.core.experiment_export import ExperimentExporter, EventTimeline, ExperimentNotesTracker
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
 from ecoface_lite.core.validator import FaceValidator, ValidationTier, ValidationResult
@@ -56,7 +61,35 @@ class RecognitionPipeline:
     ) -> None:
         self._settings = settings
         self._tracking_cfg: TrackingConfig = get_tracking_config(settings)
-        self._detector = detector
+
+        # ── Phase 2A.2: Wrap detector with MultiScaleDetector if enabled ──────────
+        if settings.enable_multiscale_detection:
+            # Convert InsightFaceDetector to SCRFDDetector wrapper
+            if hasattr(detector, '_app'):
+                # Extract parameters from existing detector
+                model_name = getattr(detector, '_model_name', 'buffalo_l')
+                ctx_id = getattr(detector, '_ctx_id', -1)
+                det_size = getattr(detector, '_det_size', (640, 640))
+                face_app = getattr(detector, '_injected_app', None) or getattr(detector, '_app', None)
+
+                # Create SCRFDDetector wrapper
+                scrfd_detector = SCRFDDetector(
+                    model_name=model_name,
+                    ctx_id=ctx_id,
+                    face_app=face_app,
+                    default_det_size=det_size,
+                )
+
+                # Wrap with MultiScaleDetector
+                self._detector = MultiScaleDetector(scrfd_detector, settings)
+                logger.info("Multi-scale detection enabled with scales: %s", settings.multiscale_scales)
+            else:
+                # Already a BaseDetector or compatible
+                self._detector = detector
+                logger.warning("Detector does not support multi-scale wrapping, using as-is")
+        else:
+            self._detector = detector
+
         self._embedder = embedder
         self._matcher = matcher
         self._preprocessor = preprocessor or FramePreprocessor(settings)
@@ -81,9 +114,193 @@ class RecognitionPipeline:
         self._identity_confidence = IdentityConfidenceEngine(settings)
         self._track_reassociator = TrackReassociator(settings, self._global_identity_memory)
 
+        # ── Phase 2A.1: Detection Observability Foundation ─────────────────────
+        if settings.detection_metrics_enabled:
+            self._detection_metrics = DetectionMetricsCollector(
+                export_dir=settings.resolved_detection_metrics_log_dir(),
+                export_interval=settings.detection_metrics_export_interval,
+            )
+            self._recall_metrics = RecallMetricsCalculator(window_size=100)
+            self._false_positive_logger = FalsePositiveLogger(
+                base_dir=settings.resolved_false_positive_dataset_dir(),
+                enabled=settings.false_positive_snapshot_enabled,
+                max_snapshots=settings.false_positive_max_snapshots,
+                sampling_rate=settings.false_positive_sampling_rate,
+                min_confidence=settings.false_positive_min_confidence,
+            )
+        else:
+            self._detection_metrics = None
+            self._recall_metrics = None
+            self._false_positive_logger = None
+
+        # ── Phase 2A.4: Proposal Fusion Engine ─────────────────────────────────
+        if settings.enable_confidence_normalization:
+            from ecoface_lite.ai_engine.detection.fusion import FusionConfig, NormalizationConfig
+
+            fusion_config = FusionConfig(
+                iou_threshold=settings.fusion_wbf_iou_threshold,
+                crowd_iou_threshold=settings.fusion_crowd_iou_threshold,
+                scale_weight_tiny=settings.fusion_scale_weight_tiny,
+                scale_weight_small=settings.fusion_scale_weight_small,
+                scale_weight_baseline=settings.fusion_scale_weight_baseline,
+            )
+
+            norm_config = NormalizationConfig(
+                tiny_threshold=settings.multiscale_tiny_face_threshold,
+                small_threshold=settings.multiscale_small_face_threshold,
+            )
+
+            self._wbf_fusion = WeightedBoxFusion(fusion_config)
+            self._duplicate_filter = DuplicateFilter()
+            self._confidence_normalizer = ConfidenceNormalizer(norm_config)
+            logger.info("Proposal fusion engine enabled")
+        else:
+            self._wbf_fusion = None
+            self._duplicate_filter = None
+            self._confidence_normalizer = None
+
+        # ── Phase 2A.5: Temporal Weak Detection Recovery ────────────────────────
+        if settings.enable_weak_detection_memory:
+            from ecoface_lite.ai_engine.detection.temporal import MemoryConfig
+
+            memory_config = MemoryConfig(
+                max_frames=settings.weak_memory_max_frames,
+                cluster_iou=settings.weak_memory_cluster_iou,
+                min_recurrence=settings.weak_memory_min_recurrence,
+                promotion_boost=settings.weak_memory_promotion_boost,
+                max_boost=settings.weak_memory_max_boost,
+                motion_threshold=settings.weak_memory_motion_threshold,
+            )
+
+            self._weak_detection_memory = WeakDetectionMemory(memory_config)
+            logger.info("Temporal weak detection memory enabled")
+        else:
+            self._weak_detection_memory = None
+
+        # ── Experiment Export System ───────────────────────────────────────────
+        if settings.export_enabled:
+            from ecoface_lite.core.experiment_export import ExportConfig
+
+            export_config = ExportConfig(
+                export_format=settings.export_format,
+                include_screenshots=settings.export_include_screenshots,
+                include_false_positives=settings.export_include_false_positives,
+                include_graph_data=settings.export_include_graph_data,
+                include_event_timeline=settings.export_include_event_timeline,
+                compress_images=settings.export_compress_images,
+            )
+
+            self._experiment_exporter = ExperimentExporter(settings, export_config)
+            self._event_timeline = EventTimeline()
+            self._notes_tracker = ExperimentNotesTracker()
+
+            # Link timeline and tracker to exporter
+            self._experiment_exporter.set_event_timeline(self._event_timeline)
+            self._experiment_exporter.set_notes_tracker(self._notes_tracker)
+
+            logger.info("Experiment export system enabled")
+        else:
+            self._experiment_exporter = None
+            self._event_timeline = None
+            self._notes_tracker = None
+
     @property
     def _track_manager(self):
         return self._recognition_session.track_manager
+
+    def flush_metrics(self) -> None:
+        """Flush detection metrics to disk (call before shutdown)."""
+        if self._detection_metrics:
+            self._detection_metrics.flush()
+        if self._false_positive_logger:
+            export_path = self._settings.resolved_false_positive_dataset_dir() / "metadata.json"
+            self._false_positive_logger.export_metadata(export_path)
+
+    def export_experiment_session(
+        self,
+        video_name: str,
+        video_duration: float = 0.0,
+        frame_count: int = 0,
+        test_operator: str = "",
+        notes: str = "",
+    ) -> Path:
+        """Export complete experiment session.
+
+        Args:
+            video_name: Name of the video file
+            video_duration: Duration in seconds
+            frame_count: Total number of frames
+            test_operator: Name of the test operator
+            notes: Experimental notes
+
+        Returns:
+            Path to exported file or directory
+        """
+        if not self._experiment_exporter:
+            raise RuntimeError("Experiment export system is not enabled")
+
+        # Set metadata
+        self._experiment_exporter.set_metadata(
+            video_name=video_name,
+            video_duration=video_duration,
+            frame_count=frame_count,
+            test_operator=test_operator,
+            notes=notes,
+        )
+
+        # Collect metrics data
+        metrics_data = {}
+        if self._detection_metrics:
+            metrics_data["per_frame_metrics"] = self._detection_metrics.get_all_metrics()
+
+        # Export
+        export_dir = self._settings.resolved_export_dir()
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        return self._experiment_exporter.export_session(export_dir, metrics_data)
+
+    def record_experiment_adjustment(
+        self,
+        adjustment: str,
+        old_value: Any,
+        new_value: Any,
+        reason: str,
+    ) -> None:
+        """Record an experimental adjustment.
+
+        Args:
+            adjustment: Description of the adjustment
+            old_value: Previous value
+            new_value: New value
+            reason: Reason for the adjustment
+        """
+        if self._notes_tracker:
+            self._notes_tracker.record_adjustment(
+                adjustment=adjustment,
+                old_value=old_value,
+                new_value=new_value,
+                reason=reason,
+            )
+
+    def get_experiment_notes(self) -> str:
+        """Get experiment notes summary.
+
+        Returns:
+            Formatted summary of all adjustments
+        """
+        if self._notes_tracker:
+            return self._notes_tracker.get_summary()
+        return "No experiment notes available."
+
+    def get_event_timeline_statistics(self) -> dict[str, Any]:
+        """Get event timeline statistics.
+
+        Returns:
+            Dictionary with event statistics
+        """
+        if self._event_timeline:
+            return self._event_timeline.get_statistics()
+        return {}
 
     def enroll_reference_embedding(self, frame_bgr: np.ndarray) -> np.ndarray:
         prepared = self._preprocessor.process(frame_bgr)
@@ -139,15 +356,83 @@ class RecognitionPipeline:
         output_scale: float,
     ) -> list[FrameMatch]:
         matches: list[FrameMatch] = []
+
+        # ── Phase 2A.1: Record frame start for metrics ─────────────────────────
+        if self._detection_metrics:
+            frame_start_time = self._detection_metrics.record_frame_start(frame_index)
+
         detection_frame, scale = self._detection_optimizer.prepare_for_detection(prepared.bgr)
         with metrics.timer("face_detection_duration"):
             raw_faces = self._detector.detect(detection_frame)
+        detection_latency_ms = metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
         metrics.observe(
             "detector_runtime_ms",
-            metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0,
+            detection_latency_ms,
         )
         raw_faces = self._detection_optimizer.scale_faces(raw_faces, scale)
         raw_faces = self._temporal_detector.apply(raw_faces, frame_index)
+
+        # ── Phase 2A.4: Apply proposal fusion if enabled ─────────────────────────
+        if self._wbf_fusion and self._confidence_normalizer:
+            # Detect if this is a crowd scene
+            is_crowd = len(raw_faces) >= 8
+
+            # Normalize confidence across scales
+            raw_faces = self._confidence_normalizer.normalize(raw_faces)
+
+            # Apply weighted box fusion
+            raw_faces = self._wbf_fusion.fuse(raw_faces, prepared.bgr.shape, is_crowd_scene=is_crowd)
+
+            # Apply duplicate filtering
+            raw_faces = self._duplicate_filter.filter(raw_faces, is_crowd_scene=is_crowd)
+
+            # Limit to max proposals
+            if len(raw_faces) > self._settings.fusion_max_proposals_per_frame:
+                raw_faces = sorted(raw_faces, key=lambda f: f.det_score, reverse=True)
+                raw_faces = raw_faces[:self._settings.fusion_max_proposals_per_frame]
+
+            logger.debug(
+                "Fusion applied: %d -> %d faces, crowd=%s",
+                len(raw_faces),
+                len(raw_faces),
+                is_crowd,
+            )
+
+        # ── Phase 2A.5: Apply temporal weak detection recovery ───────────────────
+        if self._weak_detection_memory:
+            promoted = self._weak_detection_memory.update(raw_faces, frame_index)
+
+            # Apply confidence boosts to promoted faces
+            for face, boost in promoted:
+                # Find the face in raw_faces and boost its confidence
+                for i, rf in enumerate(raw_faces):
+                    if id(rf) == id(face):
+                        boosted_confidence = min(1.0, rf.det_score + boost)
+                        raw_faces[i] = DetectedFace(
+                            bbox=rf.bbox,
+                            det_score=boosted_confidence,
+                            aligned_face=rf.aligned_face,
+                            embedding=rf.embedding,
+                            landmarks=rf.landmarks,
+                            temporal_score=rf.temporal_score,
+                        )
+                        logger.debug(
+                            "Weak detection promotion applied: boost=%.3f, new_conf=%.3f",
+                            boost,
+                            boosted_confidence,
+                        )
+
+                        # ── Export: Record weak detection promotion event ─────────────
+                        if self._event_timeline:
+                            face_size = max(rf.bbox.x2 - rf.bbox.x1, rf.bbox.y2 - rf.bbox.y1)
+                            self._event_timeline.record_weak_detection_promoted(
+                                frame_id=frame_index,
+                                track_id=None,
+                                face_size=face_size,
+                                confidence_before=rf.det_score,
+                                confidence_after=boosted_confidence,
+                            )
+                        break
 
         # ── Phase 2A: Unified Face Validator pre-filter ─────────────────────
         validator_results: dict[str, ValidationResult] = {}
@@ -169,6 +454,29 @@ class RecognitionPipeline:
                     face, frame_index, prepared, output_scale, result
                 ))
                 metrics.increment("validator_reject_count")
+
+                # ── Phase 2A.1: Log false positive for rejected faces ─────────────
+                if self._false_positive_logger and result.primary_reason:
+                    self._false_positive_logger.log_false_positive(
+                        frame_bgr=prepared.bgr,
+                        frame_id=frame_index,
+                        bbox=(face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2),
+                        confidence=face.det_score,
+                        rejection_reason=result.primary_reason,
+                        category="unknown",  # Will be enhanced with motion consistency in 2A.6
+                        metadata={"validation_score": result.quality_score},
+                    )
+
+                # ── Export: Record validator rejection event ─────────────────────
+                if self._event_timeline:
+                    face_size = max(face.bbox.x2 - face.bbox.x1, face.bbox.y2 - face.bbox.y1)
+                    self._event_timeline.record_validator_rejected(
+                        frame_id=frame_index,
+                        track_id=None,
+                        face_size=face_size,
+                        confidence=face.det_score,
+                        rejection_reason=result.primary_reason,
+                    )
             elif result.tier == ValidationTier.TRACK_ONLY:
                 track_only_faces.append(face)
                 metrics.increment("validator_track_only_count")
@@ -254,6 +562,31 @@ class RecognitionPipeline:
             )
             if match is not None:
                 matches.append(match)
+
+        # ── Phase 2A.1: Record detection metrics ─────────────────────────────────
+        if self._detection_metrics:
+            # Calculate tracker survival time (average visibility_age of active tracks)
+            active_tracks = self._track_manager.active_tracks()
+            avg_survival_time = 0.0
+            if active_tracks:
+                avg_survival_time = sum(t.visibility_age for t in active_tracks) / len(active_tracks)
+
+            # Count weak detection promotions (from weak_pass to strict_pass via temporal)
+            weak_promotions = 0
+            for track in active_tracks:
+                if hasattr(track, 'confirmation_hits') and track.confirmation_hits >= 3:
+                    weak_promotions += 1
+
+            # Record metrics
+            self._detection_metrics.record_detection(
+                faces=faces,
+                frame_shape=prepared.bgr.shape,
+                detection_latency_ms=detection_latency_ms,
+                validator_rejections=total_rejected,
+                weak_promotions=weak_promotions,
+                false_positives=len([m for m in matches if m.reason in ["below_adaptive_threshold", "no_match_above_threshold"]]),
+                tracker_survival_time=avg_survival_time,
+            )
 
         self._finalize_frame(frame_index)
         self._export_tracking_metrics()
