@@ -208,3 +208,107 @@ class APIClient:
         if backend_version != self.SUPPORTED_API_VERSION:
             return False, f"Version mismatch: backend={backend_version}, dashboard={self.SUPPORTED_API_VERSION}"
         return True, "OK"
+    
+    # Experimental configuration endpoints
+    def apply_overrides(self, config: dict) -> dict[str, Any]:
+        """Apply experimental runtime overrides."""
+        try:
+            response = self._session.post(
+                f"{self.base_url}/experimental/overrides",
+                json={"config": config},
+                timeout=10,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            return {"error": str(e)}
+    
+    def get_current_overrides(self) -> dict[str, Any]:
+        """Get current experimental runtime overrides."""
+        try:
+            response = self._session.get(
+                f"{self.base_url}/experimental/overrides",
+                timeout=5,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            return {"error": str(e)}
+    
+    def reset_experimental_settings(self) -> dict[str, Any]:
+        """Reset all experimental overrides and CPU protection state."""
+        try:
+            response = self._session.post(
+                f"{self.base_url}/experimental/reset",
+                timeout=10,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            return {"error": str(e)}
+    
+    def get_cpu_protection_state(self) -> dict[str, Any]:
+        """Get current CPU protection state."""
+        try:
+            response = self._session.get(
+                f"{self.base_url}/experimental/cpu-protection",
+                timeout=5,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            return {"error": str(e)}
+    
+    def set_backend_type(self, backend_type: str) -> dict[str, Any]:
+        """Set backend type for CPU protection gating."""
+        try:
+            response = self._session.post(
+                f"{self.base_url}/experimental/backend-type",
+                params={"backend_type": backend_type},
+                timeout=5,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            return {"error": str(e)}
+    
+    def get_default_config(self) -> dict[str, Any]:
+        """Get default runtime configuration for reference."""
+        try:
+            response = self._session.get(
+                f"{self.base_url}/experimental/defaults",
+                timeout=5,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            return {"error": str(e)}
+    
+    # Experiment storage endpoints
+    def get_experiment_snapshots(self, limit: int = 20) -> dict[str, Any]:
+        """Get recent experiment snapshots."""
+        try:
+            # This would need to be added to the backend
+            response = self._session.get(
+                f"{self.base_url}/experiments/snapshots",
+                params={"limit": limit},
+                timeout=5,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            return {"error": str(e)}
+    
+    def get_action_log(self, limit: int = 100) -> dict[str, Any]:
+        """Get recent action log entries."""
+        try:
+            # This would need to be added to the backend
+            response = self._session.get(
+                f"{self.base_url}/experimental/actions",
+                params={"limit": limit},
+                timeout=5,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            return {"error": str(e)}

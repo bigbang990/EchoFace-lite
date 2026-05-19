@@ -8,11 +8,17 @@ Why Streamlit here:
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 
 import cv2
 import streamlit as st
+
+# Add project root to sys.path for absolute imports
+_project_root_path = Path(__file__).resolve().parents[1]
+if str(_project_root_path) not in sys.path:
+    sys.path.insert(0, str(_project_root_path))
 
 from dashboard.api_client import APIClient
 from dashboard.backend_registry import BACKENDS, DEFAULT_BACKEND
@@ -106,7 +112,7 @@ with st.sidebar:
 
 _render_connection_status()
 
-health_tab, enroll_tab, live_test_tab, video_tab, detections_tab, observability_tab = st.tabs(
+health_tab, enroll_tab, live_test_tab, video_tab, detections_tab, observability_tab, experimental_tab = st.tabs(
     [
         "Health",
         "Enroll missing person",
@@ -114,6 +120,7 @@ health_tab, enroll_tab, live_test_tab, video_tab, detections_tab, observability_
         "Video processing",
         "Detections",
         "Observability",
+        "Experimental Console",
     ]
 )
 
@@ -487,3 +494,269 @@ with observability_tab:
         if auto_metrics:
             time.sleep(5)
             st.rerun()
+
+with experimental_tab:
+    st.subheader("Experimental Configuration Console")
+    
+    # Get current backend type for conditional UI
+    backend_name = st.session_state.get("active_backend", DEFAULT_BACKEND)
+    backend_config = BACKENDS.get(backend_name, BACKENDS[DEFAULT_BACKEND])
+    is_local_cpu = backend_name == "Local CPU"
+    
+    # Load current overrides from backend
+    client = _get_api_client()
+    current_overrides = client.get_current_overrides()
+    current_config = current_overrides.get("overrides", {})
+    session_id = current_overrides.get("experiment_session_id", "N/A")
+    
+    st.info(f"Experiment Session ID: `{session_id}`")
+    
+    # Authoritative Form Control Loop - NO LIVE SLIDER RUNS
+    with st.form(key="experimental_tuning_form"):
+        st.subheader("Runtime Tuning Parameters")
+        
+        # Pipeline Mode
+        pipeline_mode = st.selectbox(
+            "Pipeline Mode",
+            options=["LEGACY_ONLY", "HYBRID", "UNIFIED_ONLY"],
+            index=["LEGACY_ONLY", "HYBRID", "UNIFIED_ONLY"].index(current_config.get("pipeline_mode", "HYBRID")),
+            help="LEGACY_ONLY: Legacy validators ON, Unified OFF | HYBRID: Both ON | UNIFIED_ONLY: Unified ON, Legacy OFF"
+        )
+        
+        # Core validator parameters
+        col1, col2 = st.columns(2)
+        with col1:
+            validator_quality_cutoff = st.slider(
+                "Validator Quality Cutoff",
+                min_value=0.0,
+                max_value=1.0,
+                value=current_config.get("validator_quality_cutoff", 0.35),
+                step=0.01,
+                help="Minimum quality score for validator acceptance (0.0-1.0)"
+            )
+            validator_strict_cutoff = st.slider(
+                "Validator Strict Cutoff",
+                min_value=0.0,
+                max_value=1.0,
+                value=current_config.get("validator_strict_cutoff", 0.70),
+                step=0.01,
+                help="Strict threshold for high-confidence validation (0.0-1.0)"
+            )
+        with col2:
+            validator_min_detector_confidence = st.slider(
+                "Min Detector Confidence",
+                min_value=0.0,
+                max_value=1.0,
+                value=current_config.get("validator_min_detector_confidence", 0.45),
+                step=0.01,
+                help="Minimum detection confidence for validator input (0.0-1.0)"
+            )
+            validator_min_blur_var = st.slider(
+                "Min Blur Variance",
+                min_value=0.0,
+                max_value=255.0,
+                value=current_config.get("validator_min_blur_var", 45.0),
+                step=1.0,
+                help="Minimum blur variance threshold (0.0-255.0)"
+            )
+        
+        # Advanced Experimental Tuning (expander)
+        with st.expander("Advanced Experimental Tuning"):
+            col3, col4 = st.columns(2)
+            with col3:
+                validator_max_faces_per_frame = st.slider(
+                    "Max Faces Per Frame",
+                    min_value=1,
+                    max_value=12,
+                    value=current_config.get("validator_max_faces_per_frame", 8),
+                    step=1,
+                    help="Maximum faces to process per frame (1-12)"
+                )
+                validator_min_quality_for_embedding = st.slider(
+                    "Min Quality for Embedding",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=current_config.get("validator_min_quality_for_embedding", 0.55),
+                    step=0.01,
+                    help="Minimum quality for embedding generation (0.0-1.0)"
+                )
+            with col4:
+                tracker_detection_interval = st.slider(
+                    "Tracker Detection Interval",
+                    min_value=1,
+                    max_value=18,
+                    value=current_config.get("tracker_detection_interval", 8),
+                    step=1,
+                    help="Frames between detection runs (1-18)"
+                )
+                track_confirmation_frames = st.slider(
+                    "Track Confirmation Frames",
+                    min_value=1,
+                    max_value=10,
+                    value=current_config.get("track_confirmation_frames", 2),
+                    step=1,
+                    help="Frames required for track confirmation (1-10)"
+                )
+            
+            track_lost_buffer = st.slider(
+                "Track Lost Buffer",
+                min_value=1,
+                max_value=30,
+                value=current_config.get("track_lost_buffer", 18),
+                step=1,
+                help="Frames to track lost face before deletion (1-30)"
+            )
+            
+            identity_match_threshold = st.slider(
+                "Identity Match Threshold",
+                min_value=0.0,
+                max_value=1.0,
+                value=current_config.get("identity_match_threshold", 0.38),
+                step=0.01,
+                help="Cosine similarity threshold for identity matching (0.0-1.0)"
+            )
+        
+        # CPU Safeguards Configuration (conditional UI)
+        st.subheader("CPU Protection Safeguards")
+        if is_local_cpu:
+            cpu_protection = client.get_cpu_protection_state()
+            
+            col5, col6 = st.columns(2)
+            with col5:
+                st.metric(
+                    "Protection Status",
+                    "ACTIVE" if cpu_protection.get("protection_active") else "INACTIVE",
+                    delta=f"Events: {cpu_protection.get('overload_event_count', 0)}"
+                )
+                st.metric(
+                    "Current Detection Interval",
+                    cpu_protection.get("current_detection_interval", 8),
+                    delta="Elevated" if cpu_protection.get("current_detection_interval", 8) > 8 else "Normal"
+                )
+            with col6:
+                st.metric(
+                    "Embedding Suppression",
+                    "ACTIVE" if cpu_protection.get("embedding_suppression_active") else "INACTIVE"
+                )
+                st.metric(
+                    "Debug Truncation",
+                    "ACTIVE" if cpu_protection.get("debug_truncation_active") else "INACTIVE"
+                )
+            
+            st.caption("CPU safeguards are active on LOCAL_CPU backend")
+        else:
+            st.warning("CPU safeguards inactive on GPU backends")
+            st.caption("CPU protection only applies to LOCAL_CPU backend. Current backend: " + backend_name)
+        
+        # Submit button
+        submitted = st.form_submit_button("Apply Changes", type="primary")
+        
+        if submitted:
+            # Build config payload
+            config_payload = {
+                "pipeline_mode": pipeline_mode,
+                "validator_quality_cutoff": validator_quality_cutoff,
+                "validator_strict_cutoff": validator_strict_cutoff,
+                "validator_min_detector_confidence": validator_min_detector_confidence,
+                "validator_min_blur_var": validator_min_blur_var,
+                "validator_max_faces_per_frame": validator_max_faces_per_frame,
+                "validator_min_quality_for_embedding": validator_min_quality_for_embedding,
+                "tracker_detection_interval": tracker_detection_interval,
+                "track_confirmation_frames": track_confirmation_frames,
+                "track_lost_buffer": track_lost_buffer,
+                "identity_match_threshold": identity_match_threshold,
+            }
+            
+            # POST to backend
+            result = client.apply_overrides(config_payload)
+            
+            if "error" in result:
+                st.error(f"Failed to apply changes: {result['error']}")
+            else:
+                st.success(f"Changes applied successfully!")
+                applied = result.get("applied", {})
+                if applied:
+                    st.json(applied)
+                # Force rerun to show clamped values
+                st.rerun()
+    
+    # Reset button (outside form)
+    col7, col8 = st.columns(2)
+    with col7:
+        if st.button("Reset to Defaults", key="btn_reset_experimental"):
+            result = client.reset_experimental_settings()
+            if "error" in result:
+                st.error(f"Failed to reset: {result['error']}")
+            else:
+                st.success(f"Reset complete. New session: `{result.get('new_session_id')}`")
+                st.rerun()
+    
+    with col8:
+        if st.button("Refresh Status", key="btn_refresh_experimental"):
+            st.rerun()
+    
+    st.divider()
+    
+    # Experiment Comparison Panel
+    st.subheader("Experiment Comparison")
+    comparison_subtabs = st.tabs(["History", "Action Log"])
+    
+    with comparison_subtabs[0]:
+        # Load experiment snapshots
+        snapshots_result = client.get_experiment_snapshots(limit=20)
+        
+        if "error" in snapshots_result:
+            st.error(f"Failed to load experiment history: {snapshots_result['error']}")
+        else:
+            snapshots = snapshots_result.get("snapshots", [])
+            
+            if not snapshots:
+                st.info("No experiment history yet. Process videos with experimental configuration to populate history.")
+            else:
+                # Build comparison table
+                comparison_rows = []
+                for snap in snapshots:
+                    metrics = snap.get("raw_metrics", {})
+                    comparison_rows.append({
+                        "Run ID": snap.get("snapshot_id", "N/A")[:8],
+                        "Mode": snap.get("pipeline_mode", "N/A"),
+                        "FPS": f"{metrics.get('average_processing_fps', 0):.2f}",
+                        "Stable Matches": metrics.get("stable_matches", 0),
+                        "Fragmentation": metrics.get("identity_switches", 0),
+                        "Embedding Skips": metrics.get("embedding_skips", 0),
+                        "False Positives": metrics.get("false_positives", 0),
+                        "Avg Detection Confidence": f"{metrics.get('avg_detection_confidence', 0):.3f}",
+                        "Validator Rejection Rate": f"{metrics.get('validator_rejection_rate', 0):.1%}",
+                        "Timestamp": snap.get("timestamp", "N/A"),
+                    })
+                
+                st.dataframe(comparison_rows, use_container_width=True)
+    
+    with comparison_subtabs[1]:
+        show_action_log = st.checkbox("Show Action Log", value=False)
+        
+        if show_action_log:
+            # Load action log entries
+            actions_result = client.get_action_log(limit=100)
+            
+            if "error" in actions_result:
+                st.error(f"Failed to load action log: {actions_result['error']}")
+            else:
+                actions = actions_result.get("actions", [])
+                
+                if not actions:
+                    st.info("No action log entries yet. Actions will be logged when configuration changes occur.")
+                else:
+                    # Build action log table
+                    action_rows = []
+                    for action in actions:
+                        action_rows.append({
+                            "Timestamp": action.get("timestamp", "N/A"),
+                            "Actor": action.get("actor", "N/A"),
+                            "Event Type": action.get("event_type", "N/A"),
+                            "Metadata": str(action.get("metadata", {}))[:100],
+                        })
+                    
+                    st.dataframe(action_rows, use_container_width=True)
+        else:
+            st.caption("Enable checkbox to view action log.")

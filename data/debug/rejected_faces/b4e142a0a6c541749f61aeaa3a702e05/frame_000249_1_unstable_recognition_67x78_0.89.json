@@ -1,0 +1,13 @@
+{
+  "frame_index": 249,
+  "reason": "unstable_recognition",
+  "detector_confidence": 0.8937030090911117,
+  "face_width": 67,
+  "face_height": 78,
+  "blur_score": 839.5893824175951,
+  "stages": [
+    "DETECTED",
+    "TRACKED",
+    "RECOGNIZED"
+  ]
+}
