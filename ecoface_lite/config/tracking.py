@@ -31,6 +31,7 @@ class TrackingConfig:
     min_motion_stability: float = 0.25
     min_recognition_quality: float = 0.40
     embedding_cooldown_frames: int = 12
+    embedding_quality_jump: float = 0.18
     identity_lock_frames: int = 8
     fused_embedding_alpha: float = 0.25
     match_shortlist_k: int = 5
@@ -57,6 +58,7 @@ def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
         min_motion_stability=s.tracking_min_motion_stability,
         min_recognition_quality=s.tracking_min_recognition_quality,
         embedding_cooldown_frames=s.tracking_embedding_cooldown_frames,
+        embedding_quality_jump=s.tracking_embedding_quality_jump,
         identity_lock_frames=s.tracking_identity_lock_frames,
         fused_embedding_alpha=s.tracking_fused_embedding_alpha,
         match_shortlist_k=s.tracking_match_shortlist_k,

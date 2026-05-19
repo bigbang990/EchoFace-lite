@@ -103,11 +103,15 @@ class FaceTrackManager:
         *,
         frame_shape: tuple[int, ...] | None = None,
         frame_bgr: np.ndarray | None = None,
-    ) -> list[TrackedFace]:
-        """Associate detector outputs to tracks (detection frame)."""
+    ) -> list[tuple[DetectedFace, TrackedFace | None]]:
+        """Associate detector outputs to tracks (detection frame).
+        
+        Returns:
+            List of (DetectedFace, TrackedFace | None) pairs in the same order as input faces.
+        """
         self._expire_removed()
         matched_ids: set[str] = set()
-        updated: list[TrackedFace] = []
+        results: list[tuple[DetectedFace, TrackedFace | None]] = []
 
         for face in faces:
             bbox = (face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2)
@@ -116,16 +120,22 @@ class FaceTrackManager:
             if track is None:
                 track = self._admit_or_queue_pending(face, frame_index)
                 if track is None:
+                    # New track pending confirmation or rejected
+                    results.append((face, None))
                     continue
                 metrics.increment("new_tracks_created")
             elif track.state == TrackLifecycleState.LOST.value:
                 track.recovery_count += 1
                 metrics.increment("recovered_tracks")
                 self._transition(track, TrackLifecycleState.CONFIRMED, frame_index, "recovered")
+            
             matched_ids.add(track.track_id)
             self._apply_detection(track, face, frame_index, frame_shape, frame_bgr)
+            
             if self._is_admitted(track):
-                updated.append(track)
+                results.append((face, track))
+            else:
+                results.append((face, None))
 
         self._decay_pending(frame_index)
         self._prune_low_quality_tracks(frame_index)
@@ -144,10 +154,12 @@ class FaceTrackManager:
                 metrics.increment("stale_track_replacements")
 
         metrics.observe("active_tracks", self.active_track_count)
-        if updated:
-            metrics.observe("avg_track_duration", sum(t.visibility_age for t in updated) / len(updated))
-            metrics.observe("avg_track_quality", sum(t.track_quality_score for t in updated) / len(updated))
-        return updated
+        # Filter out None tracks for metrics calculation
+        valid_tracks = [t for _, t in results if t is not None]
+        if valid_tracks:
+            metrics.observe("avg_track_duration", sum(t.visibility_age for t in valid_tracks) / len(valid_tracks))
+            metrics.observe("avg_track_quality", sum(t.track_quality_score for t in valid_tracks) / len(valid_tracks))
+        return results
 
     def propagate(self, frame_index: int) -> list[TrackedFace]:
         """Predict track positions on frames where the detector is skipped."""

@@ -33,8 +33,9 @@ class DetectionOptimizer:
         active_tracks: int = 0,
         stable_tracks: int = 0,
         avg_motion_stability: float = 0.0,
+        detector_interval_override: int | None = None,
     ) -> bool:
-        interval = self._adaptive_interval(active_tracks, stable_tracks, avg_motion_stability)
+        interval = detector_interval_override or self._adaptive_interval(active_tracks, stable_tracks, avg_motion_stability)
         metrics.observe("detector_adaptive_interval", float(interval))
         if frame_index % interval != 0:
             return False
