@@ -205,6 +205,50 @@ class Settings(BaseSettings):
     enable_legacy_face_validation: bool = Field(default=True, alias="ENABLE_LEGACY_FACE_VALIDATION")
     enable_legacy_quality_checks: bool = Field(default=True, alias="ENABLE_LEGACY_QUALITY_CHECKS")
 
+    # ── Phase 2A.1: Detection Observability Foundation ───────────────────────
+    detection_metrics_enabled: bool = Field(default=True, alias="DETECTION_METRICS_ENABLED")
+    detection_metrics_export_interval: int = Field(default=100, ge=1, alias="DETECTION_METRICS_EXPORT_INTERVAL")
+    detection_metrics_log_dir: Path = Field(default=Path("logs/detection_metrics"), alias="DETECTION_METRICS_LOG_DIR")
+    false_positive_snapshot_enabled: bool = Field(default=True, alias="FALSE_POSITIVE_SNAPSHOT_ENABLED")
+    false_positive_max_snapshots: int = Field(default=1000, ge=1, alias="FALSE_POSITIVE_MAX_SNAPSHOTS")
+    false_positive_sampling_rate: float = Field(default=0.10, ge=0.0, le=1.0, alias="FALSE_POSITIVE_SAMPLING_RATE")
+    false_positive_min_confidence: float = Field(default=0.60, ge=0.0, le=1.0, alias="FALSE_POSITIVE_MIN_CONFIDENCE")
+    false_positive_dataset_dir: Path = Field(default=Path("data/hard_negatives"), alias="FALSE_POSITIVE_DATASET_DIR")
+
+    # ── Phase 2A.2: Multi-Scale Detection ─────────────────────────────────────
+    enable_multiscale_detection: bool = Field(default=False, alias="ENABLE_MULTISCALE_DETECTION")
+    multiscale_scales: list[float] = Field(default=[1.0, 1.5, 2.0], alias="MULTISCALE_SCALES")
+    multiscale_adaptive_activation: bool = Field(default=True, alias="MULTISCALE_ADAPTIVE_ACTIVATION")
+    multiscale_tiny_face_threshold: int = Field(default=30, ge=1, alias="MULTISCALE_TINY_FACE_THRESHOLD")
+    multiscale_small_face_threshold: int = Field(default=60, ge=1, alias="MULTISCALE_SMALL_FACE_THRESHOLD")
+    multiscale_max_scales_per_frame: int = Field(default=2, ge=1, le=3, alias="MULTISCALE_MAX_SCALES_PER_FRAME")
+    multiscale_gpu_batching: bool = Field(default=True, alias="MULTISCALE_GPU_BATCHING")
+
+    # ── Phase 2A.4: Proposal Fusion Engine ─────────────────────────────────────
+    enable_confidence_normalization: bool = Field(default=False, alias="ENABLE_CONFIDENCE_NORMALIZATION")
+    fusion_wbf_iou_threshold: float = Field(default=0.5, ge=0.0, le=1.0, alias="FUSION_WBF_IOU_THRESHOLD")
+    fusion_crowd_iou_threshold: float = Field(default=0.3, ge=0.0, le=1.0, alias="FUSION_CROWD_IOU_THRESHOLD")
+    fusion_scale_weight_tiny: float = Field(default=1.3, ge=1.0, alias="FUSION_SCALE_WEIGHT_TINY")
+    fusion_scale_weight_small: float = Field(default=1.1, ge=1.0, alias="FUSION_SCALE_WEIGHT_SMALL")
+    fusion_scale_weight_baseline: float = Field(default=1.0, ge=1.0, alias="FUSION_SCALE_WEIGHT_BASELINE")
+    fusion_max_proposals_per_frame: int = Field(default=50, ge=1, alias="FUSION_MAX_PROPOSALS_PER_FRAME")
+
+    # ── Phase 2A.5: Temporal Weak Detection Recovery ───────────────────────────
+    enable_weak_detection_memory: bool = Field(default=False, alias="ENABLE_WEAK_DETECTION_MEMORY")
+    weak_memory_max_frames: int = Field(default=32, ge=1, alias="WEAK_MEMORY_MAX_FRAMES")
+    weak_memory_cluster_iou: float = Field(default=0.4, ge=0.0, le=1.0, alias="WEAK_MEMORY_CLUSTER_IOU")
+    weak_memory_min_recurrence: int = Field(default=3, ge=1, alias="WEAK_MEMORY_MIN_RECURRENCE")
+    weak_memory_promotion_boost: float = Field(default=0.15, ge=0.0, le=1.0, alias="WEAK_MEMORY_PROMOTION_BOOST")
+
+    # ── Phase 2A.3: Tile-Based Crowd Recovery ───────────────────────────────────
+    enable_tile_detection: bool = Field(default=False, alias="ENABLE_TILE_DETECTION")
+    tile_size: int = Field(default=640, ge=320, alias="TILE_SIZE")
+    tile_overlap: float = Field(default=0.20, ge=0.0, le=0.5, alias="TILE_OVERLAP")
+    tile_crowd_threshold: int = Field(default=8, ge=1, alias="TILE_CROWD_THRESHOLD")
+    tile_max_tiles: int = Field(default=9, ge=1, alias="TILE_MAX_TILES")
+    tile_edge_padding: int = Field(default=32, ge=0, alias="TILE_EDGE_PADDING")
+    tile_priority_center: bool = Field(default=True, alias="TILE_PRIORITY_CENTER")
+
     video_frame_skip: int = Field(default=1, ge=1, alias="VIDEO_FRAME_SKIP")
     video_inference_width: int = Field(default=640, ge=160, alias="VIDEO_INFERENCE_WIDTH")
     video_progress_interval: int = Field(default=10, ge=1, alias="VIDEO_PROGRESS_INTERVAL")
@@ -256,6 +300,20 @@ class Settings(BaseSettings):
     def resolved_log_dir(self) -> Path:
         p = self.log_dir if self.log_dir.is_absolute() else self.project_root / self.log_dir
         return p.resolve()
+
+    def resolved_detection_metrics_log_dir(self) -> Path:
+        p = (
+            self.detection_metrics_log_dir
+            if self.detection_metrics_log_dir.is_absolute()
+            else self.project_root / self.detection_metrics_log_dir
+        )
+        return p.resolve()
+
+    def resolved_false_positive_dataset_dir(self) -> Path:
+        """Resolve false positive dataset directory relative to workspace."""
+        if self.false_positive_dataset_dir.is_absolute():
+            return self.false_positive_dataset_dir
+        return self.workspace_dir / self.false_positive_dataset_dir
 
 
 @lru_cache
