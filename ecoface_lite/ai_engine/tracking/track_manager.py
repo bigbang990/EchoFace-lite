@@ -131,6 +131,7 @@ class FaceTrackManager:
                 # Telemetry for soft recovery validation
                 if track.lost_frames <= self._cfg.soft_recovery_frames:
                     metrics.increment("soft_track_recoveries")
+                    metrics.increment("ghost_track_recoveries")
                     metrics.observe_rate("recovery_success_rate", 1.0, 1.0)
                 
                 self._transition(track, TrackLifecycleState.CONFIRMED, frame_index, "recovered")
@@ -152,19 +153,24 @@ class FaceTrackManager:
             if track.state == TrackLifecycleState.REMOVED.value:
                 continue
             
-            # ── Stability Hardening (Step 2): Soft Persistence ────────────────
+            # ── Step 3: Recovery Window Stabilization (Ghosting) ─────────────
             track.lost_frames += 1
+            if track.lost_frames == 1:
+                metrics.increment("ghost_tracks_created")
+                
             if track.lost_frames <= self._cfg.soft_recovery_frames:
                 metrics.increment("transient_track_holds")
             
             self._quality_engine.decay_lost_track(track)
             if track.state != TrackLifecycleState.LOST.value:
                 self._transition(track, TrackLifecycleState.LOST, frame_index, "unmatched")
+            
             if track.lost_frames > self._cfg.max_lost_frames:
+                metrics.increment("recovery_window_expired")
                 self._transition(track, TrackLifecycleState.REMOVED, frame_index, "expired")
                 metrics.increment("stale_track_replacements")
 
-        metrics.observe("active_tracks", self.active_track_count)
+        metrics.observe("active_track_count", self.active_track_count)
         # Filter out None tracks for metrics calculation
         valid_tracks = [t for _, t in results if t is not None]
         if valid_tracks:
@@ -183,7 +189,11 @@ class FaceTrackManager:
                 continue
             velocity = track.metadata.get("velocity", (0.0, 0.0))
             x1, y1, x2, y2 = track.bbox
-            track.bbox = (x1 + velocity[0], y1 + velocity[1], x2 + velocity[0], y2 + velocity[1])
+            
+            dx, dy = velocity
+            track.bbox = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
+            metrics.observe("recovery_prediction_distance", (dx*dx + dy*dy)**0.5)
+            
             track.center_point = _bbox_center(track.bbox)
             track.face_area = _bbox_area(track.bbox)
             track.last_seen_frame = frame_index
@@ -274,11 +284,22 @@ class FaceTrackManager:
                 pending.face = face
                 pending.last_frame = frame_index
                 pending.centroid = _bbox_center((bbox.x1, bbox.y1, bbox.x2, bbox.y2))
+                
+                # ── Step 4: Adaptive Confirmation Logic ──────────────────────
+                if self._should_fast_confirm(pending, face):
+                    self._pending.remove(pending)
+                    track = self._spawn_track(face, frame_index)
+                    track.confirmation_hits = pending.hits
+                    self._transition(track, TrackLifecycleState.CANDIDATE, frame_index, "fast_confirmed")
+                    metrics.increment("fast_confirmations")
+                    return track
+
                 if pending.hits >= self._cfg.confirm_frames:
                     self._pending.remove(pending)
                     track = self._spawn_track(face, frame_index)
                     track.confirmation_hits = pending.hits
-                    self._transition(track, TrackLifecycleState.CANDIDATE, frame_index, "confirmed_pending")
+                    self._transition(track, TrackLifecycleState.CANDIDATE, frame_index, "slow_confirmed")
+                    metrics.increment("slow_confirmations")
                     return track
                 metrics.increment("track_confirmation_pending")
                 return None
@@ -288,14 +309,36 @@ class FaceTrackManager:
             last_frame=frame_index,
             centroid=centroid,
         )
-        if candidate.hits >= self._cfg.confirm_frames:
-            track = self._spawn_track(face, frame_index)
-            track.confirmation_hits = candidate.hits
-            self._transition(track, TrackLifecycleState.CANDIDATE, frame_index, "instant_confirm")
-            return track
+        
+        # Immediate fast-confirm if extremely high quality
+        if face.det_score >= 0.95:
+             track = self._spawn_track(face, frame_index)
+             track.confirmation_hits = candidate.hits
+             self._transition(track, TrackLifecycleState.CANDIDATE, frame_index, "instant_fast_confirm")
+             metrics.increment("fast_confirmations")
+             return track
+
         self._pending.append(candidate)
         metrics.increment("track_confirmation_pending")
         return None
+
+    def _should_fast_confirm(self, pending: _PendingCandidate, current_face: DetectedFace) -> bool:
+        """Heuristic for bypassing confirmation wait-time for high-confidence tracks."""
+        # Need at least 2 hits for any confirmed track
+        if pending.hits < 2:
+            return False
+            
+        # Check det score stability
+        if current_face.det_score < 0.92:
+            return False
+            
+        # Check motion stability (approximate via bbox overlap)
+        overlap = bbox_iou(pending.face.bbox, current_face.bbox)
+        if overlap < 0.85: # High jitter
+            metrics.increment("confirmation_resets") # Re-using as indicator of unstable pending
+            return False
+            
+        return True
 
     def _decay_pending(self, frame_index: int) -> None:
         ttl = max(2, self._cfg.confirm_frames + 1)

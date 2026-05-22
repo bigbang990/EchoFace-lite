@@ -187,16 +187,43 @@ class RecognitionPipeline:
                 fps = 1.0 / last_duration
                 metrics.observe("average_processing_fps", fps)
                 
-                # Step 6: Automatic Regression Checks
+                # ── Step 5 & 6: Integrity & Regression Checks ────────────────
+                self._check_telemetry_integrity(fps)
                 self._check_regressions(fps)
         
         return matches
+
+    def _check_telemetry_integrity(self, current_fps: float) -> None:
+        """Audit timing metrics for mathematical coherence."""
+        snapshot = metrics.snapshot()
+        
+        # ── Step 5: Telemetry Integrity Audit ────────────────────────────────
+        det_raw_ms = snapshot.recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
+        cadence = self._settings.detector_interval_frames
+        if self._overload_active:
+            cadence = self._dynamic_detector_interval
+            
+        # Per-cycle runtime is the raw measurement
+        metrics.observe("detector_runtime_per_cycle_ms", det_raw_ms)
+        
+        # Effective frame cost = per-cycle time spread across cadence
+        effective_cost = det_raw_ms / max(1, cadence)
+        metrics.observe("detector_effective_frame_cost_ms", effective_cost)
+        
+        # Check for impossible timing (synchronous execution check)
+        # Total frame time must be >= effective detector cost
+        total_ms = (1.0 / max(0.1, current_fps)) * 1000.0
+        if effective_cost > total_ms * 1.1: # 10% margin for timing jitter
+            msg = f"Timing Inconsistency: detector_cost({effective_cost:.1f}ms) > total_frame({total_ms:.1f}ms)"
+            logger.warning("TELEMETRY INTEGRITY WARNING: %s", msg)
+            diagnostics.record("telemetry_integrity", msg)
+            metrics.increment("telemetry_integrity_warnings")
 
     def _check_regressions(self, current_fps: float) -> None:
         """Log warnings if performance or quality regresses below baselines."""
         snapshot = metrics.snapshot()
         
-        # ── Step 4: Regression Guardrails ────────────────────────────────────
+        # ── Step 4 & 6: Regression Guardrails ────────────────────────────────
         
         # 1. FPS Check
         if current_fps < 15.0:
@@ -210,7 +237,7 @@ class RecognitionPipeline:
             diagnostics.record("regression", msg)
             
         # 2. Detector Runtime Check
-        avg_det_runtime = snapshot.averages.get("detector_runtime_ms", 0.0)
+        avg_det_runtime = snapshot.averages.get("detector_runtime_per_cycle_ms", 0.0)
         if avg_det_runtime > 120.0:
             msg = f"detector_runtime_ms > 120ms (Avg: {avg_det_runtime:.2f}ms)"
             logger.warning(
@@ -223,8 +250,8 @@ class RecognitionPipeline:
 
         # 3. Track Lifetime Check
         avg_lifetime = snapshot.averages.get("avg_track_duration", 0.0)
-        if avg_lifetime > 0 and avg_lifetime < 5.0:
-            msg = f"avg_track_lifetime < 5 (Avg: {avg_lifetime:.2f})"
+        if avg_lifetime > 0 and avg_lifetime < 10.0:
+            msg = f"avg_track_lifetime < 10 (Avg: {avg_lifetime:.2f})"
             logger.warning(
                 "REGRESSION WARNING: %s. "
                 "Probable Root Cause: Tracking instability or coordinate teleportation. "
@@ -244,29 +271,30 @@ class RecognitionPipeline:
             )
             diagnostics.record("regression", msg)
             
-        # 5. BBox Jitter Check
-        avg_jitter = snapshot.averages.get("avg_bbox_delta_before", 0.0)
-        if avg_jitter > 50.0:
-            msg = f"High BBox Jitter (Avg: {avg_jitter:.2f})"
+        # 5. Recovery Failure Check
+        recovered = snapshot.counters.get("recovered_tracks", 0)
+        total_detections = snapshot.counters.get("total_faces_detected", 0)
+        if total_detections > 50 and recovered == 0:
+            msg = "Zero track recoveries despite active detections"
             logger.warning(
                 "REGRESSION WARNING: %s. "
-                "Probable Root Cause: Coordinate teleportation or scale spikes. "
-                "Suggested Action: Increase TRACKING_BBOX_EMA_ALPHA smoothing.",
+                "Probable Root Cause: Ghosting window too small or association logic too strict. "
+                "Suggested Action: Increase TRACKING_SOFT_RECOVERY_FRAMES or TEMPORAL_MAX_TRACK_DISTANCE.",
                 msg
             )
             diagnostics.record("regression", msg)
-        
-        # 6. Detector Resolution Check
-        final_res = snapshot.averages.get("adaptive_resolution_final", 0.0)
-        if final_res > self._settings.detector_max_input_pixels:
-             msg = f"Detector resolution exceeds configured max (Res: {final_res:.0f})"
-             logger.warning(
+
+        # 6. Confirmation Pending Saturation
+        pending = snapshot.counters.get("track_confirmation_pending", 0)
+        if pending > 20:
+            msg = f"Confirmation Pending Saturation ({pending} tracks)"
+            logger.warning(
                 "REGRESSION WARNING: %s. "
-                "Probable Root Cause: Constraint bypass in DetectionOptimizer. "
-                "Suggested Action: Verify DETECTOR_MAX_INPUT_PIXELS enforcement.",
+                "Probable Root Cause: Adaptive confirmation criteria not being met. "
+                "Suggested Action: Lower TRACKING_FAST_CONFIRM_MIN_CONSISTENCY or check image quality.",
                 msg
             )
-             diagnostics.record("regression", msg)
+            diagnostics.record("regression", msg)
 
     def _process_frame_staged(
         self,
