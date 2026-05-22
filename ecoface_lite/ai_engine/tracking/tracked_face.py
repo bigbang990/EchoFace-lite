@@ -47,6 +47,9 @@ class TrackedFace:
 
     confirmation_hits: int = 0
     track_quality_score: float = 0.0
+    
+    # ── Stability Hardening (Phase 3) ────────────────────────────────────────
+    smoothed_bbox: tuple[float, float, float, float] | None = None
 
     metadata: dict = field(default_factory=dict)
 
@@ -94,6 +97,32 @@ class TrackedFace:
         if dominant is not None:
             self.stable_match_count = sum(1 for pid in self.recent_matches if pid == dominant)
         self.metadata["temporal_consistency"] = temporal.temporal_consistency
+
+    def update_bbox(self, new_bbox: tuple[float, float, float, float], alpha: float) -> None:
+        """Apply EMA smoothing to bounding box coordinates."""
+        from ecoface_lite.core.metrics import metrics
+        
+        if self.smoothed_bbox is None:
+            self.smoothed_bbox = new_bbox
+            self.bbox = new_bbox
+            return
+
+        # Telemetry for stability analysis
+        old_bbox = self.bbox
+        delta = sum(abs(a - b) for a, b in zip(old_bbox, new_bbox)) / 4.0
+        metrics.observe("avg_bbox_delta_before", delta)
+
+        # Apply EMA: smoothed = alpha * new + (1 - alpha) * old
+        smoothed = tuple(
+            alpha * n + (1.0 - alpha) * o 
+            for n, o in zip(new_bbox, self.smoothed_bbox)
+        )
+        self.smoothed_bbox = smoothed
+        self.bbox = smoothed # Tracker uses smoothed coords
+        
+        new_delta = sum(abs(a - b) for a, b in zip(old_bbox, smoothed)) / 4.0
+        metrics.observe("avg_bbox_delta_after", new_delta)
+        metrics.increment("bbox_smoothing_applied_count")
 
     def _majority_identity(self) -> int | None:
         if not self.recent_matches:

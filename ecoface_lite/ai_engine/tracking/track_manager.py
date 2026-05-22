@@ -127,6 +127,12 @@ class FaceTrackManager:
             elif track.state == TrackLifecycleState.LOST.value:
                 track.recovery_count += 1
                 metrics.increment("recovered_tracks")
+                
+                # Telemetry for soft recovery validation
+                if track.lost_frames <= self._cfg.soft_recovery_frames:
+                    metrics.increment("soft_track_recoveries")
+                    metrics.observe_rate("recovery_success_rate", 1.0, 1.0)
+                
                 self._transition(track, TrackLifecycleState.CONFIRMED, frame_index, "recovered")
             
             matched_ids.add(track.track_id)
@@ -145,7 +151,12 @@ class FaceTrackManager:
                 continue
             if track.state == TrackLifecycleState.REMOVED.value:
                 continue
+            
+            # ── Stability Hardening (Step 2): Soft Persistence ────────────────
             track.lost_frames += 1
+            if track.lost_frames <= self._cfg.soft_recovery_frames:
+                metrics.increment("transient_track_holds")
+            
             self._quality_engine.decay_lost_track(track)
             if track.state != TrackLifecycleState.LOST.value:
                 self._transition(track, TrackLifecycleState.LOST, frame_index, "unmatched")
@@ -323,7 +334,10 @@ class FaceTrackManager:
     ) -> None:
         prev_center = track.center_point
         bbox = (face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2)
-        track.bbox = bbox
+        
+        # ── Stability Hardening (Step 1): BBox Smoothing ─────────────────────
+        track.update_bbox(bbox, self._cfg.bbox_ema_alpha)
+        
         score = face.temporal_score if face.temporal_score is not None else face.det_score
         track.confidence = score
         track.center_point = _bbox_center(bbox)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import math
 import cv2
 import numpy as np
 
@@ -63,15 +64,66 @@ class DetectionOptimizer:
     def prepare_for_detection(self, frame_bgr: np.ndarray) -> tuple[np.ndarray, float]:
         enhanced = self._enhance_detector_input(frame_bgr)
         target_width, target_height = self._select_detector_size(enhanced.shape)
-        metrics.observe("detector_input_resolution", target_width * target_height)
-        metrics.observe("detector_resolution", target_width * target_height)
-        if target_width <= 0 or enhanced.shape[1] <= target_width:
+        
+        # Calculate initial target dimensions preserving aspect ratio
+        if enhanced.shape[1] > 0:
+            initial_scale = target_width / enhanced.shape[1]
+            initial_height = max(1, int(enhanced.shape[0] * initial_scale))
+        else:
+            initial_height = target_height
+            
+        requested_pixels = target_width * initial_height
+        metrics.observe("adaptive_resolution_requested", requested_pixels)
+        
+        # Apply experiment cap with safe bounds if enabled
+        final_width, final_height = target_width, initial_height
+        if self._settings.detector_resolution_cap_enabled:
+            min_pixels = self._settings.detector_min_input_pixels
+            max_pixels = self._settings.detector_max_input_pixels
+            
+            # Clamp target pixels within safe bounds
+            if requested_pixels > max_pixels:
+                final_width, final_height = self._compute_scaled_dims(
+                    target_width, initial_height, max_pixels
+                )
+                metrics.increment("resolution_clamped_down_count")
+            elif requested_pixels < min_pixels:
+                final_width, final_height = self._compute_scaled_dims(
+                    target_width, initial_height, min_pixels
+                )
+                metrics.increment("resolution_clamped_up_count")
+            else:
+                metrics.increment("resolution_within_safe_band_count")
+
+        final_pixels = final_width * final_height
+        metrics.observe("adaptive_resolution_final", final_pixels)
+        metrics.observe("detector_input_resolution", final_pixels)
+        metrics.observe("detector_resolution", final_pixels)
+        metrics.observe("capped_detector_resolution", final_pixels)
+        metrics.observe("original_detector_resolution", requested_pixels)
+        
+        # Categorize resolution band
+        if final_pixels <= self._settings.detector_min_input_pixels:
+            metrics.observe("detector_resolution_band", 0.0) # LOW
+        elif final_pixels >= self._settings.detector_max_input_pixels:
+            metrics.observe("detector_resolution_band", 2.0) # HIGH
+        else:
+            metrics.observe("detector_resolution_band", 1.0) # MID
+
+        if final_width <= 0 or enhanced.shape[1] <= final_width:
             return enhanced, 1.0
-        scale = target_width / enhanced.shape[1]
-        height = max(1, int(enhanced.shape[0] * scale))
-        resized = cv2.resize(enhanced, (target_width, height), interpolation=cv2.INTER_AREA)
+            
+        scale = final_width / enhanced.shape[1]
+        resized = cv2.resize(enhanced, (final_width, final_height), interpolation=cv2.INTER_AREA)
         metrics.observe("coordinate_scale_factor", scale)
         return resized, scale
+
+    def _compute_scaled_dims(self, width: int, height: int, target_pixels: int) -> tuple[int, int]:
+        current_pixels = width * height
+        if current_pixels == target_pixels:
+            return width, height
+        scale = math.sqrt(target_pixels / current_pixels)
+        return int(width * scale), int(height * scale)
 
     def _enhance_detector_input(self, frame_bgr: np.ndarray) -> np.ndarray:
         if not self._settings.detector_input_enable_enhancement:

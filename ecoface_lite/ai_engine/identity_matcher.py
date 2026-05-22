@@ -107,6 +107,7 @@ class MultiStageIdentityMatcher:
         temporal.observe_match(verified.person_id, verified.confidence, frame_index, quality_weight=quality_weight)
         leading_pid, hyp_conf = temporal.leading_identity()
         temporal_conf = max(verified.confidence, hyp_conf, temporal.temporal_consistency)
+        metrics.observe_rolling("identity_temporal_confidence_avg", temporal_conf)
 
         soft_margin = self._settings.tracking_soft_match_margin
         effective_threshold = max(
@@ -148,6 +149,11 @@ class MultiStageIdentityMatcher:
         metrics.increment("identity_match_accepted")
         if is_soft:
             metrics.increment("identity_soft_match_accepted")
+            metrics.increment("identity_soft_match_hits")
+        
+        if track.metadata.get("identity_locked"):
+            metrics.increment("identity_lock_active_count")
+
         return IdentityMatchDecision(
             person_id=verified.person_id,
             confidence=verified.confidence,

@@ -177,7 +177,96 @@ class RecognitionPipeline:
     ) -> list[FrameMatch]:
         metrics.increment("total_frames_processed")
         with metrics.timer("total_frame_processing_duration"):
-            return self._process_frame_staged(frame_bgr, frame_index, gallery)
+            matches = self._process_frame_staged(frame_bgr, frame_index, gallery)
+            
+        # Track average processing FPS for observability
+        durations = metrics.snapshot().recent_values.get("total_frame_processing_duration", [])
+        if durations:
+            last_duration = durations[-1]
+            if last_duration > 0:
+                fps = 1.0 / last_duration
+                metrics.observe("average_processing_fps", fps)
+                
+                # Step 6: Automatic Regression Checks
+                self._check_regressions(fps)
+        
+        return matches
+
+    def _check_regressions(self, current_fps: float) -> None:
+        """Log warnings if performance or quality regresses below baselines."""
+        snapshot = metrics.snapshot()
+        
+        # ── Step 4: Regression Guardrails ────────────────────────────────────
+        
+        # 1. FPS Check
+        if current_fps < 15.0:
+            msg = f"FPS < 15 (Current: {current_fps:.2f})"
+            logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: System resource exhaustion or high-resolution input. "
+                "Suggested Action: Reduce input resolution or check CPU/GPU load.",
+                msg
+            )
+            diagnostics.record("regression", msg)
+            
+        # 2. Detector Runtime Check
+        avg_det_runtime = snapshot.averages.get("detector_runtime_ms", 0.0)
+        if avg_det_runtime > 120.0:
+            msg = f"detector_runtime_ms > 120ms (Avg: {avg_det_runtime:.2f}ms)"
+            logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: Detector tensor inflation. "
+                "Suggested Action: Lower DETECTOR_MAX_INPUT_PIXELS.",
+                msg
+            )
+            diagnostics.record("regression", msg)
+
+        # 3. Track Lifetime Check
+        avg_lifetime = snapshot.averages.get("avg_track_duration", 0.0)
+        if avg_lifetime > 0 and avg_lifetime < 5.0:
+            msg = f"avg_track_lifetime < 5 (Avg: {avg_lifetime:.2f})"
+            logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: Tracking instability or coordinate teleportation. "
+                "Suggested Action: Check BBox smoothing parameters (TRACKING_BBOX_EMA_ALPHA).",
+                msg
+            )
+            diagnostics.record("regression", msg)
+
+        # 4. Identity Switch Check
+        if snapshot.counters.get("identity_switches", 0) > 0:
+            msg = "identity_switch_rate > 0"
+            logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: Identity memory instability or low embedding quality. "
+                "Suggested Action: Check recognition thresholds or embedding cooldown.",
+                msg
+            )
+            diagnostics.record("regression", msg)
+            
+        # 5. BBox Jitter Check
+        avg_jitter = snapshot.averages.get("avg_bbox_delta_before", 0.0)
+        if avg_jitter > 50.0:
+            msg = f"High BBox Jitter (Avg: {avg_jitter:.2f})"
+            logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: Coordinate teleportation or scale spikes. "
+                "Suggested Action: Increase TRACKING_BBOX_EMA_ALPHA smoothing.",
+                msg
+            )
+            diagnostics.record("regression", msg)
+        
+        # 6. Detector Resolution Check
+        final_res = snapshot.averages.get("adaptive_resolution_final", 0.0)
+        if final_res > self._settings.detector_max_input_pixels:
+             msg = f"Detector resolution exceeds configured max (Res: {final_res:.0f})"
+             logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: Constraint bypass in DetectionOptimizer. "
+                "Suggested Action: Verify DETECTOR_MAX_INPUT_PIXELS enforcement.",
+                msg
+            )
+             diagnostics.record("regression", msg)
 
     def _process_frame_staged(
         self,
@@ -207,6 +296,7 @@ class RecognitionPipeline:
             avg_motion_stability=self._track_manager.average_motion_stability(),
             detector_interval_override=detection_interval
         ):
+            metrics.observe("average_detector_interval", float(detection_interval))
             return self._stage_detection_path(prepared, frame_bgr, frame_index, gallery, output_scale)
         return self._stage_tracking_path(prepared, frame_index, gallery, output_scale)
 
@@ -240,6 +330,11 @@ class RecognitionPipeline:
             "detector_runtime_ms",
             metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0,
         )
+        
+        det_runtime_ms = metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
+        if det_runtime_ms > 150.0:
+            metrics.increment("detector_over_budget_count")
+            logger.warning("DETECTOR OVER BUDGET: %.2fms", det_runtime_ms)
         raw_faces = self._detection_optimizer.scale_faces(raw_faces, scale)
         raw_faces = self._temporal_detector.apply(raw_faces, frame_index)
 
@@ -459,6 +554,7 @@ class RecognitionPipeline:
         self._overload_active = True
         # Push detector interval up to save CPU
         self._dynamic_detector_interval = min(16, self._settings.detector_interval_frames + 4)
+        metrics.increment("detector_queue_stall_count")
         
         logger.warning(
             "Detector overload frame_index=%s count=%s. Activating load-shedding: interval=%s",

@@ -20,6 +20,8 @@ class TrackingConfig:
     max_lost_frames: int = 18
     overlay_interval: int = 5
     ema_alpha: float = 0.35
+    bbox_ema_alpha: float = 0.5
+    soft_recovery_frames: int = 5
     confirm_frames: int = 2
     min_quality_score: float = 0.35
     recognition_cache_min_iou: float = 0.35
@@ -47,6 +49,8 @@ def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
         max_lost_frames=s.tracking_max_lost_frames,
         overlay_interval=s.tracking_overlay_interval,
         ema_alpha=s.tracking_ema_alpha,
+        bbox_ema_alpha=s.tracking_bbox_ema_alpha,
+        soft_recovery_frames=s.tracking_soft_recovery_frames,
         confirm_frames=s.tracking_confirm_frames,
         min_quality_score=s.tracking_min_quality_score,
         recognition_cache_min_iou=s.recognition_cache_min_iou,
