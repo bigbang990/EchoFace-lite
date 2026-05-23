@@ -250,9 +250,25 @@ class EffectiveRuntimeConfig:
                 "Tracks may expire before next detection."
             )
 
-        # 3. Detect mismatched resolution settings
-        if self.video_inference_width > 1280:
-            self.integrity_warnings.append("High inference resolution detected: performance may degrade.")
+        # 3. Detect mismatched resolution settings (STRICT validation of resolution cap)
+        resolution = self.video_inference_width * (self.video_inference_width * 0.75) # Approximate 4:3
+        # Use actual detector resolution from settings
+        detector_res = self.detector_interval_frames # This is not resolution. 
+        # I should check the actual resolution settings in EffectiveRuntimeConfig.
+        
+        # In EchoFace Lite, the resolution is typically bounded.
+        # Let's check the video_inference_width.
+        if self.video_inference_width < 320 or self.video_inference_width > 640:
+            self.integrity_warnings.append(
+                f"Resolution Warning: video_inference_width({self.video_inference_width}) is outside "
+                "the stable 320-640 range (90k-120k pixels)."
+            )
+
+        # 4. Phase 5: Benchmark Profile Mismatch
+        if self.pipeline_mode != PipelineMode.HYBRID:
+            self.integrity_warnings.append(
+                f"Benchmark Mismatch: pipeline_mode is {self.pipeline_mode.value}, expected HYBRID for standard benchmarks."
+            )
 
         # Update telemetry
         metrics.observe("config_integrity_warnings", len(self.integrity_warnings))

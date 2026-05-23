@@ -194,6 +194,10 @@ class RecognitionPipeline:
                 fps = 1.0 / last_duration
                 metrics.observe("average_processing_fps", fps)
                 
+                # ── Phase 6: Parity Comparison Readiness ──────────────────────
+                # Observe current hardware execution context
+                metrics.observe("hardware_backend_type", 1.0 if self._settings.insightface_ctx_id >= 0 else 0.0) # 1 for GPU, 0 for CPU
+                
                 # ── Step 5 & 6: Integrity & Regression Checks ────────────────
                 self._check_telemetry_integrity(fps)
                 self._check_regressions(fps)

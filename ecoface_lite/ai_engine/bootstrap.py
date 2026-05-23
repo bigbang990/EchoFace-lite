@@ -35,6 +35,18 @@ def _create_face_analysis(settings: Settings) -> Any:
 
 def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionPipeline:
     settings = settings or get_settings()
+    # Perform startup validation
+    try:
+        from ecoface_lite.ai_engine.tracking.tracked_face import TrackedFace
+        from ecoface_lite.ai_engine.tracking.track_manager import FaceTrackManager
+        from ecoface_lite.ai_engine.pipeline import RecognitionPipeline
+        from ecoface_lite.core.runtime_config import EffectiveRuntimeConfig
+        
+        logger.info("=== PIPELINE IMPORT VALIDATION PASSED ===")
+    except Exception as e:
+        logger.error("!!! PIPELINE IMPORT VALIDATION FAILED: %s !!!", e)
+        raise RuntimeError(f"Startup validation failed: {e}") from e
+
     face_app = _create_face_analysis(settings)
     detector: FaceDetector = InsightFaceDetector(
         model_name=settings.insightface_model_name,

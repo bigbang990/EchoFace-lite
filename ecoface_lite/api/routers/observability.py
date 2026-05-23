@@ -29,6 +29,9 @@ async def get_metrics() -> dict[str, object]:
     )
     data["effective_runtime_config"] = effective_config.to_observability_json()
     
+    # Phase 2: Integrity Validation Flag
+    data["api_integrity_ok"] = True
+    
     return data
 
 

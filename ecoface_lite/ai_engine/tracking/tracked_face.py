@@ -21,11 +21,11 @@ class TrackedFace:
     last_seen_frame: int
     first_seen_frame: int
 
-    first_seen_ts: float = field(default_factory=time.monotonic)
-    last_seen_ts: float = field(default_factory=time.monotonic)
-
     visibility_age: int
     lost_frames: int
+
+    first_seen_ts: float = field(default_factory=time.monotonic)
+    last_seen_ts: float = field(default_factory=time.monotonic)
 
     last_embedding: np.ndarray | None = None
     embedding_timestamp: float = 0.0

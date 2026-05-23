@@ -7,7 +7,7 @@ is admitted (reduces single-frame hallucinations).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import time
@@ -202,6 +202,7 @@ class FaceTrackManager:
             if time_lost > self._cfg.track_expiration_ms:
                 metrics.increment("recovery_window_expired")
                 metrics.increment("recovery_timeout_events")
+                metrics.increment("ghost_recovery_failures") # Phase 4 addition
                 self._transition(track, TrackLifecycleState.REMOVED, frame_index, "expired_time")
                 metrics.increment("stale_track_replacements")
 
@@ -469,12 +470,24 @@ class FaceTrackManager:
             if lifetime >= self._cfg.confirm_duration_ms:
                 self._transition(track, TrackLifecycleState.CONFIRMED, frame_index, "time_confirmed")
         
+        # ── Step 4 & 5: State Machine & Temporal Audit ─────────────
         if (
             track.state == TrackLifecycleState.CONFIRMED.value
             and lifetime >= self._cfg.stable_duration_ms
             and track.track_quality_score >= self._cfg.min_recognition_quality
         ):
             self._transition(track, TrackLifecycleState.STABLE, frame_index, "stable_track_time")
+
+        # Telemetry: Phase 3 Temporal Consistency Audit
+        # drift = abs((actual_lifetime_ms / (frames * target_ms_per_frame)) - 1.0)
+        # Simplified: check if visibility_age (frames) correlates with lifetime_ms at high/low FPS
+        if track.visibility_age > 10:
+            avg_ms_per_frame = lifetime / track.visibility_age
+            # Assuming a standard 30 FPS (~33.3ms) or the detector interval
+            expected_cadence = self._settings.detector_interval_frames * 33.3
+            drift = abs(avg_ms_per_frame - expected_cadence) / max(1.0, expected_cadence)
+            metrics.observe("fps_lifecycle_drift", drift)
+            metrics.observe("lifecycle_time_consistency_score", max(0.0, 1.0 - drift))
 
     def _transition(
         self,
@@ -484,7 +497,16 @@ class FaceTrackManager:
         reason: str,
     ) -> None:
         if track.state == new_state.value:
+            metrics.increment("duplicate_transition_attempts")
             return
+        
+        # Phase 4: Invalid transition detection (simplified rules)
+        # Example: can't go from REMOVED to anything else
+        if track.state == TrackLifecycleState.REMOVED.value:
+            metrics.increment("invalid_state_transitions")
+            logger.warning("INVALID TRANSITION: track %s is REMOVED but attempted transition to %s", track.track_id, new_state.value)
+            return
+
         prev = track.state
         if new_state == TrackLifecycleState.REMOVED and prev != TrackLifecycleState.REMOVED.value:
             self._removed_buffer.append(track)
