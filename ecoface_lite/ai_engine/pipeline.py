@@ -39,6 +39,7 @@ from ecoface_lite.ai_engine.tracking.track_state import ACTIVE_RECOGNITION_STATE
 from ecoface_lite.ai_engine.tracking.tracked_face import TrackedFace
 from ecoface_lite.config.tracking import TrackingConfig, get_tracking_config
 from ecoface_lite.core.config import Settings
+from ecoface_lite.core.runtime_config import EffectiveRuntimeConfig
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
 from ecoface_lite.core.validator import FaceValidator, ValidationTier, ValidationResult
@@ -80,9 +81,15 @@ class RecognitionPipeline:
         confidence_policy: ConfidencePolicy | None = None,
         recognition_session: RecognitionSession | None = None,
         event_validator: EventValidator | None = None,
+        effective_config: EffectiveRuntimeConfig | None = None,
     ) -> None:
         self._settings = settings
+        self._effective_config = effective_config
         self._tracking_cfg: TrackingConfig = get_tracking_config(settings)
+        
+        # Log configuration integrity if available
+        if self._effective_config:
+            self._effective_config.log_integrity()
         self._detector = detector
         self._embedder = embedder
         self._matcher = matcher

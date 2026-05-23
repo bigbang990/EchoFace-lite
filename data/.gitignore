@@ -1,0 +1,15 @@
+# Runtime DB artifacts
+*.db-wal
+*.db-shm
+*.db
+
+# Debug outputs
+data/debug/
+data/previews/
+
+# Logs
+*.log
+
+# Cache
+__pycache__/
+*.pyc

@@ -9,6 +9,8 @@ from ecoface_lite.ai_engine.embedder import FaceEmbedder, InsightFaceEmbedder
 from ecoface_lite.ai_engine.matcher import FaceMatcher
 from ecoface_lite.ai_engine.pipeline import RecognitionPipeline
 from ecoface_lite.core.config import Settings, get_settings
+from ecoface_lite.core.runtime_config import EffectiveRuntimeConfig
+from ecoface_lite.core.runtime_state import get_runtime_state
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
 
@@ -45,7 +47,24 @@ def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionP
         face_app=face_app,
     )
     matcher = FaceMatcher()
-    return RecognitionPipeline(settings=settings, detector=detector, embedder=embedder, matcher=matcher)
+    
+    # Compile effective runtime configuration
+    runtime_state = get_runtime_state()
+    effective_config = EffectiveRuntimeConfig.compile(
+        settings=settings,
+        overrides=runtime_state.get_overrides(),
+        cpu_protection_state=runtime_state.get_cpu_protection_state(),
+        backend_type=runtime_state.get_backend_type(),
+        experiment_session_id=runtime_state.get_experiment_session_id()
+    )
+    
+    return RecognitionPipeline(
+        settings=settings, 
+        detector=detector, 
+        embedder=embedder, 
+        matcher=matcher,
+        effective_config=effective_config
+    )
 
 
 _pipeline_singleton: RecognitionPipeline | None = None

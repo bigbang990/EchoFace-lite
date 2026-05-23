@@ -21,6 +21,9 @@ class TrackedFace:
     last_seen_frame: int
     first_seen_frame: int
 
+    first_seen_ts: float = field(default_factory=time.monotonic)
+    last_seen_ts: float = field(default_factory=time.monotonic)
+
     visibility_age: int
     lost_frames: int
 
@@ -69,6 +72,14 @@ class TrackedFace:
     @property
     def is_stable(self) -> bool:
         return self.state == TrackLifecycleState.STABLE.value
+
+    @property
+    def lifetime_ms(self) -> float:
+        return (time.monotonic() - self.first_seen_ts) * 1000.0
+
+    @property
+    def time_since_last_seen_ms(self) -> float:
+        return (time.monotonic() - self.last_seen_ts) * 1000.0
 
     def touch_embedding(self, embedding: np.ndarray, frame_index: int) -> None:
         self.last_embedding = embedding

@@ -139,6 +139,16 @@ class Settings(BaseSettings):
     tracking_vote_window: int = Field(default=10, ge=1, alias="TRACKING_VOTE_WINDOW")
     tracking_stable_frames: int = Field(default=15, ge=1, alias="TRACKING_STABLE_FRAMES")
     tracking_quality_decay: float = Field(default=0.92, ge=0.5, le=1, alias="TRACKING_QUALITY_DECAY")
+    
+    # --- Phase 2: Time-Aware Lifecycle Parameters ---
+    tracking_confirm_duration_ms: int = Field(default=500, ge=50, alias="TRACKING_CONFIRM_DURATION_MS")
+    tracking_decay_duration_ms: int = Field(default=2000, ge=100, alias="TRACKING_DECAY_DURATION_MS")
+    tracking_recovery_buffer_ms: int = Field(default=1000, ge=100, alias="TRACKING_RECOVERY_BUFFER_MS")
+    tracking_ghost_persistence_ms: int = Field(default=1500, ge=100, alias="TRACKING_GHOST_PERSISTENCE_MS")
+    tracking_expiration_ms: int = Field(default=5000, ge=500, alias="TRACKING_EXPIRATION_MS")
+    tracking_aggressive_decay_ms: int = Field(default=500, ge=50, alias="TRACKING_AGGRESSIVE_DECAY_MS")
+    tracking_stable_duration_ms: int = Field(default=1500, ge=100, alias="TRACKING_STABLE_DURATION_MS")
+    
     tracking_decay_new_alpha: float = Field(default=0.97, ge=0.5, le=1, alias="TRACKING_DECAY_NEW_ALPHA")
     tracking_decay_stable_alpha: float = Field(default=0.99, ge=0.5, le=1, alias="TRACKING_DECAY_STABLE_ALPHA")
     tracking_decay_aggressive_alpha: float = Field(default=0.85, ge=0.5, le=1, alias="TRACKING_DECAY_AGGRESSIVE_ALPHA")

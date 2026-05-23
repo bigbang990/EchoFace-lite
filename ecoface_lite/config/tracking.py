@@ -43,6 +43,15 @@ class TrackingConfig:
     identity_lock_frames: int = 8
     fused_embedding_alpha: float = 0.25
     match_shortlist_k: int = 5
+    
+    # --- Phase 2: Time-Aware Lifecycle Parameters ---
+    confirm_duration_ms: int = 500
+    decay_duration_ms: int = 2000
+    recovery_buffer_ms: int = 1000
+    ghost_persistence_ms: int = 1500
+    track_expiration_ms: int = 5000
+    aggressive_decay_ms: int = 500
+    stable_duration_ms: int = 1500
 
 
 def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
@@ -78,6 +87,13 @@ def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
         identity_lock_frames=s.tracking_identity_lock_frames,
         fused_embedding_alpha=s.tracking_fused_embedding_alpha,
         match_shortlist_k=s.tracking_match_shortlist_k,
+        confirm_duration_ms=s.tracking_confirm_duration_ms,
+        decay_duration_ms=s.tracking_decay_duration_ms,
+        recovery_buffer_ms=s.tracking_recovery_buffer_ms,
+        ghost_persistence_ms=s.tracking_ghost_persistence_ms,
+        track_expiration_ms=s.tracking_expiration_ms,
+        aggressive_decay_ms=s.tracking_aggressive_decay_ms,
+        stable_duration_ms=s.tracking_stable_duration_ms,
     )
 
 

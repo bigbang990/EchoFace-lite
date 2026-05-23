@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import time
 import numpy as np
 
 from ecoface_lite.ai_engine.detector import BoundingBox, DetectedFace
@@ -44,6 +45,12 @@ class _PendingCandidate:
     hits: int = 1
     last_frame: int = 0
     centroid: tuple[float, float] = (0.0, 0.0)
+    first_seen_ts: float = field(default_factory=time.monotonic)
+    last_seen_ts: float = field(default_factory=time.monotonic)
+
+    @property
+    def duration_ms(self) -> float:
+        return (self.last_seen_ts - self.first_seen_ts) * 1000.0
 
 
 class FaceTrackManager:
@@ -96,6 +103,28 @@ class FaceTrackManager:
             return track
         return None
 
+    def _check_congestion(self) -> None:
+        """Detect queue saturation and track churn storms."""
+        # 1. Candidate queue pressure
+        pending_count = len(self._pending)
+        metrics.observe("candidate_queue_size", pending_count)
+        
+        # 2. Track churn rate (approximate by removed tracks in buffer)
+        churn_rate = len(self._removed_buffer)
+        metrics.observe("track_churn_rate", churn_rate)
+        
+        # 3. Pressure score (0.0 to 1.0)
+        # Bounded by 20 candidates and 10 removals
+        pressure = min(1.0, (pending_count / 20.0) + (churn_rate / 10.0))
+        metrics.observe("state_machine_pressure_score", pressure)
+        
+        if pressure > 0.8:
+            logger.warning(
+                "STATE MACHINE CONGESTION: pressure=%.2f candidates=%d churn=%d. "
+                "Probable Root Cause: High scene noise or aggressive decay.",
+                pressure, pending_count, churn_rate
+            )
+
     def update_from_detections(
         self,
         faces: list[DetectedFace],
@@ -110,6 +139,7 @@ class FaceTrackManager:
             List of (DetectedFace, TrackedFace | None) pairs in the same order as input faces.
         """
         self._expire_removed()
+        self._check_congestion()
         matched_ids: set[str] = set()
         results: list[tuple[DetectedFace, TrackedFace | None]] = []
 
@@ -157,17 +187,22 @@ class FaceTrackManager:
             track.lost_frames += 1
             if track.lost_frames == 1:
                 metrics.increment("ghost_tracks_created")
-                
-            if track.lost_frames <= self._cfg.soft_recovery_frames:
+            
+            time_lost = track.time_since_last_seen_ms
+            metrics.observe("ghost_survival_duration_ms", time_lost)
+
+            if time_lost <= self._cfg.recovery_buffer_ms:
                 metrics.increment("transient_track_holds")
             
             self._quality_engine.decay_lost_track(track)
             if track.state != TrackLifecycleState.LOST.value:
                 self._transition(track, TrackLifecycleState.LOST, frame_index, "unmatched")
             
-            if track.lost_frames > self._cfg.max_lost_frames:
+            # Use time-based expiration for tracks
+            if time_lost > self._cfg.track_expiration_ms:
                 metrics.increment("recovery_window_expired")
-                self._transition(track, TrackLifecycleState.REMOVED, frame_index, "expired")
+                metrics.increment("recovery_timeout_events")
+                self._transition(track, TrackLifecycleState.REMOVED, frame_index, "expired_time")
                 metrics.increment("stale_track_replacements")
 
         metrics.observe("active_track_count", self.active_track_count)
@@ -175,6 +210,7 @@ class FaceTrackManager:
         valid_tracks = [t for _, t in results if t is not None]
         if valid_tracks:
             metrics.observe("avg_track_duration", sum(t.visibility_age for t in valid_tracks) / len(valid_tracks))
+            metrics.observe("avg_track_survival_ms", sum(t.lifetime_ms for t in valid_tracks) / len(valid_tracks))
             metrics.observe("avg_track_quality", sum(t.track_quality_score for t in valid_tracks) / len(valid_tracks))
         return results
 
@@ -278,36 +314,51 @@ class FaceTrackManager:
     def _admit_or_queue_pending(self, face: DetectedFace, frame_index: int) -> TrackedFace | None:
         bbox = face.bbox
         centroid = _bbox_center((bbox.x1, bbox.y1, bbox.x2, bbox.y2))
+        now = time.monotonic()
+        
+        # Monitor queue pressure
+        metrics.observe("confirmation_queue_pressure", len(self._pending))
+
         for pending in self._pending:
             if bbox_iou(bbox, pending.face.bbox) >= self._settings.temporal_min_track_iou:
                 pending.hits += 1
                 pending.face = face
                 pending.last_frame = frame_index
+                pending.last_seen_ts = now
                 pending.centroid = _bbox_center((bbox.x1, bbox.y1, bbox.x2, bbox.y2))
                 
-                # ── Step 4: Adaptive Confirmation Logic ──────────────────────
+                # ── Step 4: Adaptive Confirmation Logic (Time-Aware) ──────────
+                duration = pending.duration_ms
+                metrics.observe("confirmation_duration_ms", duration)
+
                 if self._should_fast_confirm(pending, face):
                     self._pending.remove(pending)
                     track = self._spawn_track(face, frame_index)
                     track.confirmation_hits = pending.hits
                     self._transition(track, TrackLifecycleState.CANDIDATE, frame_index, "fast_confirmed")
                     metrics.increment("fast_confirmations")
+                    metrics.observe("fast_confirm_duration_ms", duration)
                     return track
 
-                if pending.hits >= self._cfg.confirm_frames:
+                if duration >= self._cfg.confirm_duration_ms:
                     self._pending.remove(pending)
                     track = self._spawn_track(face, frame_index)
                     track.confirmation_hits = pending.hits
                     self._transition(track, TrackLifecycleState.CANDIDATE, frame_index, "slow_confirmed")
                     metrics.increment("slow_confirmations")
+                    metrics.observe("slow_confirm_duration_ms", duration)
                     return track
+                
                 metrics.increment("track_confirmation_pending")
                 return None
+        
         candidate = _PendingCandidate(
             face=face,
             hits=1,
             last_frame=frame_index,
             centroid=centroid,
+            first_seen_ts=now,
+            last_seen_ts=now
         )
         
         # Immediate fast-confirm if extremely high quality
@@ -341,8 +392,9 @@ class FaceTrackManager:
         return True
 
     def _decay_pending(self, frame_index: int) -> None:
-        ttl = max(2, self._cfg.confirm_frames + 1)
-        self._pending = [p for p in self._pending if frame_index - p.last_frame <= ttl]
+        # Expire pending candidates if they haven't been seen for 500ms
+        now = time.monotonic()
+        self._pending = [p for p in self._pending if (now - p.last_seen_ts) * 1000.0 < 500.0]
 
     def _spawn_track(self, face: DetectedFace, frame_index: int) -> TrackedFace:
         track_id = f"track_{self._next_id}"
@@ -387,6 +439,7 @@ class FaceTrackManager:
         track.face_area = _bbox_area(bbox)
         track.metadata["last_face_area"] = track.face_area
         track.last_seen_frame = frame_index
+        track.last_seen_ts = time.monotonic()
         track.visibility_age = frame_index - track.first_seen_frame + 1
         track.lost_frames = 0
         track.confirmation_hits = max(track.confirmation_hits, self._cfg.confirm_frames)
@@ -406,17 +459,22 @@ class FaceTrackManager:
     def _advance_lifecycle(self, track: TrackedFace, frame_index: int) -> None:
         if track.confirmation_hits < self._cfg.confirm_frames:
             return
+        
+        lifetime = track.lifetime_ms
+        
         if track.state == TrackLifecycleState.NEW.value:
             self._transition(track, TrackLifecycleState.CANDIDATE, frame_index, "confirmation_hits")
+        
         if track.state in {TrackLifecycleState.NEW.value, TrackLifecycleState.CANDIDATE.value}:
-            if track.visibility_age >= self._cfg.confirm_frames:
-                self._transition(track, TrackLifecycleState.CONFIRMED, frame_index, "visibility_confirmed")
+            if lifetime >= self._cfg.confirm_duration_ms:
+                self._transition(track, TrackLifecycleState.CONFIRMED, frame_index, "time_confirmed")
+        
         if (
             track.state == TrackLifecycleState.CONFIRMED.value
-            and track.visibility_age >= self._cfg.stable_frames
+            and lifetime >= self._cfg.stable_duration_ms
             and track.track_quality_score >= self._cfg.min_recognition_quality
         ):
-            self._transition(track, TrackLifecycleState.STABLE, frame_index, "stable_track")
+            self._transition(track, TrackLifecycleState.STABLE, frame_index, "stable_track_time")
 
     def _transition(
         self,

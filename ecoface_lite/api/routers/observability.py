@@ -7,13 +7,29 @@ from fastapi import APIRouter, Query
 from ecoface_lite.ai_engine.diagnostics import diagnostics
 from ecoface_lite.core.config import get_settings
 from ecoface_lite.core.metrics import metrics
+from ecoface_lite.core.runtime_state import get_runtime_state
+from ecoface_lite.core.runtime_config import EffectiveRuntimeConfig
 
 router = APIRouter(prefix="/observability", tags=["observability"])
 
 
 @router.get("/metrics")
 async def get_metrics() -> dict[str, object]:
-    return metrics.export()
+    data = metrics.export()
+    
+    # Include effective runtime configuration
+    runtime_state = get_runtime_state()
+    settings = get_settings()
+    effective_config = EffectiveRuntimeConfig.compile(
+        settings=settings,
+        overrides=runtime_state.get_overrides(),
+        cpu_protection_state=runtime_state.get_cpu_protection_state(),
+        backend_type=runtime_state.get_backend_type(),
+        experiment_session_id=runtime_state.get_experiment_session_id()
+    )
+    data["effective_runtime_config"] = effective_config.to_observability_json()
+    
+    return data
 
 
 @router.post("/metrics/reset")
