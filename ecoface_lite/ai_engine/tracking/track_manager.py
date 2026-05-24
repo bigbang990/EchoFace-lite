@@ -67,6 +67,8 @@ class FaceTrackManager:
         self._next_id = 1
         self._motion = MotionAnalyzer(self._settings)
         self._quality_engine = TrackQualityEngine(self._settings)
+        self._current_pressure_band = 0
+        self.lockout_mode = False
 
     @property
     def active_track_count(self) -> int:
@@ -75,6 +77,20 @@ class FaceTrackManager:
             for t in self._tracks.values()
             if t.is_active and t.state not in {TrackLifecycleState.LOST.value, TrackLifecycleState.REMOVED.value}
         )
+
+    @property
+    def confirmed_track_count(self) -> int:
+        """Count of tracks in CONFIRMED or STABLE state."""
+        return sum(
+            1
+            for t in self._tracks.values()
+            if t.state in {TrackLifecycleState.CONFIRMED.value, TrackLifecycleState.STABLE.value}
+        )
+
+    @property
+    def has_coarse_tracks(self) -> bool:
+        """True if any tracks are in COARSE state."""
+        return any(t.state == TrackLifecycleState.COARSE.value for t in self._tracks.values())
 
     @property
     def candidate_queue_size(self) -> int:
@@ -171,6 +187,7 @@ class FaceTrackManager:
         elif pressure > 0.6: band = 2 # HIGH
         elif pressure > 0.3: band = 1 # ELEVATED
         
+        self._current_pressure_band = band
         metrics.observe("tracking_pressure_band", float(band))
         
         # 5. Biometric Budgeting (Phase 4)
@@ -191,6 +208,7 @@ class FaceTrackManager:
         *,
         frame_shape: tuple[int, ...] | None = None,
         frame_bgr: np.ndarray | None = None,
+        detector_interval: int = 1,
     ) -> list[tuple[DetectedFace, TrackedFace | None]]:
         """Associate detector outputs to tracks (detection frame).
         
@@ -212,7 +230,7 @@ class FaceTrackManager:
         for face in faces:
             bbox = (face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2)
             centroid = _bbox_center(bbox)
-            track = self._best_match(face, centroid, frame_index)
+            track = self._best_match(face, centroid, frame_index, detector_interval=detector_interval)
 
             if track is None:
                 track = self._admit_or_queue_pending(face, frame_index)
@@ -236,6 +254,8 @@ class FaceTrackManager:
                     metrics.increment("coarse_tracks_promoted")
                     
                 self._transition(track, TrackLifecycleState.CONFIRMED, frame_index, "recovered")
+                # Give recovered tracks a protected window synchronized with cadence
+                track.recovery_grace_frames = max(15, detector_interval * 2) 
             
             matched_ids.add(track.track_id)
             self._apply_detection(track, face, frame_index, frame_shape, frame_bgr)
@@ -249,7 +269,7 @@ class FaceTrackManager:
         self._prune_low_quality_tracks(frame_index)
 
         # ── Phase 4: Track Survival Protection ───────────────────────────────
-        pressure_band = metrics.snapshot().recent_values.get("tracking_pressure_band", [0.0])[-1]
+        pressure_band = self._current_pressure_band
 
         for track_id, track in list(self._tracks.items()):
             if track_id in matched_ids:
@@ -267,14 +287,33 @@ class FaceTrackManager:
 
             # Phase 4: Mature track survival
             is_mature = track.visibility_age > self._cfg.governance_mature_track_age
-            survival_boost = 1.0
-            if self._cfg.enable_track_survival_protection and is_mature:
-                # Extend recovery buffer for mature tracks during high pressure
-                if pressure_band >= 2:
-                    survival_boost = 1.5
-                    metrics.increment("mature_track_survival_boosts")
+            
+            # Phase 1: Candidate Immunity
+            if track.visibility_age < self._cfg.governance_candidate_immunity_frames:
+                track.governance_protected = True
+            else:
+                track.governance_protected = False
 
-            if time_lost <= self._cfg.recovery_buffer_ms * survival_boost:
+            survival_boost = 1.0
+            if (self._cfg.enable_track_survival_protection and 
+                (is_mature or track.governance_protected)):
+                # Extend recovery buffer for mature or protected tracks during high pressure
+                if pressure_band >= 2 or track.governance_protected:
+                    survival_boost = 1.5
+                    if is_mature:
+                        metrics.increment("mature_track_survival_boosts")
+                    if track.governance_protected:
+                        metrics.increment("candidate_immunity_protections")
+                    metrics.observe("protected_track_preservations", 1.0)
+                else:
+                    metrics.observe("protected_track_preservations", 0.0)
+
+            # ── Adaptive Cadence Synchronization (Phase 2) ──────────────────
+            # Scale survival horizon by detector interval to prevent immediate
+            # re-degradation when cadence is stretched.
+            cadence_multiplier = max(1.0, detector_interval / 4.0)
+            
+            if time_lost <= self._cfg.recovery_buffer_ms * survival_boost * cadence_multiplier:
                 metrics.increment("transient_track_holds")
             
             self._quality_engine.decay_lost_track(track)
@@ -282,27 +321,47 @@ class FaceTrackManager:
                 self._transition(track, TrackLifecycleState.LOST, frame_index, "unmatched")
             
             # Use time-based expiration for tracks
-            survival_horizon = self._cfg.track_expiration_ms * survival_boost
+            survival_horizon = self._cfg.track_expiration_ms * survival_boost * cadence_multiplier
             if track.state == TrackLifecycleState.COARSE.value:
                 survival_horizon = self._cfg.coarse_track_survival_ms
                 
-            if time_lost > survival_horizon:
+            # ── Phase 1: Track Survival Floor ─────────────────────────────────
+            active_count = self.active_track_count
+            
+            # Protected recovery window check (prevent immediate re-degradation)
+            is_in_recovery_grace = track.recovery_grace_frames > 0
+            
+            if time_lost > survival_horizon and not is_in_recovery_grace:
+                # Phase 3: Downgrade instead of REMOVED if HIGH pressure and not already COARSE
+                # Lower requirement for COARSE downgrade to ensure continuity
+                can_downgrade_to_coarse = (self._cfg.enable_coarse_tracking and 
+                    (pressure_band >= 1 or is_mature)
+                    and track.state != TrackLifecycleState.COARSE.value
+                    and track.visibility_age >= self._cfg.coarse_track_min_hits)
+                
+                if can_downgrade_to_coarse:
+                    self._transition(track, TrackLifecycleState.COARSE, frame_index, "pressure_downgrade")
+                    metrics.increment("coarse_tracks_created")
+                    continue
+
+                # Starvation Prevention: Never drop below MIN_SURVIVAL_TRACKS if detections exist
+                if active_count < self._cfg.governance_min_survival_tracks or track.governance_protected:
+                    if track.governance_protected:
+                        metrics.increment("governance_forced_preservations")
+                    metrics.increment("protected_track_preservations")
+                    metrics.increment("starvation_prevented_events")
+                    metrics.observe("governance_starvation_prevention_triggered", 1.0)
+                    continue # Preserve this track even if expired
+                
+                metrics.observe("governance_starvation_prevention_triggered", 0.0)
                 metrics.increment("recovery_window_expired")
                 metrics.increment("recovery_timeout_events")
                 metrics.increment("ghost_recovery_failures") # Phase 4 addition
                 
-                # Phase 3: Downgrade instead of REMOVED if HIGH pressure and not already COARSE
-                if (self._cfg.enable_coarse_tracking and pressure_band >= 2 
-                    and track.state != TrackLifecycleState.COARSE.value
-                    and track.visibility_age >= self._cfg.coarse_track_min_hits):
-                    self._transition(track, TrackLifecycleState.COARSE, frame_index, "pressure_downgrade")
-                    metrics.increment("coarse_tracks_created")
-                    # Don't increment removal counters if we downgraded
-                else:
-                    self._transition(track, TrackLifecycleState.REMOVED, frame_index, "expired_time")
-                    metrics.increment("stale_track_replacements")
-                    if track.state == TrackLifecycleState.COARSE.value:
-                        metrics.increment("coarse_tracks_expired")
+                self._transition(track, TrackLifecycleState.REMOVED, frame_index, "expired_time")
+                metrics.increment("stale_track_replacements")
+                if track.state == TrackLifecycleState.COARSE.value:
+                    metrics.increment("coarse_tracks_expired")
 
         metrics.observe("active_track_count", self.active_track_count)
         # Filter out None tracks for metrics calculation
@@ -313,7 +372,7 @@ class FaceTrackManager:
             metrics.observe("avg_track_quality", sum(t.track_quality_score for t in valid_tracks) / len(valid_tracks))
         return results
 
-    def propagate(self, frame_index: int) -> list[TrackedFace]:
+    def propagate(self, frame_index: int, detector_interval: int = 1) -> list[TrackedFace]:
         """Predict track positions on frames where the detector is skipped."""
         self._expire_removed()
         self._check_congestion()
@@ -337,6 +396,15 @@ class FaceTrackManager:
             motion = self._motion.update(track.track_id, track.bbox, frame_index)
             track.metadata["velocity"] = motion.velocity
             track.metadata["motion_score"] = motion.motion_stability_score
+            
+            # Phase 2: Partial continuity accumulation during skipped frames
+            # Synchronize accumulation with detector interval (Step 4)
+            if track.state in {TrackLifecycleState.NEW.value, TrackLifecycleState.CANDIDATE.value}:
+                if motion.motion_stability_score > 0.85:
+                    # Increment accumulation slightly based on cadence
+                    accumulation = 1.0 + (detector_interval / 8.0)
+                    track.confirmation_hits = min(track.confirmation_hits + accumulation, self._cfg.confirm_frames + 2)
+            
             self._quality_engine.update(track, None, None, motion, frame_index)
             self._advance_lifecycle(track, frame_index)
             propagated.append(track)
@@ -544,25 +612,54 @@ class FaceTrackManager:
         return True
 
     def _decay_pending(self, frame_index: int) -> None:
-        # Expire pending candidates if they haven't been seen for 500ms
+        """Expire pending candidates with grace window and floor protection (Phase 1 & 2)."""
         now = time.monotonic()
-        # Phase 2/3: Adaptive drop rate
-        pressure_band = metrics.snapshot().recent_values.get("tracking_pressure_band", [0.0])[-1]
+        pressure_band = self._current_pressure_band
+        
         ttl_ms = 500.0
         if pressure_band >= 2:
             ttl_ms = 300.0 # Aggressive decay under pressure
             
         initial_count = len(self._pending)
-        if initial_count > 0:
-             # print(f"DEBUG: _decay_pending initial={initial_count} frame={frame_index}")
-             pass
-        self._pending = [p for p in self._pending if (now - p.last_seen_ts) * 1000.0 < ttl_ms]
+        if initial_count == 0:
+            return
+
+        # ── Phase 2: Candidate Grace Window ──────────────────────────────────
+        # Candidates within grace window receive immunity from TTL culling
+        def is_protected(p: _PendingCandidate) -> bool:
+            if self.lockout_mode:
+                return True # All protected during lockout
+            age_frames = frame_index - p.last_frame # Approximate age since last seen
+            # Or better, frame_index - p.first_frame if we added it. 
+            # Let's use duration_ms since we have it.
+            if p.duration_ms < self._cfg.governance_candidate_grace_frames * 33.3: # ~30fps
+                metrics.increment("candidate_grace_preservations")
+                return True
+            return False
+
+        # Sort by priority so if we must drop, we drop lowest priority
+        self._pending.sort(key=lambda p: self._calculate_candidate_priority(p), reverse=True)
+        
+        retained = []
+        for p in self._pending:
+            time_since_seen = (now - p.last_seen_ts) * 1000.0
+            if time_since_seen < ttl_ms or is_protected(p):
+                retained.append(p)
+            elif len(retained) < self._cfg.governance_min_survival_candidates:
+                # ── Phase 1: Governance Floor Protection ──────────────────────
+                retained.append(p)
+                metrics.increment("governance_floor_activations")
+                metrics.increment("starvation_prevented_events")
+                metrics.observe("governance_starvation_prevention_triggered", 1.0)
+        
+        self._pending = retained
         
         drops = initial_count - len(self._pending)
         if drops > 0:
-             print(f"DEBUG: _decay_pending DROPPED {drops} candidates at frame {frame_index}")
-        if drops > 0:
             metrics.increment("candidate_drop_rate", drops)
+            metrics.observe("candidate_grace_window_active", 1.0)
+        else:
+            metrics.observe("candidate_grace_window_active", 0.0)
 
     def _spawn_track(self, face: DetectedFace, frame_index: int) -> TrackedFace:
         track_id = f"track_{self._next_id}"
@@ -625,7 +722,12 @@ class FaceTrackManager:
         metrics.observe("face_visibility_ratio", 1.0)
 
     def _advance_lifecycle(self, track: TrackedFace, frame_index: int) -> None:
-        if track.confirmation_hits < self._cfg.confirm_frames:
+        # Scale confirmation requirement slightly for extremely wide intervals
+        # but keep it at least confirm_frames for safety.
+        # This decouples promotion from raw detector skips (Step 5)
+        promotion_threshold = self._cfg.confirm_frames
+        
+        if track.confirmation_hits < promotion_threshold:
             return
         
         lifetime = track.lifetime_ms
@@ -696,6 +798,13 @@ class FaceTrackManager:
             if track.visibility_age < self._cfg.confirm_frames:
                 continue
             motion_score = float(track.metadata.get("motion_score", 1.0))
+            
+            # Phase 1 & 2: Governance Immunity from pruning
+            if track.governance_protected or self.lockout_mode or track.recovery_grace_frames > 0:
+                if track.recovery_grace_frames > 0:
+                    track.recovery_grace_frames -= 1
+                continue
+
             if track.track_quality_score < min_q and track.lost_frames == 0 and motion_score < self._cfg.min_motion_stability:
                 self._transition(track, TrackLifecycleState.REMOVED, frame_index, "low_quality")
                 metrics.increment("low_quality_track_kills")
@@ -708,23 +817,47 @@ class FaceTrackManager:
         face: DetectedFace,
         centroid: tuple[float, float],
         frame_index: int,
+        detector_interval: int = 1,
     ) -> TrackedFace | None:
         best: TrackedFace | None = None
         best_score = 0.0
         max_distance = self._settings.temporal_max_track_distance
+        
+        # Scale matching tolerance by detector interval (Step 5)
+        cadence_relax = max(1.0, detector_interval / 2.0)
+        max_distance *= cadence_relax
+        
+        if self.lockout_mode:
+            max_distance *= 1.5 # Relax distance during recovery lockout
         for track in self._tracks.values():
             if not track.is_active or track.state == TrackLifecycleState.REMOVED.value:
                 continue
-            if frame_index - track.last_seen_frame > self._cfg.max_lost_frames:
+            
+            # Phase 3: Allow COARSE tracks to be recovered beyond normal max_lost_frames
+            is_lost_too_long = (frame_index - track.last_seen_frame > self._cfg.max_lost_frames)
+            
+            if is_lost_too_long and track.state != TrackLifecycleState.COARSE.value:
                 continue
+            
+            # Even for COARSE, we check time-based survival horizon
+            if track.state == TrackLifecycleState.COARSE.value:
+                if track.time_since_last_seen_ms > self._cfg.coarse_track_survival_ms:
+                    continue
             dx = centroid[0] - track.center_point[0]
             dy = centroid[1] - track.center_point[1]
             distance = (dx * dx + dy * dy) ** 0.5
             distance_score = max(0.0, 1.0 - (distance / max(max_distance, 1.0)))
             iou = bbox_iou(face.bbox, BoundingBox(*track.bbox))
             score = (0.7 * iou) + (0.3 * distance_score)
+            
+            min_iou = self._settings.temporal_min_track_iou
+            # Phase 3: Relax matching significantly during lockout or for COARSE recovery
+            if self.lockout_mode or track.state == TrackLifecycleState.COARSE.value:
+                min_iou = 0.01 
+                max_distance *= 1.2
+
             if (
-                iou >= self._settings.temporal_min_track_iou or distance <= max_distance
+                iou >= min_iou or distance <= max_distance
             ) and score > best_score:
                 best = track
                 best_score = score

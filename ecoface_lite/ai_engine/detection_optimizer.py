@@ -23,6 +23,7 @@ class DetectionOptimizer:
         self._settings = settings
         self._last_detection_frame: int | None = None
         self._last_faces: list[DetectedFace] = []
+        self.emergency_mode: bool = False
 
     def active_track_count(self) -> int:
         return len(self._last_faces)
@@ -53,8 +54,10 @@ class DetectionOptimizer:
         base = max(1, self._settings.detector_interval_frames)
         min_iv = max(1, self._settings.detector_interval_min_frames)
         max_iv = max(min_iv, self._settings.detector_interval_max_frames)
-        if active_tracks == 0:
+        if active_tracks == 0 and not self.emergency_mode:
             return min_iv
+        if self.emergency_mode:
+            return min_iv # Force minimum interval during emergency
         if avg_motion_stability < self._settings.motion_high_threshold:
             return max(min_iv, self._settings.detector_interval_motion_frames)
         if stable_tracks >= max(1, active_tracks // 2) and active_tracks > 0:
@@ -147,11 +150,11 @@ class DetectionOptimizer:
         metrics.increment("coordinate_scaling_validations", len(faces))
         return [scale_face_to_original(face, scale) for face in faces]
 
-    def filter_faces(self, faces: list[DetectedFace], frame_shape: tuple[int, ...]) -> tuple[list[DetectedFace], list[tuple[DetectedFace, str]]]:
+    def filter_faces(self, faces: list[DetectedFace], frame_shape: tuple[int, ...], emergency_mode: bool = False) -> tuple[list[DetectedFace], list[tuple[DetectedFace, str]]]:
         accepted: list[DetectedFace] = []
         rejected: list[tuple[DetectedFace, str]] = []
         for face in faces:
-            decision = self.evaluate(face, frame_shape)
+            decision = self.evaluate(face, frame_shape, emergency_mode=emergency_mode)
             if decision.accepted:
                 accepted.append(face)
             else:
@@ -178,7 +181,7 @@ class DetectionOptimizer:
         metrics.increment("tracking_only_cycles")
         metrics.observe("tracker_reuse_rate", 1.0)
 
-    def evaluate(self, face: DetectedFace, frame_shape: tuple[int, ...]) -> DetectionFilterDecision:
+    def evaluate(self, face: DetectedFace, frame_shape: tuple[int, ...], emergency_mode: bool = False) -> DetectionFilterDecision:
         height, width = int(frame_shape[0]), int(frame_shape[1])
         geometry = compute_face_geometry(face, frame_shape)
         area = geometry.area
@@ -187,16 +190,29 @@ class DetectionOptimizer:
         score = face.temporal_score if face.temporal_score is not None else face.det_score
         frame_area = max(1, width * height)
         area_ratio = area / frame_area
-        if area_ratio < self._settings.detector_small_face_area_ratio:
+        
+        if emergency_mode:
+            min_score = 0.25 # Drastic reduction during emergency
+        elif area_ratio < self._settings.detector_small_face_area_ratio:
             min_score = self._settings.detector_small_face_threshold
         elif area_ratio < self._settings.detector_medium_face_area_ratio:
             min_score = self._settings.detector_medium_quality_threshold
         else:
             min_score = max(self._settings.detector_min_score, self._settings.detector_high_quality_threshold)
+        
         if score < min_score:
             return DetectionFilterDecision(False, "weak_detector_score")
+            
         min_width, min_height, min_area = self._adaptive_thresholds(width, height)
+        
+        if emergency_mode:
+            min_width = 16 # Absolute minimum
+            min_height = 16
+            min_area = 256
+        
         dynamic_min_area = max(min_area, int(frame_area * self._settings.detector_min_face_area_ratio))
+        if emergency_mode:
+            dynamic_min_area = min_area
         if geometry.width < min_width or geometry.height < min_height:
             return DetectionFilterDecision(False, "detector_face_too_small")
         if area < dynamic_min_area:

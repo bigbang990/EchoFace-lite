@@ -50,10 +50,16 @@ class TrackedFace:
 
     confirmation_hits: int = 0
     track_quality_score: float = 0.0
+    governance_protected: bool = True
     
     # ── Stability Hardening (Phase 3) ────────────────────────────────────────
     smoothed_bbox: tuple[float, float, float, float] | None = None
 
+    # ── Phase 6: Telemetry & Grace ──────────────────────────────────────────
+    governance_lockout_active: bool = False
+    emergency_rebuild_active: bool = False
+    recovery_grace_frames: int = 0
+    
     metadata: dict = field(default_factory=dict)
 
     @property

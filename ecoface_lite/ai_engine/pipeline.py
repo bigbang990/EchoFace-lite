@@ -16,14 +16,14 @@ from ecoface_lite.core.detection_metrics.detection_metrics import DetectionMetri
 from ecoface_lite.ai_engine.confidence import ConfidencePolicy
 from ecoface_lite.ai_engine.detection_optimizer import DetectionOptimizer
 from ecoface_lite.ai_engine.diagnostics import diagnostics
-from ecoface_lite.ai_engine.detector import DetectedFace, FaceDetector
+from ecoface_lite.ai_engine.detector import BoundingBox, DetectedFace, FaceDetector
 from ecoface_lite.ai_engine.embedder import FaceEmbedder
 from ecoface_lite.ai_engine.event_validator import EventValidator
 from ecoface_lite.ai_engine.face_candidate_validator import FaceCandidateValidator
 from ecoface_lite.ai_engine.face_crop_validator import FaceCropValidator
 from ecoface_lite.ai_engine.face_quality import FaceQualityAssessor
 from ecoface_lite.ai_engine.temporal_detector import TemporalDetectorFilter
-from ecoface_lite.ai_engine.geometry import compute_face_geometry, scale_face_to_original
+from ecoface_lite.ai_engine.geometry import bbox_iou, compute_face_geometry, scale_face_to_original
 from ecoface_lite.ai_engine.embedding_fusion import EmbeddingFusion
 from ecoface_lite.ai_engine.global_identity_memory import GlobalIdentityMemory
 from ecoface_lite.ai_engine.identity_confidence_engine import IdentityConfidenceEngine
@@ -166,6 +166,11 @@ class RecognitionPipeline:
         self._band_persistence_frames = 0
         self._adaptive_det_confidence = settings.detection_confidence_threshold
         self._adaptive_validator_cutoff = settings.validator_strict_cutoff
+        
+        # ── Phase 2 & 3 State Flags ──────────────────────────────────────────
+        self._governance_lockout_active = False
+        self._emergency_rebuild_active = False
+        self._recovery_cooldown_frames = 0
 
     @property
     def _track_manager(self):
@@ -189,8 +194,18 @@ class RecognitionPipeline:
         gallery: list[tuple[int, np.ndarray]],
     ) -> list[FrameMatch]:
         metrics.increment("total_frames_processed")
+        
+        # ── Phase 2: Governance Lockout Mode Activation ──────────────────────
+        active_tracks = self._track_manager.active_track_count
+        # We need to peek at detections count to decide on lockout
+        # This is handled inside _apply_load_governance but we need the flag here
+        
         with metrics.timer("total_frame_processing_duration"):
             matches = self._process_frame_staged(frame_bgr, frame_index, gallery)
+            
+        # Update metrics and flags
+        metrics.observe("governance_lockout_active", 1.0 if self._governance_lockout_active else 0.0)
+        metrics.observe("emergency_rebuild_active", 1.0 if self._emergency_rebuild_active else 0.0)
             
         # Track average processing FPS for observability
         durations = metrics.snapshot().recent_values.get("total_frame_processing_duration", [])
@@ -350,20 +365,63 @@ class RecognitionPipeline:
         return self._stage_tracking_path(prepared, frame_index, gallery, output_scale)
 
     def _apply_load_governance(self, frame_index: int) -> None:
-        """Dynamically adjust detector cadence and budget (Phase 1, 3, 5)."""
+        """Dynamically adjust detector cadence and budget (Phase 1, 3, 4, 5)."""
         snapshot = metrics.snapshot()
         raw_pressure_band = int(snapshot.recent_values.get("tracking_pressure_band", [0.0])[-1])
         active_tracks = self._track_manager.active_track_count
+        confirmed_tracks = self._track_manager.confirmed_track_count
+        has_coarse = self._track_manager.has_coarse_tracks
         pending_queue = self._track_manager.candidate_queue_size
         det_runtime = snapshot.recent_values.get("detector_runtime_ms", [0.0])[-1]
         
+        # ── Phase 3: Emergency Recall Recovery ──────────────────────────────
+        emergency_recall_active = False
+        if (self._settings.enable_emergency_recall_mode and 
+            confirmed_tracks == 0 and 
+            raw_pressure_band >= 2):
+            if pending_queue > 0 or has_coarse:
+                emergency_recall_active = True
+                if not self._emergency_rebuild_active:
+                    metrics.increment("emergency_track_rebuilds")
+                self._emergency_rebuild_active = True
+                metrics.increment("emergency_recall_recoveries")
+                metrics.observe("emergency_recall_mode_active", 1.0)
+                logger.warning("GOVERNANCE: Emergency recall mode active (confirmed_tracks=0, candidates=%d, has_coarse=%s)", pending_queue, has_coarse)
+        else:
+            if self._emergency_rebuild_active and confirmed_tracks >= self._settings.governance_min_survival_tracks:
+                if self._recovery_cooldown_frames == 0:
+                    self._recovery_cooldown_frames = 15 # Hysteresis cooldown
+                
+                if self._recovery_cooldown_frames > 0:
+                    self._recovery_cooldown_frames -= 1
+                    if self._recovery_cooldown_frames == 0:
+                        self._emergency_rebuild_active = False
+                        metrics.increment("starvation_recovery_successes")
+            
+            metrics.observe("emergency_recall_mode_active", 0.0)
+
+        # ── Phase 2: Governance Lockout Mode ──────────────────────────────────
+        if confirmed_tracks == 0 and (pending_queue > 0 or has_coarse):
+            if not self._governance_lockout_active:
+                metrics.increment("governance_lockout_activations")
+            self._governance_lockout_active = True
+            self._track_manager.lockout_mode = True
+            self._detection_optimizer.emergency_mode = True
+        elif confirmed_tracks >= self._settings.governance_min_survival_tracks:
+            self._governance_lockout_active = False
+            self._track_manager.lockout_mode = False
+            self._detection_optimizer.emergency_mode = False
+        
         # 1. Update Cooldown State
-        if self._governance_cooldown_frames > 0:
+        # Bypassed during lockout/emergency rebuild or when coarse tracks need recovery (Step 5)
+        if self._governance_cooldown_frames > 0 and not self._governance_lockout_active and not has_coarse:
             self._governance_cooldown_frames -= 1
             self._detector_cooldown_active = True
             metrics.observe("detector_cooldown_active", 1.0)
             return
         else:
+            if self._governance_lockout_active or has_coarse:
+                self._governance_cooldown_frames = 0
             self._detector_cooldown_active = False
             metrics.observe("detector_cooldown_active", 0.0)
 
@@ -379,27 +437,58 @@ class RecognitionPipeline:
         else:
             self._band_persistence_frames = 0
 
-        # 3. Phase 1: Adaptive Cadence & Thresholds
+        # 3. Phase 1 & 4: Adaptive Cadence & Thresholds
+        # Hierarchy: Continuity > Compute Efficiency
         band = self._current_pressure_band
+        
+        # Base settings from band
         if band == 0: # NORMAL
             target_interval = self._settings.governance_low_pressure_interval
-            self._adaptive_det_confidence = self._settings.relaxation_low_confidence
-            self._adaptive_validator_cutoff = self._settings.relaxation_low_cutoff
+            target_conf = self._settings.relaxation_low_confidence
+            target_cutoff = self._settings.relaxation_low_cutoff
         elif band == 1: # ELEVATED
             target_interval = self._settings.governance_medium_pressure_interval
-            self._adaptive_det_confidence = self._settings.relaxation_medium_confidence
-            self._adaptive_validator_cutoff = self._settings.relaxation_medium_cutoff
+            target_conf = self._settings.relaxation_medium_confidence
+            target_cutoff = self._settings.relaxation_medium_cutoff
         elif band == 2: # HIGH
             target_interval = self._settings.governance_high_pressure_interval
-            self._adaptive_det_confidence = self._settings.relaxation_high_confidence
-            self._adaptive_validator_cutoff = self._settings.relaxation_high_cutoff
+            target_conf = self._settings.relaxation_high_confidence
+            target_cutoff = self._settings.relaxation_high_cutoff
         else: # CRITICAL
             target_interval = self._settings.governance_high_pressure_interval + 4
-            self._adaptive_det_confidence = self._settings.relaxation_high_confidence
-            self._adaptive_validator_cutoff = self._settings.relaxation_high_cutoff
+            target_conf = self._settings.relaxation_high_confidence
+            target_cutoff = self._settings.relaxation_high_cutoff
             if self._governance_cooldown_frames == 0:
                 self._governance_cooldown_frames = self._settings.governance_critical_cooldown_frames
                 logger.warning("LOAD GOVERNANCE: Entering CRITICAL cooldown for %d frames", self._governance_cooldown_frames)
+
+        # ── Phase 3: Emergency Relaxation ────────────────────────────────────
+        if emergency_recall_active or self._emergency_rebuild_active or self._governance_lockout_active:
+            # Drop thresholds to absolute minimum to recover recall
+            # Phase 3 linear reduction step: gradually relax
+            current_conf = self._adaptive_det_confidence
+            target_min_conf = 0.25
+            if current_conf > target_min_conf:
+                target_conf = max(target_min_conf, current_conf - 0.05)
+            else:
+                target_conf = target_min_conf
+                
+            current_cutoff = self._adaptive_validator_cutoff
+            target_min_cutoff = 0.35
+            if current_cutoff > target_min_cutoff:
+                target_cutoff = max(target_min_cutoff, current_cutoff - 0.05)
+            else:
+                target_cutoff = target_min_cutoff
+
+            # Reduce interval to get more frequent detections
+            target_interval = max(getattr(self._settings, "detector_interval_min_frames", 4), 4)
+            
+            # During Lockout, disable aggressive degradation
+            if self._governance_lockout_active:
+                 target_interval = 1 # Force detection on every frame for immediate recovery
+
+        self._adaptive_det_confidence = target_conf
+        self._adaptive_validator_cutoff = target_cutoff
 
         # Apply adaptive thresholds (Phase 1.1)
         metrics.observe("adaptive_detector_confidence", self._adaptive_det_confidence)
@@ -413,6 +502,15 @@ class RecognitionPipeline:
         # 5. Queue Pressure secondary check
         if pending_queue > self._settings.governance_max_candidate_queue_size:
             target_interval = max(target_interval, 14)
+
+        # ── Phase 1: Minimum Survival Guarantees ─────────────────────────────
+        # If we have very few tracks, or we have COARSE tracks awaiting recovery,
+        # don't allow the interval to become too wide.
+        if (active_tracks > 0 and active_tracks <= self._settings.governance_min_survival_tracks) or has_coarse:
+            # If has_coarse, we want faster recovery if possible
+            recovery_limit = 5 if has_coarse else 10
+            target_interval = min(target_interval, recovery_limit)
+            metrics.increment("protected_track_preservations")
 
         self._dynamic_detector_interval = target_interval
         metrics.observe("adaptive_detector_interval", float(target_interval))
@@ -489,7 +587,8 @@ class RecognitionPipeline:
             result = self._unified_face_validator.validate(
                 face, prepared.bgr, prepared.bgr.shape, frame_index,
                 min_det_confidence=self._adaptive_det_confidence,
-                strict_cutoff=self._adaptive_validator_cutoff
+                strict_cutoff=self._adaptive_validator_cutoff,
+                emergency_rebuild_active=self._emergency_rebuild_active or self._governance_lockout_active
             )
             
             # Override REJECT if continuity exists (Phase 1.2)
@@ -547,7 +646,8 @@ class RecognitionPipeline:
                     metrics.increment("geometry_validation_rejections")
 
             faces, detector_rejections = self._detection_optimizer.filter_faces(
-                geometry_accepted, prepared.bgr.shape
+                geometry_accepted, prepared.bgr.shape,
+                emergency_mode=self._emergency_rebuild_active or self._governance_lockout_active
             )
             total_rejected = len(raw_faces) - len(faces)
             self._detection_optimizer.observe_detection_cycle(
@@ -617,6 +717,7 @@ class RecognitionPipeline:
         face_track_results = self._track_manager.update_from_detections(
             faces, frame_index,
             frame_shape=prepared.bgr.shape, frame_bgr=prepared.bgr,
+            detector_interval=self._dynamic_detector_interval
         )
 
         if not faces:
@@ -649,7 +750,7 @@ class RecognitionPipeline:
         diagnostics.record("tracking", "detector_skipped_reused_tracks", frame_index=frame_index)
 
         matches: list[FrameMatch] = []
-        tracks = self._track_manager.propagate(frame_index)
+        tracks = self._track_manager.propagate(frame_index, detector_interval=self._dynamic_detector_interval)
         for track in tracks:
             if track.state not in ACTIVE_RECOGNITION_STATES:
                 continue
@@ -676,8 +777,14 @@ class RecognitionPipeline:
         return matches
 
     def _finalize_frame(self, frame_index: int) -> None:
+        """Post-processing and metric aggregation (Phase 5)."""
+        active_tracks = self._track_manager.active_tracks()
+        
+        # State Visibility (Phase 5)
+        metrics.observe("emergency_recall_mode_active", 1.0 if self._settings.enable_emergency_recall_mode and self._track_manager.active_track_count == 0 else 0.0)
+        
         # Aggressive expiration for TRACK_ONLY (garbage) tracks
-        for track in self._track_manager.active_tracks():
+        for track in active_tracks:
             if track.metadata.get("tier") == ValidationTier.TRACK_ONLY.value:
                 # TRACK_ONLY tracks have much shorter lifetime (3 frames)
                 if track.lost_frames > 2:

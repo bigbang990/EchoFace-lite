@@ -119,6 +119,11 @@ class Settings(BaseSettings):
     governance_mature_track_age: int = Field(default=50, ge=1, alias="GOVERNANCE_MATURE_TRACK_AGE")
     enable_priority_ingestion: bool = Field(default=True, alias="ENABLE_PRIORITY_INGESTION")
     enable_track_survival_protection: bool = Field(default=True, alias="ENABLE_TRACK_SURVIVAL_PROTECTION")
+    governance_min_survival_tracks: int = Field(default=3, ge=1, alias="GOVERNANCE_MIN_SURVIVAL_TRACKS")
+    governance_min_survival_candidates: int = Field(default=5, ge=1, alias="GOVERNANCE_MIN_SURVIVAL_CANDIDATES")
+    governance_candidate_grace_frames: int = Field(default=15, ge=1, alias="GOVERNANCE_CANDIDATE_GRACE_FRAMES")
+    governance_candidate_immunity_frames: int = Field(default=20, ge=1, alias="GOVERNANCE_CANDIDATE_IMMUNITY_FRAMES")
+    enable_emergency_recall_mode: bool = Field(default=True, alias="ENABLE_EMERGENCY_RECALL_MODE")
 
     # ── Adaptive Recall & Degradation (Phase 4) ──────────────────────────────
     enable_adaptive_degradation: bool = Field(default=True, alias="ENABLE_ADAPTIVE_DEGRADATION")

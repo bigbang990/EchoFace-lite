@@ -55,6 +55,11 @@ class TrackingConfig:
     governance_mature_track_age: int = 50
     enable_priority_ingestion: bool = True
     enable_track_survival_protection: bool = True
+    governance_min_survival_tracks: int = 3
+    governance_min_survival_candidates: int = 5
+    governance_candidate_grace_frames: int = 15
+    governance_candidate_immunity_frames: int = 20
+    enable_emergency_recall_mode: bool = True
     
     # ── Adaptive Recall & Degradation (Phase 4) ──────────────────────────────
     enable_adaptive_degradation: bool = True
@@ -124,6 +129,11 @@ def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
         governance_mature_track_age=s.governance_mature_track_age,
         enable_priority_ingestion=s.enable_priority_ingestion,
         enable_track_survival_protection=s.enable_track_survival_protection,
+        governance_min_survival_tracks=s.governance_min_survival_tracks,
+        governance_min_survival_candidates=s.governance_min_survival_candidates,
+        governance_candidate_grace_frames=s.governance_candidate_grace_frames,
+        governance_candidate_immunity_frames=s.governance_candidate_immunity_frames,
+        enable_emergency_recall_mode=s.enable_emergency_recall_mode,
         enable_adaptive_degradation=s.enable_adaptive_degradation,
         governance_pressure_hysteresis_frames=s.governance_pressure_hysteresis_frames,
         relaxation_low_confidence=s.relaxation_low_confidence,

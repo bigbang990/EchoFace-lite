@@ -339,6 +339,7 @@ class FaceValidator:
         track_quality: TrackStateQuality | None = None,
         min_det_confidence: float | None = None,
         strict_cutoff: float | None = None,
+        emergency_rebuild_active: bool = False,
     ) -> ValidationResult:
         det_score = face.temporal_score if face.temporal_score is not None else face.det_score
         clipped = clip_bbox_to_frame(face.bbox, frame_shape)
@@ -348,10 +349,16 @@ class FaceValidator:
         yi2 = min(int(frame_shape[0]), int(clipped.y2))
         crop = frame_bgr[yi1:yi2, xi1:xi2] if yi2 > yi1 and xi2 > xi1 else np.array([])
 
+        geo_min_aspect = self._s.validator_min_aspect_ratio
+        geo_max_aspect = self._s.validator_max_aspect_ratio
+        if emergency_rebuild_active:
+            geo_min_aspect -= 0.1
+            geo_max_aspect += 0.1
+
         geo_score, geo_reasons, geo_metrics = validate_geometry(
             face.bbox, frame_shape,
-            self._s.validator_min_aspect_ratio,
-            self._s.validator_max_aspect_ratio,
+            geo_min_aspect,
+            geo_max_aspect,
             self._s.validator_edge_margin_ratio,
         )
         size_score, size_reasons, size_metrics = validate_size(
@@ -400,9 +407,13 @@ class FaceValidator:
         )
 
         effective_strict_cutoff = strict_cutoff if strict_cutoff is not None else self._s.validator_strict_cutoff
+        effective_quality_cutoff = self._s.validator_quality_cutoff
+        if emergency_rebuild_active:
+             effective_quality_cutoff -= 0.1 # Relax quality during rebuild
+             
         tier = _assign_tier(
             quality_score, fused, all_reasons, lm_score,
-            self._s.validator_quality_cutoff, effective_strict_cutoff,
+            effective_quality_cutoff, effective_strict_cutoff,
         )
 
         sorted_reasons = _sort_reasons(all_reasons)

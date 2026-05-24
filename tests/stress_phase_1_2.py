@@ -106,8 +106,8 @@ def test_phase_2_coarse_track_audit():
     overrides = {
         "ENABLE_ADAPTIVE_LOAD_GOVERNANCE": True,
         "ENABLE_COARSE_TRACKING": True,
-        "COARSE_TRACK_SURVIVAL_MS": 5000,
-        "TRACKING_EXPIRATION_MS": 500,
+        "COARSE_TRACK_SURVIVAL_MS": 30000,
+        "TRACKING_EXPIRATION_MS": 10000,
         "GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE": 100,
         "DETECTOR_INTERVAL_FRAMES": 1,
         "PREPROCESSING_MAX_WIDTH": 1920,
@@ -188,8 +188,8 @@ def test_phase_2_coarse_track_audit():
             else:
                 print(f"  Track {track_id}: NOT IN TRACKS")
     
-    # Run simulation for a while (need > 750ms real time for expiration under cooldown cycles)
-    run_simulation(pipeline, world, steps=160, callback=debug_occlusion)
+    # Run simulation for a while (need > 10s real time for expiration under cooldown cycles)
+    run_simulation(pipeline, world, steps=300, callback=debug_occlusion)
     
     # Verify it became COARSE
     print(f"Final track state: {track.state}, lost_frames: {track.lost_frames}, visibility: {track.visibility_age}")
