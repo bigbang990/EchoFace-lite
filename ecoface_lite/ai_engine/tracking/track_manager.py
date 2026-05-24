@@ -76,6 +76,10 @@ class FaceTrackManager:
             if t.is_active and t.state not in {TrackLifecycleState.LOST.value, TrackLifecycleState.REMOVED.value}
         )
 
+    @property
+    def candidate_queue_size(self) -> int:
+        return len(self._pending)
+
     def active_tracks(self) -> list[TrackedFace]:
         return [t for t in self._tracks.values() if t.is_active and t.state != TrackLifecycleState.REMOVED.value]
 
@@ -103,6 +107,28 @@ class FaceTrackManager:
             return track
         return None
 
+    def _calculate_candidate_priority(self, candidate: _PendingCandidate) -> float:
+        """Score candidate for ingestion priority (Phase 2)."""
+        face = candidate.face
+        score = 0.0
+        
+        # 1. Face size (normalized area)
+        area = (face.bbox.x2 - face.bbox.x1) * (face.bbox.y2 - face.bbox.y1)
+        score += min(1.0, area / 20000.0) * 0.3
+        
+        # 2. Temporal consistency (hits)
+        score += min(1.0, candidate.hits / 5.0) * 0.3
+        
+        # 3. Detector confidence
+        score += face.det_score * 0.2
+        
+        # 4. Frontal pose bias (if available)
+        # Using a simple heuristic: landmarks symmetry if available
+        if face.landmarks is not None:
+            score += 0.2
+            
+        return score
+
     def _check_congestion(self) -> None:
         """Detect queue saturation and track churn storms."""
         # 1. Candidate queue pressure
@@ -118,11 +144,17 @@ class FaceTrackManager:
         pressure = min(1.0, (pending_count / 20.0) + (churn_rate / 10.0))
         metrics.observe("state_machine_pressure_score", pressure)
         
+        # 4. Pressure Band (Phase 3)
+        band = 0
+        if pressure > 0.8: band = 3 # CRITICAL
+        elif pressure > 0.6: band = 2 # HIGH
+        elif pressure > 0.3: band = 1 # ELEVATED
+        metrics.observe("tracking_pressure_band", float(band))
+        
         if pressure > 0.8:
             logger.warning(
-                "STATE MACHINE CONGESTION: pressure=%.2f candidates=%d churn=%d. "
-                "Probable Root Cause: High scene noise or aggressive decay.",
-                pressure, pending_count, churn_rate
+                "STATE MACHINE CONGESTION: pressure=%.2f band=%d candidates=%d churn=%d. ",
+                pressure, band, pending_count, churn_rate
             )
 
     def update_from_detections(
@@ -142,6 +174,12 @@ class FaceTrackManager:
         self._check_congestion()
         matched_ids: set[str] = set()
         results: list[tuple[DetectedFace, TrackedFace | None]] = []
+
+        # ── Phase 2: Priority-based ingestion pre-sort ───────────────────────
+        if self._cfg.enable_priority_ingestion and len(faces) > 10:
+            # We don't want to reorder faces as results must match input order.
+            # Instead, we will process all, but admission logic might use priority.
+            pass
 
         for face in faces:
             bbox = (face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2)
@@ -177,6 +215,9 @@ class FaceTrackManager:
         self._decay_pending(frame_index)
         self._prune_low_quality_tracks(frame_index)
 
+        # ── Phase 4: Track Survival Protection ───────────────────────────────
+        pressure_band = metrics.snapshot().recent_values.get("tracking_pressure_band", [0.0])[-1]
+
         for track_id, track in list(self._tracks.items()):
             if track_id in matched_ids:
                 continue
@@ -191,7 +232,16 @@ class FaceTrackManager:
             time_lost = track.time_since_last_seen_ms
             metrics.observe("ghost_survival_duration_ms", time_lost)
 
-            if time_lost <= self._cfg.recovery_buffer_ms:
+            # Phase 4: Mature track survival
+            is_mature = track.visibility_age > self._cfg.governance_mature_track_age
+            survival_boost = 1.0
+            if self._cfg.enable_track_survival_protection and is_mature:
+                # Extend recovery buffer for mature tracks during high pressure
+                if pressure_band >= 2:
+                    survival_boost = 1.5
+                    metrics.increment("mature_track_survival_boosts")
+
+            if time_lost <= self._cfg.recovery_buffer_ms * survival_boost:
                 metrics.increment("transient_track_holds")
             
             self._quality_engine.decay_lost_track(track)
@@ -199,7 +249,7 @@ class FaceTrackManager:
                 self._transition(track, TrackLifecycleState.LOST, frame_index, "unmatched")
             
             # Use time-based expiration for tracks
-            if time_lost > self._cfg.track_expiration_ms:
+            if time_lost > self._cfg.track_expiration_ms * survival_boost:
                 metrics.increment("recovery_window_expired")
                 metrics.increment("recovery_timeout_events")
                 metrics.increment("ghost_recovery_failures") # Phase 4 addition
@@ -353,6 +403,20 @@ class FaceTrackManager:
                 metrics.increment("track_confirmation_pending")
                 return None
         
+        # Phase 2: Budget-aware candidate queueing
+        if self._cfg.enable_priority_ingestion and len(self._pending) >= self._cfg.governance_max_candidate_queue_size:
+            # Drop lowest priority candidate if new one is better
+            candidate_scores = [(self._calculate_candidate_priority(p), i) for i, p in enumerate(self._pending)]
+            new_candidate_score = self._calculate_candidate_priority(_PendingCandidate(face=face))
+            
+            lowest_score, lowest_idx = min(candidate_scores)
+            if new_candidate_score > lowest_score:
+                self._pending.pop(lowest_idx)
+                metrics.increment("candidate_queue_drops")
+            else:
+                metrics.increment("candidate_ingestion_rejections")
+                return None
+
         candidate = _PendingCandidate(
             face=face,
             hits=1,
@@ -395,7 +459,18 @@ class FaceTrackManager:
     def _decay_pending(self, frame_index: int) -> None:
         # Expire pending candidates if they haven't been seen for 500ms
         now = time.monotonic()
-        self._pending = [p for p in self._pending if (now - p.last_seen_ts) * 1000.0 < 500.0]
+        # Phase 2/3: Adaptive drop rate
+        pressure_band = metrics.snapshot().recent_values.get("tracking_pressure_band", [0.0])[-1]
+        ttl_ms = 500.0
+        if pressure_band >= 2:
+            ttl_ms = 300.0 # Aggressive decay under pressure
+            
+        initial_count = len(self._pending)
+        self._pending = [p for p in self._pending if (now - p.last_seen_ts) * 1000.0 < ttl_ms]
+        
+        drops = initial_count - len(self._pending)
+        if drops > 0:
+            metrics.increment("candidate_drop_rate", drops)
 
     def _spawn_track(self, face: DetectedFace, frame_index: int) -> TrackedFace:
         track_id = f"track_{self._next_id}"

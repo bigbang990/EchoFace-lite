@@ -107,6 +107,19 @@ class Settings(BaseSettings):
     detector_center_priority_enabled: bool = Field(default=False, alias="DETECTOR_CENTER_PRIORITY_ENABLED")
     detector_center_max_distance: float = Field(default=0.9, ge=0, le=2, alias="DETECTOR_CENTER_MAX_DISTANCE")
     detector_overload_face_count: int = Field(default=12, ge=1, alias="DETECTOR_OVERLOAD_FACE_COUNT")
+    
+    # ── Adaptive Load Governance (Phase 3) ────────────────────────────────────
+    enable_adaptive_load_governance: bool = Field(default=True, alias="ENABLE_ADAPTIVE_LOAD_GOVERNANCE")
+    governance_low_pressure_interval: int = Field(default=8, ge=1, alias="GOVERNANCE_LOW_PRESSURE_INTERVAL")
+    governance_medium_pressure_interval: int = Field(default=12, ge=1, alias="GOVERNANCE_MEDIUM_PRESSURE_INTERVAL")
+    governance_high_pressure_interval: int = Field(default=16, ge=1, alias="GOVERNANCE_HIGH_PRESSURE_INTERVAL")
+    governance_critical_cooldown_frames: int = Field(default=30, ge=1, alias="GOVERNANCE_CRITICAL_COOLDOWN_FRAMES")
+    governance_max_detector_runtime_ms: float = Field(default=150.0, ge=10.0, alias="GOVERNANCE_MAX_DETECTOR_RUNTIME_MS")
+    governance_max_candidate_queue_size: int = Field(default=25, ge=1, alias="GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE")
+    governance_mature_track_age: int = Field(default=50, ge=1, alias="GOVERNANCE_MATURE_TRACK_AGE")
+    enable_priority_ingestion: bool = Field(default=True, alias="ENABLE_PRIORITY_INGESTION")
+    enable_track_survival_protection: bool = Field(default=True, alias="ENABLE_TRACK_SURVIVAL_PROTECTION")
+
     temporal_window_size: int = Field(default=8, ge=1, alias="TEMPORAL_WINDOW_SIZE")
     temporal_min_confirmations: int = Field(default=3, ge=1, alias="TEMPORAL_MIN_CONFIRMATIONS")
     temporal_min_average_confidence: float = Field(default=0.50, ge=0, le=1, alias="TEMPORAL_MIN_AVERAGE_CONFIDENCE")

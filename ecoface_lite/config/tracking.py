@@ -44,6 +44,18 @@ class TrackingConfig:
     fused_embedding_alpha: float = 0.25
     match_shortlist_k: int = 5
     
+    # ── Adaptive Load Governance (Phase 3) ────────────────────────────────────
+    enable_adaptive_load_governance: bool = True
+    governance_low_pressure_interval: int = 8
+    governance_medium_pressure_interval: int = 12
+    governance_high_pressure_interval: int = 16
+    governance_critical_cooldown_frames: int = 30
+    governance_max_detector_runtime_ms: float = 150.0
+    governance_max_candidate_queue_size: int = 25
+    governance_mature_track_age: int = 50
+    enable_priority_ingestion: bool = True
+    enable_track_survival_protection: bool = True
+    
     # --- Phase 2: Time-Aware Lifecycle Parameters ---
     confirm_duration_ms: int = 500
     decay_duration_ms: int = 2000
@@ -87,6 +99,16 @@ def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
         identity_lock_frames=s.tracking_identity_lock_frames,
         fused_embedding_alpha=s.tracking_fused_embedding_alpha,
         match_shortlist_k=s.tracking_match_shortlist_k,
+        enable_adaptive_load_governance=s.enable_adaptive_load_governance,
+        governance_low_pressure_interval=s.governance_low_pressure_interval,
+        governance_medium_pressure_interval=s.governance_medium_pressure_interval,
+        governance_high_pressure_interval=s.governance_high_pressure_interval,
+        governance_critical_cooldown_frames=s.governance_critical_cooldown_frames,
+        governance_max_detector_runtime_ms=s.governance_max_detector_runtime_ms,
+        governance_max_candidate_queue_size=s.governance_max_candidate_queue_size,
+        governance_mature_track_age=s.governance_mature_track_age,
+        enable_priority_ingestion=s.enable_priority_ingestion,
+        enable_track_survival_protection=s.enable_track_survival_protection,
         confirm_duration_ms=s.tracking_confirm_duration_ms,
         decay_duration_ms=s.tracking_decay_duration_ms,
         recovery_buffer_ms=s.tracking_recovery_buffer_ms,

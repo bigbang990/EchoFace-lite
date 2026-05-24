@@ -160,6 +160,8 @@ class RecognitionPipeline:
         # ── Overload Management State ────────────────────────────────────────
         self._overload_active = False
         self._dynamic_detector_interval = settings.detector_interval_frames
+        self._governance_cooldown_frames = 0
+        self._detector_cooldown_active = False
 
     @property
     def _track_manager(self):
@@ -320,15 +322,19 @@ class RecognitionPipeline:
             logger.warning("Preprocessing failed for frame %s", frame_index)
             return []
 
+        # ── Adaptive Load Governance (Phase 1 & 5) ───────────────────────────
+        if self._settings.enable_adaptive_load_governance:
+            self._apply_load_governance(frame_index)
+
         active = self._track_manager.active_tracks()
         stable_count = sum(1 for t in active if t.is_stable)
 
         # Use dynamic detector interval if overload is active
         detection_interval = self._settings.detector_interval_frames
-        if self._overload_active:
+        if self._overload_active or self._settings.enable_adaptive_load_governance:
             detection_interval = self._dynamic_detector_interval
 
-        if self._detection_optimizer.should_detect(
+        if not self._detector_cooldown_active and self._detection_optimizer.should_detect(
             frame_index,
             active_tracks=len(active),
             stable_tracks=stable_count,
@@ -338,6 +344,49 @@ class RecognitionPipeline:
             metrics.observe("average_detector_interval", float(detection_interval))
             return self._stage_detection_path(prepared, frame_bgr, frame_index, gallery, output_scale)
         return self._stage_tracking_path(prepared, frame_index, gallery, output_scale)
+
+    def _apply_load_governance(self, frame_index: int) -> None:
+        """Dynamically adjust detector cadence and budget (Phase 1, 3, 5)."""
+        snapshot = metrics.snapshot()
+        pressure_band = snapshot.recent_values.get("tracking_pressure_band", [0.0])[-1]
+        active_tracks = self._track_manager.active_track_count
+        pending_queue = self._track_manager.candidate_queue_size
+        det_runtime = snapshot.recent_values.get("detector_runtime_ms", [0.0])[-1]
+        
+        # 1. Update Cooldown State
+        if self._governance_cooldown_frames > 0:
+            self._governance_cooldown_frames -= 1
+            self._detector_cooldown_active = True
+            metrics.observe("detector_cooldown_active", 1.0)
+            return
+        else:
+            self._detector_cooldown_active = False
+            metrics.observe("detector_cooldown_active", 0.0)
+
+        # 2. Phase 1: Adaptive Cadence based on Pressure Band
+        if pressure_band == 0: # NORMAL
+            target_interval = self._settings.governance_low_pressure_interval
+        elif pressure_band == 1: # ELEVATED
+            target_interval = self._settings.governance_medium_pressure_interval
+        elif pressure_band == 2: # HIGH
+            target_interval = self._settings.governance_high_pressure_interval
+        else: # CRITICAL
+            target_interval = self._settings.governance_high_pressure_interval + 4
+            if self._governance_cooldown_frames == 0:
+                self._governance_cooldown_frames = self._settings.governance_critical_cooldown_frames
+                logger.warning("LOAD GOVERNANCE: Entering CRITICAL cooldown for %d frames", self._governance_cooldown_frames)
+
+        # 3. Phase 5: Budget Enforcement
+        if det_runtime > self._settings.governance_max_detector_runtime_ms:
+            target_interval = max(target_interval, 16)
+            metrics.increment("governance_budget_violations")
+            
+        # 4. Queue Pressure secondary check
+        if pending_queue > self._settings.governance_max_candidate_queue_size:
+            target_interval = max(target_interval, 14)
+
+        self._dynamic_detector_interval = target_interval
+        metrics.observe("adaptive_detector_interval", float(target_interval))
 
     def _stage_preprocess(self, frame_bgr: np.ndarray):
         with metrics.timer("preprocessing_duration"):
