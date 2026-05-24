@@ -35,7 +35,7 @@ from ecoface_lite.ai_engine.track_reassociator import TrackReassociator
 from ecoface_lite.ai_engine.pipeline_types import FaceDebugTrace, FrameMatch
 from ecoface_lite.ai_engine.preprocessing import FramePreprocessor
 from ecoface_lite.ai_engine.recognition_session import RecognitionSession
-from ecoface_lite.ai_engine.tracking.track_state import ACTIVE_RECOGNITION_STATES
+from ecoface_lite.ai_engine.tracking.track_state import ACTIVE_RECOGNITION_STATES, TrackLifecycleState
 from ecoface_lite.ai_engine.tracking.tracked_face import TrackedFace
 from ecoface_lite.config.tracking import TrackingConfig, get_tracking_config
 from ecoface_lite.core.config import Settings
@@ -162,6 +162,10 @@ class RecognitionPipeline:
         self._dynamic_detector_interval = settings.detector_interval_frames
         self._governance_cooldown_frames = 0
         self._detector_cooldown_active = False
+        self._current_pressure_band = 0
+        self._band_persistence_frames = 0
+        self._adaptive_det_confidence = settings.detection_confidence_threshold
+        self._adaptive_validator_cutoff = settings.validator_strict_cutoff
 
     @property
     def _track_manager(self):
@@ -348,7 +352,7 @@ class RecognitionPipeline:
     def _apply_load_governance(self, frame_index: int) -> None:
         """Dynamically adjust detector cadence and budget (Phase 1, 3, 5)."""
         snapshot = metrics.snapshot()
-        pressure_band = snapshot.recent_values.get("tracking_pressure_band", [0.0])[-1]
+        raw_pressure_band = int(snapshot.recent_values.get("tracking_pressure_band", [0.0])[-1])
         active_tracks = self._track_manager.active_track_count
         pending_queue = self._track_manager.candidate_queue_size
         det_runtime = snapshot.recent_values.get("detector_runtime_ms", [0.0])[-1]
@@ -363,25 +367,50 @@ class RecognitionPipeline:
             self._detector_cooldown_active = False
             metrics.observe("detector_cooldown_active", 0.0)
 
-        # 2. Phase 1: Adaptive Cadence based on Pressure Band
-        if pressure_band == 0: # NORMAL
+        # 2. Hysteresis Protection (Phase 1.3)
+        if raw_pressure_band != self._current_pressure_band:
+            self._band_persistence_frames += 1
+            if self._band_persistence_frames >= self._settings.governance_pressure_hysteresis_frames:
+                old_band = self._current_pressure_band
+                self._current_pressure_band = raw_pressure_band
+                self._band_persistence_frames = 0
+                metrics.increment("pressure_hysteresis_transitions")
+                logger.info("GOVERNANCE: Pressure band transitioned %d -> %d", old_band, self._current_pressure_band)
+        else:
+            self._band_persistence_frames = 0
+
+        # 3. Phase 1: Adaptive Cadence & Thresholds
+        band = self._current_pressure_band
+        if band == 0: # NORMAL
             target_interval = self._settings.governance_low_pressure_interval
-        elif pressure_band == 1: # ELEVATED
+            self._adaptive_det_confidence = self._settings.relaxation_low_confidence
+            self._adaptive_validator_cutoff = self._settings.relaxation_low_cutoff
+        elif band == 1: # ELEVATED
             target_interval = self._settings.governance_medium_pressure_interval
-        elif pressure_band == 2: # HIGH
+            self._adaptive_det_confidence = self._settings.relaxation_medium_confidence
+            self._adaptive_validator_cutoff = self._settings.relaxation_medium_cutoff
+        elif band == 2: # HIGH
             target_interval = self._settings.governance_high_pressure_interval
+            self._adaptive_det_confidence = self._settings.relaxation_high_confidence
+            self._adaptive_validator_cutoff = self._settings.relaxation_high_cutoff
         else: # CRITICAL
             target_interval = self._settings.governance_high_pressure_interval + 4
+            self._adaptive_det_confidence = self._settings.relaxation_high_confidence
+            self._adaptive_validator_cutoff = self._settings.relaxation_high_cutoff
             if self._governance_cooldown_frames == 0:
                 self._governance_cooldown_frames = self._settings.governance_critical_cooldown_frames
                 logger.warning("LOAD GOVERNANCE: Entering CRITICAL cooldown for %d frames", self._governance_cooldown_frames)
 
-        # 3. Phase 5: Budget Enforcement
+        # Apply adaptive thresholds (Phase 1.1)
+        metrics.observe("adaptive_detector_confidence", self._adaptive_det_confidence)
+        metrics.observe("adaptive_validator_cutoff", self._adaptive_validator_cutoff)
+
+        # 4. Phase 5: Budget Enforcement
         if det_runtime > self._settings.governance_max_detector_runtime_ms:
             target_interval = max(target_interval, 16)
             metrics.increment("governance_budget_violations")
             
-        # 4. Queue Pressure secondary check
+        # 5. Queue Pressure secondary check
         if pending_queue > self._settings.governance_max_candidate_queue_size:
             target_interval = max(target_interval, 14)
 
@@ -426,7 +455,7 @@ class RecognitionPipeline:
         raw_faces = self._detection_optimizer.scale_faces(raw_faces, scale)
         raw_faces = self._temporal_detector.apply(raw_faces, frame_index)
 
-        # ── Phase 2A.4: Proposal Fusion Engine ───────────────────────────────
+        # -- Phase 2A.4: Proposal Fusion Engine -------------------------------
         if self._proposal_fusion and len(raw_faces) > 1:
             raw_faces = self._proposal_fusion.fuse(
                 raw_faces, 
@@ -436,7 +465,7 @@ class RecognitionPipeline:
             if len(raw_faces) > self._settings.fusion_max_proposals_per_frame:
                 raw_faces = sorted(raw_faces, key=lambda f: f.det_score, reverse=True)[:self._settings.fusion_max_proposals_per_frame]
 
-        # ── Phase 2A: Unified Face Validator pre-filter ─────────────────────
+        # -- Phase 2A: Unified Face Validator pre-filter ---------------------
         validator_results: dict[str, ValidationResult] = {}
         face_tier: dict[int, ValidationTier] = {}
         strict_pass_faces: list[DetectedFace] = []
@@ -446,22 +475,44 @@ class RecognitionPipeline:
 
         for idx, face in enumerate(raw_faces):
             face_uuid = f"{frame_index}_{idx}"
-            result = self._unified_face_validator.validate(
-                face, prepared.bgr, prepared.bgr.shape, frame_index
-            )
-            validator_results[face_uuid] = result
-            face_tier[id(face)] = result.tier
+            
+            # Phase 1.2: Temporal Stability Bias
+            # Check if this face likely belongs to a stable track before validating
+            is_continuity_candidate = False
+            if self._current_pressure_band >= 1:
+                # Simple IoU check against active stable tracks
+                for t in self._track_manager.active_tracks():
+                    if t.is_stable and bbox_iou(face.bbox, BoundingBox(*t.bbox)) > 0.4:
+                        is_continuity_candidate = True
+                        break
 
-            if result.tier == ValidationTier.REJECT:
+            result = self._unified_face_validator.validate(
+                face, prepared.bgr, prepared.bgr.shape, frame_index,
+                min_det_confidence=self._adaptive_det_confidence,
+                strict_cutoff=self._adaptive_validator_cutoff
+            )
+            
+            # Override REJECT if continuity exists (Phase 1.2)
+            if result.tier == ValidationTier.REJECT and is_continuity_candidate and self._current_pressure_band >= 1:
+                # Force to TRACK_ONLY instead of REJECT to preserve spatial continuity
+                face_tier[id(face)] = ValidationTier.TRACK_ONLY
+                metrics.increment("continuity_override_accepts")
+                metrics.increment("validation_relaxation_events")
+            else:
+                face_tier[id(face)] = result.tier
+
+            validator_results[face_uuid] = result
+
+            if face_tier[id(face)] == ValidationTier.REJECT:
                 matches.append(self._validator_rejection_match(
                     face, frame_index, prepared, output_scale, result
                 ))
                 metrics.increment("validator_reject_count")
                 validator_rejections_this_frame += 1
-            elif result.tier == ValidationTier.TRACK_ONLY:
+            elif face_tier[id(face)] == ValidationTier.TRACK_ONLY:
                 track_only_faces.append(face)
                 metrics.increment("validator_track_only_count")
-            elif result.tier == ValidationTier.WEAK_PASS:
+            elif face_tier[id(face)] == ValidationTier.WEAK_PASS:
                 weak_pass_faces.append(face)
                 metrics.increment("validator_weak_pass_count")
             else:
@@ -475,7 +526,7 @@ class RecognitionPipeline:
             metrics.observe_rolling("validator_avg_fused_confidence",
                 sum(r.fused_confidence for r in vals) / len(vals))
 
-        # ── Legacy validators (secondary safety net, feature-flagged) ───────
+        # -- Legacy validators (secondary safety net, feature-flagged) -------
         if self._settings.enable_legacy_face_validation:
             legacy_faces = strict_pass_faces + weak_pass_faces
             geometry_accepted: list[DetectedFace] = []
@@ -524,7 +575,7 @@ class RecognitionPipeline:
         else:
             self._overload_active = False
 
-        # ── Phase 2A.5: Temporal Weak Memory ─────────────────────────────────
+        # -- Phase 2A.5: Temporal Weak Memory ---------------------------------
         weak_promotions = 0
         if self._weak_detection_memory and self._settings.enable_weak_detection_memory:
             promoted = self._weak_detection_memory.update(faces, frame_index)
@@ -548,7 +599,7 @@ class RecognitionPipeline:
                         boosted_faces.append(face)
                 faces = boosted_faces
 
-        # ── Phase 2A.1: Record detection metrics ─────────────────────────────
+        # -- Phase 2A.1: Record detection metrics -----------------------------
         if self._detection_metrics:
             try:
                 det_latency = metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
@@ -632,6 +683,12 @@ class RecognitionPipeline:
                 if track.lost_frames > 2:
                     track.metadata["no_recovery"] = True
                     track.metadata["no_reassociation"] = True
+            
+            # Phase 3: Coarse tracking maintenance
+            if track.state == TrackLifecycleState.COARSE.value:
+                # COARSE tracks bypass biometric validation
+                track.metadata["no_recovery"] = True
+                track.metadata["no_reassociation"] = True
 
         for track in self._track_manager.consume_removed_tracks():
             self._global_identity_memory.archive_lost_track(track, frame_index)
@@ -771,6 +828,13 @@ class RecognitionPipeline:
         if track is None:
             track = self._track_manager.candidate_track(face, frame_index)
 
+        # Phase 3: Coarse Tracking Biometric Bypass
+        if track is not None and track.state == TrackLifecycleState.COARSE.value:
+            metrics.increment("biometric_bypass_events")
+            if track.last_embedding is not None:
+                return track.last_embedding
+            return None
+
         track_quality = None
         if track is not None:
             track_quality = self._track_manager.update_track_quality(track, face, prepared.bgr, frame_index)
@@ -779,6 +843,27 @@ class RecognitionPipeline:
             track, frame_index, face, quality=track_quality
         )
         
+        # Phase 4: Priority-Aware Biometric Budgeting
+        if track is not None and need_embedding:
+            priority = self._track_manager._calculate_track_priority(track)
+            pressure_band = self._current_pressure_band
+            
+            # P3 (Background) + High Pressure = Degrade Background
+            if priority >= 3 and pressure_band >= 2:
+                metrics.increment("degraded_background_tracks")
+                if track.last_embedding is not None:
+                    return track.last_embedding
+                return None
+                
+            # P2 (Recently confirmed) + High Pressure = Partial throttle
+            if priority >= 2 and pressure_band >= 2:
+                # 75% chance to skip if we already have an identity
+                if track.identity is not None and (hash(track.track_id + str(frame_index)) % 100 < 75):
+                    metrics.increment("priority_embedding_throttles")
+                    return track.last_embedding
+
+            metrics.increment("priority_embedding_allocations")
+
         # Embedding Cooldown: Avoid thrashing in unstable scenes
         if track is not None and not need_embedding:
             last_emb_frame = track.last_embedding_frame

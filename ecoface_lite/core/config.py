@@ -120,6 +120,28 @@ class Settings(BaseSettings):
     enable_priority_ingestion: bool = Field(default=True, alias="ENABLE_PRIORITY_INGESTION")
     enable_track_survival_protection: bool = Field(default=True, alias="ENABLE_TRACK_SURVIVAL_PROTECTION")
 
+    # ── Adaptive Recall & Degradation (Phase 4) ──────────────────────────────
+    enable_adaptive_degradation: bool = Field(default=True, alias="ENABLE_ADAPTIVE_DEGRADATION")
+    governance_pressure_hysteresis_frames: int = Field(default=15, ge=1, alias="GOVERNANCE_PRESSURE_HYSTERESIS_FRAMES")
+    
+    # Validation Relaxation
+    relaxation_low_confidence: float = Field(default=0.45, ge=0.1, alias="RELAXATION_LOW_CONFIDENCE")
+    relaxation_medium_confidence: float = Field(default=0.38, ge=0.1, alias="RELAXATION_MEDIUM_CONFIDENCE")
+    relaxation_high_confidence: float = Field(default=0.30, ge=0.1, alias="RELAXATION_HIGH_CONFIDENCE")
+    
+    relaxation_low_cutoff: float = Field(default=0.70, ge=0.1, alias="RELAXATION_LOW_CUTOFF")
+    relaxation_medium_cutoff: float = Field(default=0.58, ge=0.1, alias="RELAXATION_MEDIUM_CUTOFF")
+    relaxation_high_cutoff: float = Field(default=0.45, ge=0.1, alias="RELAXATION_HIGH_CUTOFF")
+    
+    # Embedding Throttling
+    governance_embedding_refresh_cooldown_ms: int = Field(default=2000, ge=0, alias="GOVERNANCE_EMBEDDING_REFRESH_COOLDOWN_MS")
+    governance_stable_identity_freeze_enabled: bool = Field(default=True, alias="GOVERNANCE_STABLE_IDENTITY_FREEZE_ENABLED")
+    
+    # Coarse Tracking
+    enable_coarse_tracking: bool = Field(default=True, alias="ENABLE_COARSE_TRACKING")
+    coarse_track_survival_ms: int = Field(default=8000, ge=1000, alias="COARSE_TRACK_SURVIVAL_MS")
+    coarse_track_min_hits: int = Field(default=2, ge=1, alias="COARSE_TRACK_MIN_HITS")
+
     temporal_window_size: int = Field(default=8, ge=1, alias="TEMPORAL_WINDOW_SIZE")
     temporal_min_confirmations: int = Field(default=3, ge=1, alias="TEMPORAL_MIN_CONFIRMATIONS")
     temporal_min_average_confidence: float = Field(default=0.50, ge=0, le=1, alias="TEMPORAL_MIN_AVERAGE_CONFIDENCE")

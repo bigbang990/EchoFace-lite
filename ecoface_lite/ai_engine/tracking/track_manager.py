@@ -129,6 +129,27 @@ class FaceTrackManager:
             
         return score
 
+    def _calculate_track_priority(self, track: TrackedFace) -> int:
+        """Calculate biometric priority (P0 to P3) for a track (Phase 4)."""
+        # P0: Active alert target (mapped from metadata if set by external logic)
+        if track.metadata.get("is_alert_target"):
+            return 0
+            
+        # P1: Mature stable target
+        if track.state == TrackLifecycleState.STABLE.value and track.visibility_age > 100:
+            return 1
+            
+        # P2: Recently confirmed target
+        if track.state in {TrackLifecycleState.CONFIRMED.value, TrackLifecycleState.STABLE.value}:
+            # If it's confirmed but very small, it's P3 (background)
+            # Area < 2500 (approx 50x50) is considered background
+            if track.face_area < 2500:
+                return 3
+            return 2
+            
+        # P3: Background candidate / Coarse track
+        return 3
+
     def _check_congestion(self) -> None:
         """Detect queue saturation and track churn storms."""
         # 1. Candidate queue pressure
@@ -149,7 +170,13 @@ class FaceTrackManager:
         if pressure > 0.8: band = 3 # CRITICAL
         elif pressure > 0.6: band = 2 # HIGH
         elif pressure > 0.3: band = 1 # ELEVATED
+        
         metrics.observe("tracking_pressure_band", float(band))
+        
+        # 5. Biometric Budgeting (Phase 4)
+        biometric_score = pressure # Simple mapping for now
+        if band > 0:
+            metrics.observe("biometric_budget_pressure_score", biometric_score)
         
         if pressure > 0.8:
             logger.warning(
@@ -172,6 +199,7 @@ class FaceTrackManager:
         """
         self._expire_removed()
         self._check_congestion()
+        
         matched_ids: set[str] = set()
         results: list[tuple[DetectedFace, TrackedFace | None]] = []
 
@@ -185,6 +213,7 @@ class FaceTrackManager:
             bbox = (face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2)
             centroid = _bbox_center(bbox)
             track = self._best_match(face, centroid, frame_index)
+
             if track is None:
                 track = self._admit_or_queue_pending(face, frame_index)
                 if track is None:
@@ -192,7 +221,8 @@ class FaceTrackManager:
                     results.append((face, None))
                     continue
                 metrics.increment("new_tracks_created")
-            elif track.state == TrackLifecycleState.LOST.value:
+            elif track.state == TrackLifecycleState.LOST.value or track.state == TrackLifecycleState.COARSE.value:
+                old_state = track.state
                 track.recovery_count += 1
                 metrics.increment("recovered_tracks")
                 
@@ -202,6 +232,9 @@ class FaceTrackManager:
                     metrics.increment("ghost_track_recoveries")
                     metrics.observe_rate("recovery_success_rate", 1.0, 1.0)
                 
+                if old_state == TrackLifecycleState.COARSE.value:
+                    metrics.increment("coarse_tracks_promoted")
+                    
                 self._transition(track, TrackLifecycleState.CONFIRMED, frame_index, "recovered")
             
             matched_ids.add(track.track_id)
@@ -249,12 +282,27 @@ class FaceTrackManager:
                 self._transition(track, TrackLifecycleState.LOST, frame_index, "unmatched")
             
             # Use time-based expiration for tracks
-            if time_lost > self._cfg.track_expiration_ms * survival_boost:
+            survival_horizon = self._cfg.track_expiration_ms * survival_boost
+            if track.state == TrackLifecycleState.COARSE.value:
+                survival_horizon = self._cfg.coarse_track_survival_ms
+                
+            if time_lost > survival_horizon:
                 metrics.increment("recovery_window_expired")
                 metrics.increment("recovery_timeout_events")
                 metrics.increment("ghost_recovery_failures") # Phase 4 addition
-                self._transition(track, TrackLifecycleState.REMOVED, frame_index, "expired_time")
-                metrics.increment("stale_track_replacements")
+                
+                # Phase 3: Downgrade instead of REMOVED if HIGH pressure and not already COARSE
+                if (self._cfg.enable_coarse_tracking and pressure_band >= 2 
+                    and track.state != TrackLifecycleState.COARSE.value
+                    and track.visibility_age >= self._cfg.coarse_track_min_hits):
+                    self._transition(track, TrackLifecycleState.COARSE, frame_index, "pressure_downgrade")
+                    metrics.increment("coarse_tracks_created")
+                    # Don't increment removal counters if we downgraded
+                else:
+                    self._transition(track, TrackLifecycleState.REMOVED, frame_index, "expired_time")
+                    metrics.increment("stale_track_replacements")
+                    if track.state == TrackLifecycleState.COARSE.value:
+                        metrics.increment("coarse_tracks_expired")
 
         metrics.observe("active_track_count", self.active_track_count)
         # Filter out None tracks for metrics calculation
@@ -268,6 +316,7 @@ class FaceTrackManager:
     def propagate(self, frame_index: int) -> list[TrackedFace]:
         """Predict track positions on frames where the detector is skipped."""
         self._expire_removed()
+        self._check_congestion()
         propagated: list[TrackedFace] = []
         for track in list(self._tracks.values()):
             if not track.is_active or track.state == TrackLifecycleState.REMOVED.value:
@@ -314,15 +363,52 @@ class FaceTrackManager:
             metrics.increment("embedding_suppressed_low_quality")
             return False
 
-        cooldown = self._cfg.embedding_cooldown_frames
-        if track.last_embedding is not None and frame_index - track.last_embedding_frame < cooldown:
+        # Phase 2: Pressure-Aware Embedding Scheduling
+        snapshot = metrics.snapshot()
+        pressure_band = int(snapshot.recent_values.get("tracking_pressure_band", [0.0])[-1])
+        priority = self._calculate_track_priority(track)
+        
+        # 2.2 Stable Identity Freeze (Phase 2.2)
+        if self._cfg.governance_stable_identity_freeze_enabled and pressure_band >= 2:
+            if track.state == TrackLifecycleState.STABLE.value and track.identity is not None:
+                # If motion is stable, freeze embedding
+                motion_score = float(track.metadata.get("motion_score", 1.0))
+                if motion_score > 0.8:
+                    metrics.increment("stable_identity_freezes")
+                    return False
+
+        cooldown_frames = self._cfg.embedding_cooldown_frames
+        
+        # Phase 2.1: Reduce refresh frequency by 50% under pressure
+        if pressure_band == 1: # ELEVATED
+            cooldown_frames *= 2
+        elif pressure_band >= 2: # HIGH
+            # Only refresh for new tracks or if no identity yet
+            if track.identity is not None and priority >= 2:
+                metrics.increment("embedding_generation_suppression_count")
+                return False
+            cooldown_frames *= 4
+
+        # 2.3 Time-based cooldown (Phase 2.3)
+        time_since_last_ms = (time.monotonic() - track.embedding_timestamp) * 1000.0
+        if track.last_embedding is not None and time_since_last_ms < self._cfg.governance_embedding_refresh_cooldown_ms:
+            metrics.increment("embedding_refresh_skips")
+            return False
+
+        if track.last_embedding is not None and frame_index - track.last_embedding_frame < cooldown_frames:
             if face is None:
                 metrics.increment("embedding_skips")
                 return False
 
         if track.last_embedding is None:
             return True
-        if frame_index - track.last_embedding_frame >= self._cfg.recognition_interval:
+            
+        # Priority-aware refresh interval
+        refresh_interval = self._cfg.recognition_interval
+        if priority >= 2 and pressure_band >= 1:
+            refresh_interval *= 2
+            
+        if frame_index - track.last_embedding_frame >= refresh_interval:
             metrics.increment("embedding_cache_refresh_due")
             return True
         if face is not None:
@@ -371,7 +457,8 @@ class FaceTrackManager:
         metrics.observe("confirmation_queue_pressure", len(self._pending))
 
         for pending in self._pending:
-            if bbox_iou(bbox, pending.face.bbox) >= self._settings.temporal_min_track_iou:
+            iou_val = bbox_iou(bbox, pending.face.bbox)
+            if iou_val >= self._settings.temporal_min_track_iou:
                 pending.hits += 1
                 pending.face = face
                 pending.last_frame = frame_index
@@ -466,9 +553,14 @@ class FaceTrackManager:
             ttl_ms = 300.0 # Aggressive decay under pressure
             
         initial_count = len(self._pending)
+        if initial_count > 0:
+             # print(f"DEBUG: _decay_pending initial={initial_count} frame={frame_index}")
+             pass
         self._pending = [p for p in self._pending if (now - p.last_seen_ts) * 1000.0 < ttl_ms]
         
         drops = initial_count - len(self._pending)
+        if drops > 0:
+             print(f"DEBUG: _decay_pending DROPPED {drops} candidates at frame {frame_index}")
         if drops > 0:
             metrics.increment("candidate_drop_rate", drops)
 
@@ -643,3 +735,4 @@ class FaceTrackManager:
         for tid in expired:
             del self._tracks[tid]
             self._motion.remove(tid)
+

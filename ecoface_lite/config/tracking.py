@@ -56,6 +56,21 @@ class TrackingConfig:
     enable_priority_ingestion: bool = True
     enable_track_survival_protection: bool = True
     
+    # ── Adaptive Recall & Degradation (Phase 4) ──────────────────────────────
+    enable_adaptive_degradation: bool = True
+    governance_pressure_hysteresis_frames: int = 15
+    relaxation_low_confidence: float = 0.45
+    relaxation_medium_confidence: float = 0.38
+    relaxation_high_confidence: float = 0.30
+    relaxation_low_cutoff: float = 0.70
+    relaxation_medium_cutoff: float = 0.58
+    relaxation_high_cutoff: float = 0.45
+    governance_embedding_refresh_cooldown_ms: int = 2000
+    governance_stable_identity_freeze_enabled: bool = True
+    enable_coarse_tracking: bool = True
+    coarse_track_survival_ms: int = 8000
+    coarse_track_min_hits: int = 2
+    
     # --- Phase 2: Time-Aware Lifecycle Parameters ---
     confirm_duration_ms: int = 500
     decay_duration_ms: int = 2000
@@ -109,6 +124,19 @@ def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
         governance_mature_track_age=s.governance_mature_track_age,
         enable_priority_ingestion=s.enable_priority_ingestion,
         enable_track_survival_protection=s.enable_track_survival_protection,
+        enable_adaptive_degradation=s.enable_adaptive_degradation,
+        governance_pressure_hysteresis_frames=s.governance_pressure_hysteresis_frames,
+        relaxation_low_confidence=s.relaxation_low_confidence,
+        relaxation_medium_confidence=s.relaxation_medium_confidence,
+        relaxation_high_confidence=s.relaxation_high_confidence,
+        relaxation_low_cutoff=s.relaxation_low_cutoff,
+        relaxation_medium_cutoff=s.relaxation_medium_cutoff,
+        relaxation_high_cutoff=s.relaxation_high_cutoff,
+        governance_embedding_refresh_cooldown_ms=s.governance_embedding_refresh_cooldown_ms,
+        governance_stable_identity_freeze_enabled=s.governance_stable_identity_freeze_enabled,
+        enable_coarse_tracking=s.enable_coarse_tracking,
+        coarse_track_survival_ms=s.coarse_track_survival_ms,
+        coarse_track_min_hits=s.coarse_track_min_hits,
         confirm_duration_ms=s.tracking_confirm_duration_ms,
         decay_duration_ms=s.tracking_decay_duration_ms,
         recovery_buffer_ms=s.tracking_recovery_buffer_ms,

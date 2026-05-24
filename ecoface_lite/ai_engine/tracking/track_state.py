@@ -12,6 +12,7 @@ class TrackLifecycleState(str, Enum):
     CANDIDATE = "candidate"
     CONFIRMED = "confirmed"
     STABLE = "stable"
+    COARSE = "coarse"
     LOST = "lost"
     REMOVED = "removed"
 
@@ -23,5 +24,6 @@ ACTIVE_RECOGNITION_STATES = frozenset(
         TrackLifecycleState.CANDIDATE.value,
         TrackLifecycleState.CONFIRMED.value,
         TrackLifecycleState.STABLE.value,
+        TrackLifecycleState.COARSE.value,
     }
 )

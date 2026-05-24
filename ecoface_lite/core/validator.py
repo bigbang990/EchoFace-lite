@@ -337,6 +337,8 @@ class FaceValidator:
         frame_shape: tuple[int, ...], frame_index: int = 0,
         scene: SceneContext | None = None,
         track_quality: TrackStateQuality | None = None,
+        min_det_confidence: float | None = None,
+        strict_cutoff: float | None = None,
     ) -> ValidationResult:
         det_score = face.temporal_score if face.temporal_score is not None else face.det_score
         clipped = clip_bbox_to_frame(face.bbox, frame_shape)
@@ -357,8 +359,10 @@ class FaceValidator:
             self._s.validator_min_face_area_ratio,
             self._s.validator_max_face_area_ratio,
         )
+        
+        det_threshold = min_det_confidence if min_det_confidence is not None else self._s.validator_min_detector_confidence
         det_ok, det_reasons = validate_detector_confidence(
-            det_score, self._s.validator_min_detector_confidence,
+            det_score, det_threshold,
         )
         blur_raw = compute_blur_score(crop)
         blur_quality, blur_reasons = validate_blur(blur_raw, self._s.validator_min_blur_var)
@@ -395,9 +399,10 @@ class FaceValidator:
             track_stability=tq.bbox_consistency,
         )
 
+        effective_strict_cutoff = strict_cutoff if strict_cutoff is not None else self._s.validator_strict_cutoff
         tier = _assign_tier(
             quality_score, fused, all_reasons, lm_score,
-            self._s.validator_quality_cutoff, self._s.validator_strict_cutoff,
+            self._s.validator_quality_cutoff, effective_strict_cutoff,
         )
 
         sorted_reasons = _sort_reasons(all_reasons)

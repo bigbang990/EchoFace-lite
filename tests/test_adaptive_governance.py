@@ -105,7 +105,8 @@ def test_adaptive_detector_interval():
     settings = _settings(
         governance_low_pressure_interval=8,
         governance_medium_pressure_interval=12,
-        governance_high_pressure_interval=16
+        governance_high_pressure_interval=16,
+        governance_pressure_hysteresis_frames=1,
     )
     
     pipeline = RecognitionPipeline(
