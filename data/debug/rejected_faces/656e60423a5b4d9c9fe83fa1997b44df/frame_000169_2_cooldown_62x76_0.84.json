@@ -1,0 +1,13 @@
+{
+  "frame_index": 169,
+  "reason": "cooldown",
+  "detector_confidence": 0.8370410203933716,
+  "face_width": 62,
+  "face_height": 76,
+  "blur_score": 914.5350572878984,
+  "stages": [
+    "DETECTED",
+    "TRACKED",
+    "RECOGNIZED"
+  ]
+}
