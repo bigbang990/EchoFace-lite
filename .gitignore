@@ -28,6 +28,12 @@ data/videos/*
 *.db
 *.sqlite3
 logs/*.log
+data/validation_videos/
+identity_stress_suite/logs/
+identity_stress_suite/overlay_exports/
+identity_stress_suite/reports/
+data/debug/
+logs/
 
 # Models cache (InsightFace downloads)
 models/
@@ -36,3 +42,5 @@ models/
 # OS
 .DS_Store
 Thumbs.db
+
+
