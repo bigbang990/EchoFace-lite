@@ -85,6 +85,40 @@ class TrackingConfig:
     aggressive_decay_ms: int = 500
     stable_duration_ms: int = 1500
 
+    # ── Phase 2C.4: Adaptive Continuity Confidence Refinement ────────────────
+    # Objective 1: Temporal Confidence Decay Model
+    enable_temporal_confidence_decay: bool = True
+    confidence_decay_alpha: float = 0.95
+    confidence_recovery_alpha: float = 0.7
+    confidence_strong_threshold: float = 0.85
+    confidence_weak_threshold: float = 0.5
+    confidence_history_length: int = 10
+    
+    # Objective 2: Occlusion-Aware Continuity Memory
+    enable_occlusion_aware_memory: bool = True
+    max_occlusion_frames: int = 8
+    occlusion_recovery_frames: int = 5
+    continuity_memory_decay_rate: float = 0.9
+    
+    # Objective 3: Profile-Angle Adaptive Acceptance
+    enable_profile_adaptive_acceptance: bool = True
+    profile_aspect_ratio_threshold: float = 0.15
+    profile_persistence_threshold: int = 3
+    profile_tolerance_multiplier: float = 1.3
+    
+    # Objective 4: Adaptive Motion Responsiveness
+    enable_adaptive_motion_responsiveness: bool = True
+    motion_intensity_low_threshold: float = 3.0
+    motion_intensity_high_threshold: float = 15.0
+    acceleration_threshold: float = 5.0
+    direction_change_threshold: float = 0.5
+    reentry_boost_frames: int = 5
+    
+    # Objective 5: Small-Face Continuity Tolerance
+    enable_small_face_tolerance: bool = True
+    small_face_area_threshold: float = 2500.0
+    small_face_tolerance_multiplier: float = 1.5
+
 
 def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
     s = settings or get_settings()
@@ -154,6 +188,30 @@ def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
         track_expiration_ms=s.tracking_expiration_ms,
         aggressive_decay_ms=s.tracking_aggressive_decay_ms,
         stable_duration_ms=s.tracking_stable_duration_ms,
+        # Phase 2C.4: Adaptive Continuity Confidence Refinement
+        enable_temporal_confidence_decay=s.enable_temporal_confidence_decay,
+        confidence_decay_alpha=s.confidence_decay_alpha,
+        confidence_recovery_alpha=s.confidence_recovery_alpha,
+        confidence_strong_threshold=s.confidence_strong_threshold,
+        confidence_weak_threshold=s.confidence_weak_threshold,
+        confidence_history_length=s.confidence_history_length,
+        enable_occlusion_aware_memory=s.enable_occlusion_aware_memory,
+        max_occlusion_frames=s.max_occlusion_frames,
+        occlusion_recovery_frames=s.occlusion_recovery_frames,
+        continuity_memory_decay_rate=s.continuity_memory_decay_rate,
+        enable_profile_adaptive_acceptance=s.enable_profile_adaptive_acceptance,
+        profile_aspect_ratio_threshold=s.profile_aspect_ratio_threshold,
+        profile_persistence_threshold=s.profile_persistence_threshold,
+        profile_tolerance_multiplier=s.profile_tolerance_multiplier,
+        enable_adaptive_motion_responsiveness=s.enable_adaptive_motion_responsiveness,
+        motion_intensity_low_threshold=s.motion_intensity_low_threshold,
+        motion_intensity_high_threshold=s.motion_intensity_high_threshold,
+        acceleration_threshold=s.acceleration_threshold,
+        direction_change_threshold=s.direction_change_threshold,
+        reentry_boost_frames=s.reentry_boost_frames,
+        enable_small_face_tolerance=s.enable_small_face_tolerance,
+        small_face_area_threshold=s.small_face_area_threshold,
+        small_face_tolerance_multiplier=s.small_face_tolerance_multiplier,
     )
 
 

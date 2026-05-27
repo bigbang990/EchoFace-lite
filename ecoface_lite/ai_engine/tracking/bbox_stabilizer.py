@@ -14,6 +14,13 @@ class StabilizationConfig:
     aspect_ratio_tolerance: float = 0.08
     ratio_persistence_frames: int = 5
     velocity_memory: int = 3
+    
+    # ── Phase 2C.4: Adaptive Motion Responsiveness (Objective 4) ─────────────
+    motion_intensity_low_threshold: float = 3.0  # Pixels per frame
+    motion_intensity_high_threshold: float = 15.0  # Pixels per frame
+    acceleration_threshold: float = 5.0  # Pixels per frame^2
+    direction_change_threshold: float = 0.5  # Cosine-based (0-1)
+    reentry_boost_frames: int = 5
 
 class BBoxStabilizer:
     """
@@ -23,6 +30,7 @@ class BBoxStabilizer:
     - Adaptive exponential smoothing
     - Aspect ratio stabilization
     - Lightweight velocity-aware prediction
+    - Adaptive motion responsiveness (Phase 2C.4)
     """
     
     def __init__(self, config: StabilizationConfig | None = None):
@@ -38,6 +46,10 @@ class BBoxStabilizer:
         self.velocity_history: deque[tuple[float, float]] = deque(maxlen=self.cfg.velocity_memory)
         self.ratio_history: deque[float] = deque(maxlen=self.cfg.ratio_persistence_frames)
         self.stable_ratio: float | None = None
+        
+        # ── Phase 2C.4: Adaptive Motion Responsiveness ───────────────────────
+        self.previous_velocity: tuple[float, float] = (0.0, 0.0)
+        self.reentry_frame_count: int = 0
 
     def predict(self) -> tuple[float, float, float, float] | None:
         """
@@ -151,3 +163,86 @@ class BBoxStabilizer:
         self.last_smoothed_bbox = smoothed
         
         return smoothed
+
+    def compute_adaptive_correction_strength(
+        self,
+        motion_intensity: float,
+        acceleration_magnitude: float,
+        direction_change_intensity: float,
+        is_reentry: bool = False,
+    ) -> float:
+        """
+        Compute adaptive correction strength based on motion metrics (Objective 4).
+        
+        Adjusts smoothing strength dynamically:
+        - LOW MOTION: strong smoothing (stable)
+        - HIGH MOTION: weaker smoothing (responsive)
+        - RE-ENTRY: temporarily prioritize responsiveness
+        - CAMERA SHAKE: preserve stabilization
+        
+        Args:
+            motion_intensity: Velocity magnitude in pixels per frame
+            acceleration_magnitude: Acceleration magnitude
+            direction_change_intensity: Direction change intensity (0-1)
+            is_reentry: Whether this is a re-entry event
+            
+        Returns:
+            Adaptive correction strength (0.0-1.0, higher = more responsive)
+        """
+        import math
+        
+        # Base correction strength
+        base_strength = 0.8
+        
+        # Motion intensity adaptation
+        if motion_intensity < self.cfg.motion_intensity_low_threshold:
+            # Low motion: strong smoothing
+            motion_factor = 0.6
+        elif motion_intensity > self.cfg.motion_intensity_high_threshold:
+            # High motion: weaker smoothing (more responsive)
+            motion_factor = 0.95
+        else:
+            # Linear interpolation between thresholds
+            ratio = (motion_intensity - self.cfg.motion_intensity_low_threshold) / (
+                self.cfg.motion_intensity_high_threshold - self.cfg.motion_intensity_low_threshold
+            )
+            motion_factor = 0.6 + (0.35 * ratio)
+        
+        # Acceleration adaptation
+        if acceleration_magnitude > self.cfg.acceleration_threshold:
+            # High acceleration: increase responsiveness
+            accel_factor = 0.9
+        else:
+            accel_factor = 0.7
+        
+        # Direction change adaptation
+        if direction_change_intensity > self.cfg.direction_change_threshold:
+            # Sharp direction change: increase responsiveness
+            direction_factor = 0.9
+        else:
+            direction_factor = 0.7
+        
+        # Re-entry boost
+        if is_reentry and self.reentry_frame_count < self.cfg.reentry_boost_frames:
+            self.reentry_frame_count += 1
+            reentry_factor = 0.95
+            metrics.increment("adaptive_reentry_boost")
+        else:
+            reentry_factor = 0.7
+            self.reentry_frame_count = 0
+        
+        # Combine factors (weighted average)
+        adaptive_strength = (
+            0.4 * motion_factor +
+            0.2 * accel_factor +
+            0.2 * direction_factor +
+            0.2 * reentry_factor
+        )
+        
+        # Clamp to valid range
+        adaptive_strength = max(0.2, min(1.0, adaptive_strength))
+        
+        metrics.observe("adaptive_correction_strength", adaptive_strength)
+        metrics.observe("motion_intensity", motion_intensity)
+        
+        return adaptive_strength

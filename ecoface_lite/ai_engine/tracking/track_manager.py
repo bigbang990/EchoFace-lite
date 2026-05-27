@@ -382,6 +382,7 @@ class FaceTrackManager:
                 continue
             if not self._is_admitted(track):
                 continue
+            prev_velocity = track.metadata.get("velocity", (0.0, 0.0))
             velocity = track.metadata.get("velocity", (0.0, 0.0))
             x1, y1, x2, y2 = track.bbox
             
@@ -393,9 +394,38 @@ class FaceTrackManager:
             track.face_area = _bbox_area(track.bbox)
             track.last_seen_frame = frame_index
             track.visibility_age = frame_index - track.first_seen_frame + 1
+            
+            # ── Phase 2C.4: Temporal Confidence Decay Model (Objective 1) ────────
+            # Apply decay for missing detections
+            if self._cfg.enable_temporal_confidence_decay:
+                decayed_confidence = track.apply_temporal_confidence_decay(
+                    track.confidence,
+                    is_detected=False,
+                    decay_alpha=self._cfg.confidence_decay_alpha,
+                    recovery_alpha=self._cfg.confidence_recovery_alpha,
+                    strong_detection_threshold=self._cfg.confidence_strong_threshold,
+                    weak_detection_threshold=self._cfg.confidence_weak_threshold,
+                )
+                track.confidence = decayed_confidence
+            
+            # ── Phase 2C.4: Occlusion-Aware Continuity Memory (Objective 2) ──────
+            # Update occlusion state for missing detections
+            if self._cfg.enable_occlusion_aware_memory:
+                track.update_occlusion_state(
+                    is_detected=False,
+                    max_occlusion_frames=self._cfg.max_occlusion_frames,
+                    recovery_frames=self._cfg.occlusion_recovery_frames,
+                )
+            
             motion = self._motion.update(track.track_id, track.bbox, frame_index)
             track.metadata["velocity"] = motion.velocity
             track.metadata["motion_score"] = motion.motion_stability_score
+            
+            # ── Phase 2C.4: Adaptive Motion Responsiveness (Objective 4) ───────
+            # Update motion metrics during propagation
+            if self._cfg.enable_adaptive_motion_responsiveness:
+                current_velocity = motion.velocity
+                track.update_motion_metrics(current_velocity, prev_velocity)
             
             # Phase 2: Partial continuity accumulation during skipped frames
             # Synchronize accumulation with detector interval (Step 4)
@@ -693,13 +723,49 @@ class FaceTrackManager:
         frame_bgr: np.ndarray | None,
     ) -> None:
         prev_center = track.center_point
+        prev_velocity = track.metadata.get("velocity", (0.0, 0.0))
         bbox = (face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2)
+        
+        # ── Phase 2C.4: Small-Face Continuity Tolerance (Objective 5) ─────────
+        if self._cfg.enable_small_face_tolerance:
+            face_area = _bbox_area(bbox)
+            track.update_small_face_mode(face_area, self._cfg.small_face_area_threshold)
+        
+        # ── Phase 2C.4: Profile-Angle Adaptive Acceptance (Objective 3) ───────
+        if self._cfg.enable_profile_adaptive_acceptance:
+            current_aspect_ratio = (bbox[2] - bbox[0]) / max(1.0, bbox[3] - bbox[1])
+            track.estimate_profile_likelihood(
+                current_aspect_ratio,
+                self._cfg.profile_aspect_ratio_threshold,
+                self._cfg.profile_persistence_threshold
+            )
         
         # ── Stability Hardening (Step 1): BBox Smoothing ─────────────────────
         track.update_bbox(bbox, self._cfg.bbox_ema_alpha)
         
+        # ── Phase 2C.4: Temporal Confidence Decay Model (Objective 1) ────────
         score = face.temporal_score if face.temporal_score is not None else face.det_score
-        track.confidence = score
+        if self._cfg.enable_temporal_confidence_decay:
+            adjusted_confidence = track.apply_temporal_confidence_decay(
+                score,
+                is_detected=True,
+                decay_alpha=self._cfg.confidence_decay_alpha,
+                recovery_alpha=self._cfg.confidence_recovery_alpha,
+                strong_detection_threshold=self._cfg.confidence_strong_threshold,
+                weak_detection_threshold=self._cfg.confidence_weak_threshold,
+            )
+            track.confidence = adjusted_confidence
+        else:
+            track.confidence = score
+        
+        # ── Phase 2C.4: Occlusion-Aware Continuity Memory (Objective 2) ──────
+        if self._cfg.enable_occlusion_aware_memory:
+            track.update_occlusion_state(
+                is_detected=True,
+                max_occlusion_frames=self._cfg.max_occlusion_frames,
+                recovery_frames=self._cfg.occlusion_recovery_frames,
+            )
+        
         track.center_point = _bbox_center(bbox)
         track.face_area = _bbox_area(bbox)
         track.metadata["last_face_area"] = track.face_area
@@ -710,11 +776,19 @@ class FaceTrackManager:
         track.confirmation_hits = max(track.confirmation_hits, self._cfg.confirm_frames)
         if face.landmarks is not None:
             track.metadata["landmarks"] = face.landmarks
+        
+        # Calculate velocity
         if prev_center != (0.0, 0.0):
-            track.metadata["velocity"] = (
+            current_velocity = (
                 track.center_point[0] - prev_center[0],
                 track.center_point[1] - prev_center[1],
             )
+            track.metadata["velocity"] = current_velocity
+            
+            # ── Phase 2C.4: Adaptive Motion Responsiveness (Objective 4) ───────
+            if self._cfg.enable_adaptive_motion_responsiveness:
+                track.update_motion_metrics(current_velocity, prev_velocity)
+        
         motion = self._motion.update(track.track_id, track.bbox, frame_index)
         track.metadata["velocity"] = motion.velocity
         self._quality_engine.update(track, face, frame_bgr, motion, frame_index)

@@ -188,7 +188,41 @@ class Settings(BaseSettings):
     tracking_expiration_ms: int = Field(default=5000, ge=500, alias="TRACKING_EXPIRATION_MS")
     tracking_aggressive_decay_ms: int = Field(default=500, ge=50, alias="TRACKING_AGGRESSIVE_DECAY_MS")
     tracking_stable_duration_ms: int = Field(default=1500, ge=100, alias="TRACKING_STABLE_DURATION_MS")
+
+    # ── Phase 2C.4: Adaptive Continuity Confidence Refinement ────────────────
+    # Objective 1: Temporal Confidence Decay Model
+    enable_temporal_confidence_decay: bool = Field(default=True, alias="ENABLE_TEMPORAL_CONFIDENCE_DECAY")
+    confidence_decay_alpha: float = Field(default=0.95, ge=0.5, le=1.0, alias="CONFIDENCE_DECAY_ALPHA")
+    confidence_recovery_alpha: float = Field(default=0.7, ge=0.5, le=1.0, alias="CONFIDENCE_RECOVERY_ALPHA")
+    confidence_strong_threshold: float = Field(default=0.85, ge=0.5, le=1.0, alias="CONFIDENCE_STRONG_THRESHOLD")
+    confidence_weak_threshold: float = Field(default=0.5, ge=0.1, le=1.0, alias="CONFIDENCE_WEAK_THRESHOLD")
+    confidence_history_length: int = Field(default=10, ge=1, alias="CONFIDENCE_HISTORY_LENGTH")
     
+    # Objective 2: Occlusion-Aware Continuity Memory
+    enable_occlusion_aware_memory: bool = Field(default=True, alias="ENABLE_OCCLUSION_AWARE_MEMORY")
+    max_occlusion_frames: int = Field(default=8, ge=1, alias="MAX_OCCLUSION_FRAMES")
+    occlusion_recovery_frames: int = Field(default=5, ge=1, alias="OCCLUSION_RECOVERY_FRAMES")
+    continuity_memory_decay_rate: float = Field(default=0.9, ge=0.5, le=1.0, alias="CONTINUITY_MEMORY_DECAY_RATE")
+    
+    # Objective 3: Profile-Angle Adaptive Acceptance
+    enable_profile_adaptive_acceptance: bool = Field(default=True, alias="ENABLE_PROFILE_ADAPTIVE_ACCEPTANCE")
+    profile_aspect_ratio_threshold: float = Field(default=0.15, ge=0.05, le=0.5, alias="PROFILE_ASPECT_RATIO_THRESHOLD")
+    profile_persistence_threshold: int = Field(default=3, ge=1, alias="PROFILE_PERSISTENCE_THRESHOLD")
+    profile_tolerance_multiplier: float = Field(default=1.3, ge=1.0, le=2.0, alias="PROFILE_TOLERANCE_MULTIPLIER")
+    
+    # Objective 4: Adaptive Motion Responsiveness
+    enable_adaptive_motion_responsiveness: bool = Field(default=True, alias="ENABLE_ADAPTIVE_MOTION_RESPONSIVENESS")
+    motion_intensity_low_threshold: float = Field(default=3.0, ge=1.0, alias="MOTION_INTENSITY_LOW_THRESHOLD")
+    motion_intensity_high_threshold: float = Field(default=15.0, ge=5.0, alias="MOTION_INTENSITY_HIGH_THRESHOLD")
+    acceleration_threshold: float = Field(default=5.0, ge=1.0, alias="ACCELERATION_THRESHOLD")
+    direction_change_threshold: float = Field(default=0.5, ge=0.1, le=1.0, alias="DIRECTION_CHANGE_THRESHOLD")
+    reentry_boost_frames: int = Field(default=5, ge=1, alias="REENTRY_BOOST_FRAMES")
+    
+    # Objective 5: Small-Face Continuity Tolerance
+    enable_small_face_tolerance: bool = Field(default=True, alias="ENABLE_SMALL_FACE_TOLERANCE")
+    small_face_area_threshold: float = Field(default=2500.0, ge=500.0, alias="SMALL_FACE_AREA_THRESHOLD")
+    small_face_tolerance_multiplier: float = Field(default=1.5, ge=1.0, le=2.0, alias="SMALL_FACE_TOLERANCE_MULTIPLIER")
+
     tracking_decay_new_alpha: float = Field(default=0.97, ge=0.5, le=1, alias="TRACKING_DECAY_NEW_ALPHA")
     tracking_decay_stable_alpha: float = Field(default=0.99, ge=0.5, le=1, alias="TRACKING_DECAY_STABLE_ALPHA")
     tracking_decay_aggressive_alpha: float = Field(default=0.85, ge=0.5, le=1, alias="TRACKING_DECAY_AGGRESSIVE_ALPHA")
