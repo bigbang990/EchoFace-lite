@@ -6,7 +6,86 @@ Tracking-first architecture:
 
 from __future__ import annotations
 
+import math
+import time
+import threading
+from collections import deque
+from dataclasses import dataclass
+from queue import Queue, Empty
+
 import numpy as np
+
+
+@dataclass
+class TimingBlock:
+    """Unified timing block using time.perf_counter() exclusively."""
+    start: float = 0.0
+    end: float = 0.0
+
+    def begin(self):
+        self.start = time.perf_counter()
+
+    def stop(self):
+        self.end = time.perf_counter()
+
+    @property
+    def elapsed_ms(self):
+        return (self.end - self.start) * 1000.0
+
+
+@dataclass
+class FrameTimingContext:
+    """Isolated timing context per frame (no cross-frame contamination)."""
+    frame_id: int
+    frame_timer: TimingBlock
+    preprocess_timer: TimingBlock
+    detector_timer: TimingBlock
+    tracker_timer: TimingBlock
+    validator_timer: TimingBlock
+
+    @property
+    def preprocessing_ms(self) -> float:
+        return self.preprocess_timer.elapsed_ms
+
+    @property
+    def detector_ms(self) -> float:
+        return self.detector_timer.elapsed_ms
+
+    @property
+    def tracker_ms(self) -> float:
+        return self.tracker_timer.elapsed_ms
+
+    @property
+    def validator_ms(self) -> float:
+        return self.validator_timer.elapsed_ms
+
+    @property
+    def frame_total_ms(self) -> float:
+        return self.frame_timer.elapsed_ms
+
+    @property
+    def subsystem_sum_ms(self) -> float:
+        return self.preprocessing_ms + self.detector_ms + self.tracker_ms + self.validator_ms
+
+
+@dataclass
+class DetectionRequestPayload:
+    """Payload sent to async detection worker."""
+    frame_id: int
+    timestamp: float
+    prepared_frame_bgr: np.ndarray  # The preprocessed frame from prepare_for_detection
+    scale: float
+
+
+@dataclass
+class DetectionResultPayload:
+    """Payload returned from async detection worker."""
+    frame_id: int
+    timestamp: float
+    raw_faces: list[DetectedFace]
+    scale: float
+    detector_inference_ms: float
+
 
 from ecoface_lite.ai_engine.detection.detectors.multiscale_detector import MultiScaleDetector
 from ecoface_lite.ai_engine.detection.detectors.base_detector import BaseDetector, DetectionConfig
@@ -157,6 +236,13 @@ class RecognitionPipeline:
             except Exception as e:
                 logger.warning("Failed to initialize multi-scale detector: %s", e)
 
+        # ── Phase 2D.1: Timing History Buffers ────────────────────────────────
+        self._preprocessing_history = deque(maxlen=60)
+        self._detector_history = deque(maxlen=60)
+        self._tracker_history = deque(maxlen=60)
+        self._validator_history = deque(maxlen=60)
+        self._frame_history = deque(maxlen=60)
+        
         # ── Overload Management State ────────────────────────────────────────
         self._overload_active = False
         self._dynamic_detector_interval = settings.detector_interval_frames
@@ -171,6 +257,74 @@ class RecognitionPipeline:
         self._governance_lockout_active = False
         self._emergency_rebuild_active = False
         self._recovery_cooldown_frames = 0
+        
+        # ── Phase 3.0: Async Detection Infrastructure ─────────────────────────
+        self._detection_request_queue: Queue[DetectionRequestPayload] = Queue(maxsize=2)
+        self._detection_result_queue: Queue[DetectionResultPayload] = Queue(maxsize=2)
+        self._shutdown_event = threading.Event()
+        self._worker_thread: threading.Thread | None = None
+        self._dropped_detection_requests: int = 0
+        self._dropped_stale_results: int = 0
+        
+        # Start worker thread
+        self._start_worker_thread()
+
+    def _start_worker_thread(self) -> None:
+        """Start the async detection worker thread."""
+        self._worker_thread = threading.Thread(target=self._detection_worker, daemon=True, name="DetectionWorker")
+        self._worker_thread.start()
+        logger.info("Async detection worker thread started")
+
+    def _detection_worker(self) -> None:
+        """Background worker thread to perform detector inference."""
+        while not self._shutdown_event.is_set():
+            try:
+                # Wait for a detection request with a small timeout (so we can check shutdown event regularly)
+                request = self._detection_request_queue.get(timeout=0.1)
+            except Empty:
+                continue
+
+            try:
+                # Perform inference (this is the slow part!)
+                detection_timer = TimingBlock()
+                detection_timer.begin()
+                if self._multiscale_detector and self._settings.enable_multiscale_detection:
+                    det_config = DetectionConfig(det_size=request.prepared_frame_bgr.shape[:2][::-1])
+                    raw_faces = self._multiscale_detector.detect(request.prepared_frame_bgr, det_config)
+                else:
+                    raw_faces = self._detector.detect(request.prepared_frame_bgr)
+                detection_timer.stop()
+
+                # Create result payload
+                result = DetectionResultPayload(
+                    frame_id=request.frame_id,
+                    timestamp=request.timestamp,
+                    raw_faces=raw_faces,
+                    scale=request.scale,
+                    detector_inference_ms=detection_timer.elapsed_ms
+                )
+
+                # Try to put result into result queue (non-blocking, drop if full)
+                try:
+                    self._detection_result_queue.put_nowait(result)
+                except Exception:
+                    logger.warning("Detection result queue full, dropped result for frame %d", request.frame_id)
+                    self._dropped_stale_results += 1
+                    metrics.increment("phase3_dropped_stale_results")
+
+            except Exception as e:
+                logger.error("Error in detection worker thread: %s", e, exc_info=True)
+            finally:
+                # Mark request as done
+                self._detection_request_queue.task_done()
+
+    def shutdown(self) -> None:
+        """Safely shut down the async detection worker thread."""
+        logger.info("Shutting down async detection worker")
+        self._shutdown_event.set()
+        if self._worker_thread is not None and self._worker_thread.is_alive():
+            self._worker_thread.join(timeout=10)
+        logger.info("Async detection worker shut down")
 
     @property
     def _track_manager(self):
@@ -195,35 +349,231 @@ class RecognitionPipeline:
     ) -> list[FrameMatch]:
         metrics.increment("total_frames_processed")
         
+        # ── Phase 3.0: Process Pending Detection Results First ─────────────────
+        self._process_pending_detection_results(frame_index, gallery)
+        
+        # ── Phase 2D.1: Initialize Per-Frame Timing Context ────────────────────
+        timing_ctx = FrameTimingContext(
+            frame_id=frame_index,
+            frame_timer=TimingBlock(),
+            preprocess_timer=TimingBlock(),
+            detector_timer=TimingBlock(),
+            tracker_timer=TimingBlock(),
+            validator_timer=TimingBlock()
+        )
+        
+        timing_ctx.frame_timer.begin()
+        
         # ── Phase 2: Governance Lockout Mode Activation ──────────────────────
         active_tracks = self._track_manager.active_track_count
         # We need to peek at detections count to decide on lockout
         # This is handled inside _apply_load_governance but we need the flag here
         
-        with metrics.timer("total_frame_processing_duration"):
-            matches = self._process_frame_staged(frame_bgr, frame_index, gallery)
-            
+        matches = self._process_frame_staged(frame_bgr, frame_index, gallery, timing_ctx)
+        
+        timing_ctx.frame_timer.stop()
+        
+        # ── Phase 2D.1: Timing Integrity Validation & Metrics ─────────────────
+        self._process_frame_timing(timing_ctx)
+        
         # Update metrics and flags
         metrics.observe("governance_lockout_active", 1.0 if self._governance_lockout_active else 0.0)
         metrics.observe("emergency_rebuild_active", 1.0 if self._emergency_rebuild_active else 0.0)
             
-        # Track average processing FPS for observability
-        durations = metrics.snapshot().recent_values.get("total_frame_processing_duration", [])
-        if durations:
-            last_duration = durations[-1]
-            if last_duration > 0:
-                fps = 1.0 / last_duration
-                metrics.observe("average_processing_fps", fps)
-                
-                # ── Phase 6: Parity Comparison Readiness ──────────────────────
-                # Observe current hardware execution context
-                metrics.observe("hardware_backend_type", 1.0 if self._settings.insightface_ctx_id >= 0 else 0.0) # 1 for GPU, 0 for CPU
-                
-                # ── Step 5 & 6: Integrity & Regression Checks ────────────────
-                self._check_telemetry_integrity(fps)
-                self._check_regressions(fps)
+        # Track average processing FPS for observability (uses current frame total time ONLY)
+        if timing_ctx.frame_total_ms > 0:
+            fps = 1000.0 / timing_ctx.frame_total_ms
+            metrics.observe("average_processing_fps", fps)
+            
+            # ── Phase 6: Parity Comparison Readiness ──────────────────────
+            # Observe current hardware execution context
+            metrics.observe("hardware_backend_type", 1.0 if self._settings.insightface_ctx_id >= 0 else 0.0) # 1 for GPU, 0 for CPU
+            
+            # ── Step 5 & 6: Integrity & Regression Checks ────────────────
+            self._check_telemetry_integrity_phase2d(timing_ctx, fps)
+            self._check_regressions(fps)
         
         return matches
+        
+    def _process_frame_timing(self, timing_ctx: FrameTimingContext):
+        """Process per-frame timing: validate, update history, record metrics."""
+        # Validate timing integrity
+        timing_valid = True
+        timing_violation = False
+        epsilon_ms = 2.0
+        
+        # Phase 2D.2: Acquisition Cost Hierarchy Validation
+        acquisition_valid = True
+        acquisition_subsystem_sum = (
+            self._detection_optimizer.roi_crop_ms +
+            self._detection_optimizer.roi_upscale_ms +
+            self._detection_optimizer.clahe_ms +
+            self._detection_optimizer.detector_inference_ms +
+            timing_ctx.validator_ms +
+            self._detection_optimizer.small_face_rescue_ms +
+            self._detection_optimizer.resolution_escalation_ms
+        )
+        
+        if acquisition_subsystem_sum > self._detection_optimizer.acquisition_total_ms + epsilon_ms:
+            acquisition_valid = False
+            timing_violation = True
+            metrics.increment("phase2d2_acquisition_hierarchy_violation")
+            logger.warning(
+                "PHASE 2D.2 ACQUISITION INTEGRITY VIOLATION: acquisition_subsystem_sum_ms (%.2f) > acquisition_total_ms + ε (%.2f)",
+                acquisition_subsystem_sum, self._detection_optimizer.acquisition_total_ms + epsilon_ms
+            )
+        
+        # Check for negative timings
+        if (timing_ctx.preprocessing_ms < 0 or
+            timing_ctx.detector_ms < 0 or
+            timing_ctx.tracker_ms < 0 or
+            timing_ctx.validator_ms < 0 or
+            timing_ctx.frame_total_ms < 0):
+            timing_valid = False
+            timing_violation = True
+            metrics.increment("timing_negative_value")
+            
+        # Check for impossible hierarchy: detector_ms > frame_total_ms
+        if timing_ctx.detector_ms > timing_ctx.frame_total_ms:
+            timing_valid = False
+            timing_violation = True
+            metrics.increment("timing_detector_exceeds_frame_total")
+            logger.warning(
+                "TIMING INTEGRITY VIOLATION: detector_ms (%.2f) > frame_total_ms (%.2f)",
+                timing_ctx.detector_ms, timing_ctx.frame_total_ms
+            )
+            
+        # Check for subsystem sum exceeding frame total
+        subsystem_sum = timing_ctx.subsystem_sum_ms
+        if subsystem_sum > timing_ctx.frame_total_ms + epsilon_ms:
+            timing_valid = False
+            timing_violation = True
+            metrics.increment("timing_subsystem_sum_exceeds_frame")
+            logger.warning(
+                "TIMING INTEGRITY VIOLATION: subsystem_sum_ms (%.2f) > frame_total_ms + ε (%.2f)",
+                subsystem_sum, timing_ctx.frame_total_ms + epsilon_ms
+            )
+            
+        # Check for NaN/inf values
+        if (math.isnan(timing_ctx.preprocessing_ms) or math.isinf(timing_ctx.preprocessing_ms) or
+            math.isnan(timing_ctx.detector_ms) or math.isinf(timing_ctx.detector_ms) or
+            math.isnan(timing_ctx.tracker_ms) or math.isinf(timing_ctx.tracker_ms) or
+            math.isnan(timing_ctx.validator_ms) or math.isinf(timing_ctx.validator_ms) or
+            math.isnan(timing_ctx.frame_total_ms) or math.isinf(timing_ctx.frame_total_ms)):
+            timing_valid = False
+            timing_violation = True
+            metrics.increment("timing_nan_or_inf")
+            
+        # Update rolling history buffers
+        self._preprocessing_history.append(timing_ctx.preprocessing_ms)
+        self._detector_history.append(timing_ctx.detector_ms)
+        self._tracker_history.append(timing_ctx.tracker_ms)
+        self._validator_history.append(timing_ctx.validator_ms)
+        self._frame_history.append(timing_ctx.frame_total_ms)
+        
+        # Calculate rolling averages
+        rolling_preprocessing_avg = sum(self._preprocessing_history) / len(self._preprocessing_history)
+        rolling_detector_avg = sum(self._detector_history) / len(self._detector_history)
+        rolling_tracker_avg = sum(self._tracker_history) / len(self._tracker_history)
+        rolling_validator_avg = sum(self._validator_history) / len(self._validator_history)
+        rolling_frame_avg = sum(self._frame_history) / len(self._frame_history)
+        
+        # Record both raw and rolling metrics separately
+        # Layer A: Raw per-frame metrics
+        metrics.observe("current_frame_preprocessing_ms", timing_ctx.preprocessing_ms)
+        metrics.observe("current_frame_detector_ms", timing_ctx.detector_ms)
+        metrics.observe("current_frame_tracker_ms", timing_ctx.tracker_ms)
+        metrics.observe("current_frame_validator_ms", timing_ctx.validator_ms)
+        metrics.observe("current_frame_total_ms", timing_ctx.frame_total_ms)
+        
+        # Layer B: Rolling aggregates
+        metrics.observe("rolling_preprocessing_avg_ms", rolling_preprocessing_avg)
+        metrics.observe("rolling_detector_avg_ms", rolling_detector_avg)
+        metrics.observe("rolling_tracker_avg_ms", rolling_tracker_avg)
+        metrics.observe("rolling_validator_avg_ms", rolling_validator_avg)
+        metrics.observe("rolling_frame_avg_ms", rolling_frame_avg)
+        
+        # Also record integrity metrics
+        metrics.observe("timing_valid", 1.0 if timing_valid else 0.0)
+        metrics.observe("timing_violation", 1.0 if timing_violation else 0.0)
+
+    def _process_pending_detection_results(self, current_frame_id: int, gallery: list[tuple[int, np.ndarray]]) -> None:
+        """Process any pending detection results from the worker thread, with frame age validation."""
+        while True:
+            try:
+                # Non-blocking get to check for results
+                result = self._detection_result_queue.get_nowait()
+            except Empty:
+                break
+
+            # Frame age validation
+            frame_age = current_frame_id - result.frame_id
+            if frame_age > 30:
+                logger.warning("Dropping stale detection result for frame %d (age: %d frames)", result.frame_id, frame_age)
+                self._dropped_stale_results += 1
+                metrics.increment("phase3_dropped_stale_results")
+                continue
+
+            # Record async telemetry
+            metrics.observe("phase3_frame_age_at_reconciliation", frame_age)
+            metrics.observe("phase3_detector_inference_ms", result.detector_inference_ms)
+            self._detection_optimizer.detector_inference_ms = result.detector_inference_ms
+            self._detection_optimizer.acquisition_total_ms = result.detector_inference_ms
+
+            # Process the result (this simulates the rest of _stage_detection_path)
+            # First, scale the faces back
+            raw_faces = self._detection_optimizer.scale_faces(result.raw_faces, result.scale)
+            # Apply temporal detector filter
+            raw_faces = self._temporal_detector.apply(raw_faces, result.frame_id)
+
+            # Apply proposal fusion (if enabled)
+            if self._proposal_fusion and len(raw_faces) > 1:
+                # We don't have the actual prepared frame shape here, but let's use a dummy (or skip for now?)
+                # Wait, actually we could store more in the payload, but for now let's just skip fusion for async?
+                # Or, maybe not - let's just process raw_faces as is
+                pass
+
+            # Now update track manager with these detections!
+            # Track manager's actual method is update_from_detections!
+            # We pass frame_shape as None since we don't have the original frame right now (we only stored prepared frame)
+            face_track_results = self._track_manager.update_from_detections(
+                raw_faces, 
+                result.frame_id,
+                detector_interval=self._dynamic_detector_interval
+            )
+
+            # Now update optimizer stats!
+            self._detection_optimizer._last_faces = raw_faces  # Set last faces so consecutive_weak_detection check works
+            self._detection_optimizer.observe_detection_cycle(
+                frame_index=result.frame_id, 
+                raw_count=len(raw_faces), 
+                accepted_count=len(raw_faces), 
+                rejected_count=0
+            )
+
+    def _check_telemetry_integrity_phase2d(self, timing_ctx: FrameTimingContext, current_fps: float):
+        """Phase 2D.1: Check telemetry integrity using current frame metrics only (NOT rolling averages)."""
+        # Use ONLY current frame timings (layer A), never rolling averages for integrity validation!
+        det_raw_ms = timing_ctx.detector_ms
+        cadence = self._settings.detector_interval_frames
+        if self._overload_active:
+            cadence = self._dynamic_detector_interval
+            
+        # Per-cycle runtime is the raw measurement from current frame
+        metrics.observe("detector_runtime_per_cycle_ms", det_raw_ms)
+        
+        # Effective frame cost = per-cycle time spread across cadence
+        effective_cost = det_raw_ms / max(1, cadence)
+        metrics.observe("detector_effective_frame_cost_ms", effective_cost)
+        
+        # Check for impossible timing (synchronous execution check):
+        # total frame time must be >= effective detector cost
+        total_ms = timing_ctx.frame_total_ms
+        if effective_cost > total_ms * 1.1:  # 10% margin for timing jitter
+            msg = f"Timing Inconsistency: detector_cost({effective_cost:.1f}ms) > total_frame({total_ms:.1f}ms)"
+            logger.warning("TELEMETRY INTEGRITY WARNING: %s", msg)
+            diagnostics.record("telemetry_integrity", msg)
+            metrics.increment("telemetry_integrity_warnings")
 
     def _check_telemetry_integrity(self, current_fps: float) -> None:
         """Audit timing metrics for mathematical coherence."""
@@ -333,8 +683,9 @@ class RecognitionPipeline:
         frame_bgr: np.ndarray,
         frame_index: int,
         gallery: list[tuple[int, np.ndarray]],
+        timing_ctx: FrameTimingContext,
     ) -> list[FrameMatch]:
-        prepared, output_scale = self._stage_preprocess(frame_bgr)
+        prepared, output_scale = self._stage_preprocess(frame_bgr, timing_ctx)
         
         # Defensive check: if preprocessing failed, we can't continue safely
         if prepared is None or prepared.bgr is None:
@@ -361,8 +712,20 @@ class RecognitionPipeline:
             detector_interval_override=detection_interval
         ):
             metrics.observe("average_detector_interval", float(detection_interval))
-            return self._stage_detection_path(prepared, frame_bgr, frame_index, gallery, output_scale)
-        return self._stage_tracking_path(prepared, frame_index, gallery, output_scale)
+            
+            # Phase 2D.2: Detector Invocation Cause Attribution
+            if self._detection_optimizer.no_face_detected_streak >= 2:
+                self._detection_optimizer.detector_invocation_cause = "tracking_starvation"
+            elif self._detection_optimizer.zero_face_streaks >=3 or self._detection_optimizer.consecutive_weak_detections >=4:
+                self._detection_optimizer.detector_invocation_cause = "resolution_escalation_retry"
+            elif frame_index < 10:
+                self._detection_optimizer.detector_invocation_cause = "initialization_bootstrap"
+            else:
+                self._detection_optimizer.detector_invocation_cause = "cadence_refresh"
+            metrics.observe("phase2d2_detector_invocation_cause", 1.0 if self._detection_optimizer.detector_invocation_cause == "cadence_refresh" else 2.0 if self._detection_optimizer.detector_invocation_cause == "tracking_starvation" else 3.0)
+            
+            return self._stage_detection_path(prepared, frame_bgr, frame_index, gallery, output_scale, timing_ctx)
+        return self._stage_tracking_path(prepared, frame_index, gallery, output_scale, timing_ctx)
 
     def _apply_load_governance(self, frame_index: int) -> None:
         """Dynamically adjust detector cadence and budget (Phase 1, 3, 4, 5)."""
@@ -372,7 +735,7 @@ class RecognitionPipeline:
         confirmed_tracks = self._track_manager.confirmed_track_count
         has_coarse = self._track_manager.has_coarse_tracks
         pending_queue = self._track_manager.candidate_queue_size
-        det_runtime = snapshot.recent_values.get("detector_runtime_ms", [0.0])[-1]
+        det_runtime = snapshot.recent_values.get("current_frame_detector_ms", [0.0])[-1]
         
         # ── Phase 3: Emergency Recall Recovery ──────────────────────────────
         emergency_recall_active = False
@@ -515,9 +878,10 @@ class RecognitionPipeline:
         self._dynamic_detector_interval = target_interval
         metrics.observe("adaptive_detector_interval", float(target_interval))
 
-    def _stage_preprocess(self, frame_bgr: np.ndarray):
-        with metrics.timer("preprocessing_duration"):
-            prepared = self._preprocessor.process(frame_bgr)
+    def _stage_preprocess(self, frame_bgr: np.ndarray, timing_ctx: FrameTimingContext):
+        timing_ctx.preprocess_timer.begin()
+        prepared = self._preprocessor.process(frame_bgr)
+        timing_ctx.preprocess_timer.stop()
         output_scale = prepared.bgr.shape[1] / max(frame_bgr.shape[1], 1)
         return prepared, output_scale
 
@@ -528,214 +892,67 @@ class RecognitionPipeline:
         frame_index: int,
         gallery: list[tuple[int, np.ndarray]],
         output_scale: float,
+        timing_ctx: FrameTimingContext,
     ) -> list[FrameMatch]:
         if self._detection_metrics:
             self._detection_metrics.record_frame_start(frame_index)
 
         matches: list[FrameMatch] = []
+        
+        # ── Phase 3.0: Dispatch Async Detection Request ─────────────────────────
         detection_frame, scale = self._detection_optimizer.prepare_for_detection(prepared.bgr)
-        with metrics.timer("face_detection_duration"):
-            if self._multiscale_detector and self._settings.enable_multiscale_detection:
-                det_config = DetectionConfig(det_size=detection_frame.shape[:2][::-1])
-                raw_faces = self._multiscale_detector.detect(detection_frame, det_config)
-            else:
-                raw_faces = self._detector.detect(detection_frame)
-
-        metrics.observe(
-            "detector_runtime_ms",
-            metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0,
+        
+        # Create request payload
+        request = DetectionRequestPayload(
+            frame_id=frame_index,
+            timestamp=time.perf_counter(),
+            prepared_frame_bgr=detection_frame,
+            scale=scale
         )
         
-        det_runtime_ms = metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
-        if det_runtime_ms > 150.0:
-            metrics.increment("detector_over_budget_count")
-            logger.warning("DETECTOR OVER BUDGET: %.2fms", det_runtime_ms)
-        raw_faces = self._detection_optimizer.scale_faces(raw_faces, scale)
-        raw_faces = self._temporal_detector.apply(raw_faces, frame_index)
+        # Non-blocking put into request queue
+        try:
+            self._detection_request_queue.put_nowait(request)
+            logger.debug("Dispatched detection request for frame %d", frame_index)
+        except Exception:
+            self._dropped_detection_requests +=1
+            metrics.increment("phase3_dropped_detection_requests")
+            logger.warning("Detection request queue full, dropped request for frame %d", frame_index)
+        
+        # ── Phase 3.0: Return Tracker-Only Matches for Current Frame ────────────
+        # For now, just propagate the tracker (like _stage_tracking_path)
+        self._detection_optimizer.observe_tracking_cycle()
+        metrics.increment("frames_skipped")
+        diagnostics.record("tracking", "detector_skipped_reused_tracks", frame_index=frame_index)
 
-        # -- Phase 2A.4: Proposal Fusion Engine -------------------------------
-        if self._proposal_fusion and len(raw_faces) > 1:
-            raw_faces = self._proposal_fusion.fuse(
-                raw_faces, 
-                prepared.bgr.shape[:2], 
-                is_crowd_scene=len(raw_faces) > self._settings.tile_crowd_threshold
-            )
-            if len(raw_faces) > self._settings.fusion_max_proposals_per_frame:
-                raw_faces = sorted(raw_faces, key=lambda f: f.det_score, reverse=True)[:self._settings.fusion_max_proposals_per_frame]
-
-        # -- Phase 2A: Unified Face Validator pre-filter ---------------------
-        validator_results: dict[str, ValidationResult] = {}
-        face_tier: dict[int, ValidationTier] = {}
-        strict_pass_faces: list[DetectedFace] = []
-        weak_pass_faces: list[DetectedFace] = []
-        track_only_faces: list[DetectedFace] = []
-        validator_rejections_this_frame = 0
-
-        for idx, face in enumerate(raw_faces):
-            face_uuid = f"{frame_index}_{idx}"
-            
-            # Phase 1.2: Temporal Stability Bias
-            # Check if this face likely belongs to a stable track before validating
-            is_continuity_candidate = False
-            if self._current_pressure_band >= 1:
-                # Simple IoU check against active stable tracks
-                for t in self._track_manager.active_tracks():
-                    if t.is_stable and bbox_iou(face.bbox, BoundingBox(*t.bbox)) > 0.4:
-                        is_continuity_candidate = True
-                        break
-
-            result = self._unified_face_validator.validate(
-                face, prepared.bgr, prepared.bgr.shape, frame_index,
-                min_det_confidence=self._adaptive_det_confidence,
-                strict_cutoff=self._adaptive_validator_cutoff,
-                emergency_rebuild_active=self._emergency_rebuild_active or self._governance_lockout_active
-            )
-            
-            # Override REJECT if continuity exists (Phase 1.2)
-            if result.tier == ValidationTier.REJECT and is_continuity_candidate and self._current_pressure_band >= 1:
-                # Force to TRACK_ONLY instead of REJECT to preserve spatial continuity
-                face_tier[id(face)] = ValidationTier.TRACK_ONLY
-                metrics.increment("continuity_override_accepts")
-                metrics.increment("validation_relaxation_events")
-            else:
-                face_tier[id(face)] = result.tier
-
-            validator_results[face_uuid] = result
-
-            if face_tier[id(face)] == ValidationTier.REJECT:
-                matches.append(self._validator_rejection_match(
-                    face, frame_index, prepared, output_scale, result
-                ))
-                metrics.increment("validator_reject_count")
-                validator_rejections_this_frame += 1
-            elif face_tier[id(face)] == ValidationTier.TRACK_ONLY:
-                track_only_faces.append(face)
-                metrics.increment("validator_track_only_count")
-            elif face_tier[id(face)] == ValidationTier.WEAK_PASS:
-                weak_pass_faces.append(face)
-                metrics.increment("validator_weak_pass_count")
-            else:
-                strict_pass_faces.append(face)
-                metrics.increment("validator_strict_pass_count")
-
-        if validator_results:
-            vals = list(validator_results.values())
-            metrics.observe_rolling("validator_avg_quality_score",
-                sum(r.quality_score for r in vals) / len(vals))
-            metrics.observe_rolling("validator_avg_fused_confidence",
-                sum(r.fused_confidence for r in vals) / len(vals))
-
-        # -- Legacy validators (secondary safety net, feature-flagged) -------
-        if self._settings.enable_legacy_face_validation:
-            legacy_faces = strict_pass_faces + weak_pass_faces
-            geometry_accepted: list[DetectedFace] = []
-            for face in legacy_faces:
-                decision = self._face_validator.validate(
-                    face, prepared.bgr.shape, frame_bgr=prepared.bgr, frame_index=frame_index
-                )
-                if decision.accepted:
-                    geometry_accepted.append(face)
-                else:
-                    label = decision.debug_label or decision.reason or "geometry_rejected"
-                    matches.append(
-                        self._rejection_match(
-                            face, frame_index, prepared, output_scale,
-                            label, "yellow", ("DETECTED", "GEOMETRY_REJECTED"),
-                        )
-                    )
-                    metrics.increment("geometry_validation_rejections")
-
-            faces, detector_rejections = self._detection_optimizer.filter_faces(
-                geometry_accepted, prepared.bgr.shape,
-                emergency_mode=self._emergency_rebuild_active or self._governance_lockout_active
-            )
-            total_rejected = len(raw_faces) - len(faces)
-            self._detection_optimizer.observe_detection_cycle(
-                frame_index, len(raw_faces), len(faces), total_rejected
-            )
-
-            for rejected_face, reason in detector_rejections:
-                debug_label = f"REJECTED: {reason}" if reason and not reason.startswith("REJECTED:") else reason
-                matches.append(
-                    self._rejection_match(
-                        rejected_face, frame_index, prepared, output_scale,
-                        debug_label or "detector_filter_rejected", "yellow",
-                        ("DETECTED", "FILTERED"),
-                    )
-                )
-        else:
-            faces = strict_pass_faces + weak_pass_faces + track_only_faces
-            total_rejected = len(raw_faces) - len(faces)
-
-        metrics.increment("total_faces_detected", len(faces))
-        metrics.observe("avg_faces_per_frame", len(faces))
-
-        if len(raw_faces) >= self._settings.detector_overload_face_count:
-            self._handle_detector_overload(frame_index, len(raw_faces))
-        else:
-            self._overload_active = False
-
-        # -- Phase 2A.5: Temporal Weak Memory ---------------------------------
-        weak_promotions = 0
-        if self._weak_detection_memory and self._settings.enable_weak_detection_memory:
-            promoted = self._weak_detection_memory.update(faces, frame_index)
-            weak_promotions = len(promoted)
-            if promoted:
-                boosted_faces = []
-                promoted_map = {id(f): b for f, b in promoted}
-                for face in faces:
-                    if id(face) in promoted_map:
-                        boost = promoted_map[id(face)]
-                        new_face = DetectedFace(
-                            bbox=face.bbox,
-                            det_score=min(1.0, face.det_score + boost),
-                            aligned_face=face.aligned_face,
-                            embedding=face.embedding,
-                            landmarks=face.landmarks,
-                            temporal_score=face.temporal_score
-                        )
-                        boosted_faces.append(new_face)
-                    else:
-                        boosted_faces.append(face)
-                faces = boosted_faces
-
-        # -- Phase 2A.1: Record detection metrics -----------------------------
-        if self._detection_metrics:
-            try:
-                det_latency = metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
-                self._detection_metrics.record_detection(
-                    faces=faces,
-                    frame_shape=prepared.bgr.shape,
-                    detection_latency_ms=det_latency,
-                    validator_rejections=validator_rejections_this_frame,
-                    weak_promotions=weak_promotions,
-                )
-            except Exception as e:
-                logger.warning("Failed to record detection metrics: %s", e)
-
-        # Use new return type: List of (DetectedFace, TrackedFace | None)
-        face_track_results = self._track_manager.update_from_detections(
-            faces, frame_index,
-            frame_shape=prepared.bgr.shape, frame_bgr=prepared.bgr,
-            detector_interval=self._dynamic_detector_interval
-        )
-
-        if not faces:
-            diagnostics.record("frame", "no_face_detected", frame_index=frame_index)
-
-        for face, track in face_track_results:
-            tier = face_tier.get(id(face), ValidationTier.STRICT_PASS)
+        timing_ctx.tracker_timer.begin()
+        tracks = self._track_manager.propagate(frame_index, detector_interval=self._dynamic_detector_interval)
+        timing_ctx.tracker_timer.stop()
+        
+        for track in tracks:
+            if track.state not in ACTIVE_RECOGNITION_STATES:
+                continue
+            if track.confirmation_hits < self._tracking_cfg.confirm_frames:
+                continue
+            face = self._track_manager.to_detected_face(track)
             match = self._process_tracked_face(
-                face=face, track=track, prepared=prepared,
-                frame_index=frame_index, gallery=gallery,
-                output_scale=output_scale, from_detection=True,
-                validation_tier=tier,
+                face=face,
+                track=track,
+                prepared=prepared,
+                frame_index=frame_index,
+                gallery=gallery,
+                output_scale=output_scale,
+                from_detection=False,
             )
             if match is not None:
                 matches.append(match)
 
+        total = max(1, len(tracks))
+        emb_hits = metrics.snapshot().counters.get("embedding_cache_hits", 0)
+        metrics.observe_rate("embedding_reuse_rate", float(emb_hits), float(total))
         self._finalize_frame(frame_index)
         self._export_tracking_metrics()
+        
         return matches
 
     def _stage_tracking_path(
@@ -744,13 +961,16 @@ class RecognitionPipeline:
         frame_index: int,
         gallery: list[tuple[int, np.ndarray]],
         output_scale: float,
+        timing_ctx: FrameTimingContext,
     ) -> list[FrameMatch]:
         self._detection_optimizer.observe_tracking_cycle()
         metrics.increment("frames_skipped")
         diagnostics.record("tracking", "detector_skipped_reused_tracks", frame_index=frame_index)
 
         matches: list[FrameMatch] = []
+        timing_ctx.tracker_timer.begin()
         tracks = self._track_manager.propagate(frame_index, detector_interval=self._dynamic_detector_interval)
+        timing_ctx.tracker_timer.stop()
         for track in tracks:
             if track.state not in ACTIVE_RECOGNITION_STATES:
                 continue

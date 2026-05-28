@@ -36,6 +36,27 @@ class FramePreprocessor:
             frame = cv2.fastNlMeansDenoisingColored(frame, None, 4, 4, 7, 21)
         diagnostics = FrameDiagnostics(brightness=brightness, width=int(frame.shape[1]), height=int(frame.shape[0]))
         return PreprocessedFrame(bgr=frame, diagnostics=diagnostics)
+        
+    def process_roi(self, roi_bgr: np.ndarray) -> np.ndarray:
+        # Phase 2D: Objective 3 - distant small-face ROI escalation
+        h, w = roi_bgr.shape[:2]
+        area = h * w
+        
+        if area < 1200:
+            roi_bgr = cv2.resize(roi_bgr, (int(w*1.5), int(h*1.5)), interpolation=cv2.INTER_AREA)
+            
+        # Phase 2D: Objective 4 - conditional low-light CLAHE normalization
+        ycrcb = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2YCrCb)
+        y_channel = ycrcb[:, :, 0]
+        mean_y = float(np.mean(y_channel))
+        
+        if mean_y < 45.0:
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            enhanced_y = clahe.apply(y_channel)
+            ycrcb[:, :, 0] = enhanced_y
+            roi_bgr = cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
+            
+        return roi_bgr
 
     def _resize(self, frame_bgr: np.ndarray) -> np.ndarray:
         target_width = self._settings.preprocessing_max_width

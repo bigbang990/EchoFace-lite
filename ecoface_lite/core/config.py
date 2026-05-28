@@ -352,6 +352,16 @@ class Settings(BaseSettings):
     tile_max_tiles: int = Field(default=9, ge=1, alias="TILE_MAX_TILES")
     tile_edge_padding: int = Field(default=32, ge=0, alias="TILE_EDGE_PADDING")
     tile_priority_center: bool = Field(default=True, alias="TILE_PRIORITY_CENTER")
+    
+    # ── Phase 2D.3: Detector Throughput Stabilization ─────────────────────────
+    phase2d3_max_resolution_escalations: int = Field(default=2, ge=0, alias="PHASE2D3_MAX_RESOLUTION_ESCALATIONS")
+    phase2d3_max_small_face_rescues: int = Field(default=8, ge=0, alias="PHASE2D3_MAX_SMALL_FACE_RESCUES")
+    phase2d3_max_clahe_patches: int = Field(default=12, ge=0, alias="PHASE2D3_MAX_CLAHE_PATCHES")
+    phase2d3_max_detector_runtime_ms: float = Field(default=1200.0, ge=100.0, alias="PHASE2D3_MAX_DETECTOR_RUNTIME_MS")
+    phase2d3_suppress_escalation_frames: int = Field(default=30, ge=0, alias="PHASE2D3_SUPPRESS_ESCALATION_FRAMES")
+    phase2d3_resolution_decay_frames: int = Field(default=20, ge=0, alias="PHASE2D3_RESOLUTION_DECAY_FRAMES")
+    phase2d3_soft_missing_window_frames: int = Field(default=10, ge=0, alias="PHASE2D3_SOFT_MISSING_WINDOW_FRAMES")
+    phase2d3_ghost_persistence_frames: int = Field(default=8, ge=0, alias="PHASE2D3_GHOST_PERSISTENCE_FRAMES")
 
     video_frame_skip: int = Field(default=1, ge=1, alias="VIDEO_FRAME_SKIP")
     video_inference_width: int = Field(default=640, ge=160, alias="VIDEO_INFERENCE_WIDTH")
