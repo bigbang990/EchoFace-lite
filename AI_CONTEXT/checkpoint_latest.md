@@ -1,29 +1,20 @@
-## Checkpoint — 2026-06-08 — Phase 6 COMPLETE
+## Checkpoint — 2026-06-08 — pre-merge housekeeping done
 
 ### Done
-Full detector abstraction layer implemented and merged.
-SCRFD and YOLOv8-face are both working providers.
-DETECTOR_PROVIDER env var selects at runtime.
-117.9 FPS on T4 GPU confirmed (Gate D).
-Pushed to phase6-detector-abstraction.
-
-### Files changed (full phase summary)
-- ecoface_lite/core/platform_bootstrap.py — "detector_provider": "scrfd" in both branches
-- ecoface_lite/ai_engine/bootstrap.py — provider selection block (SCRFD/YOLO if/else)
-- ecoface_lite/ai_engine/detection/detectors/yolov8_detector.py — full implementation (new)
-- scripts/download_yolov8_face.py — gdown, derronqi Drive ID (new)
-- AI_CONTEXT/ — all 4 context files updated
-
-### Known technical debt
-- face_app loads unconditionally in bootstrap even on YOLO path.
-  InsightFace weights load unnecessarily. Track as Phase 7.
+requirements.txt: gdown added (gdown>=4.7.0,<6.0.0, AI/CV section).
+README.md: Stack table, Detector providers, Colab setup,
+and Model weights sections added.
 
 ### State
-- Working: full pipeline, both detector providers,
-  Colab T4 GPU, 117.9 FPS YOLOv8 confirmed
-- Blocked on: nothing — awaiting Colab end-to-end verification,
-  then merge phase6-detector-abstraction to main
-- Next task: run Colab verification cell, then merge to main
+- Working: phase6-detector-abstraction complete, docs updated
+- Blocked on: real video telemetry test on Colab GPU
+  before merging to main
+- Next task: run real video through pipeline,
+  collect telemetry JSON, compare vs SCRFD-CPU baseline.
+  Targets: detector_runtime_ms < 50ms,
+           validator_rejection_rate < 0.30,
+           identity_switch_rate = 0,
+           stable_matches > 35
 
 ### Branch
-phase6-detector-abstraction — pushed to remote
+phase6-detector-abstraction — not yet on main
