@@ -54,3 +54,13 @@ __pycache__/
 weights/
 outputs/
 .env
+
+__pycache__/
+*.pyc
+*.pth
+*.pkl
+*.mp4
+*.jpg'n*.avi
+weights/
+outputs/
+.env

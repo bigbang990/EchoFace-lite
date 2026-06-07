@@ -165,7 +165,10 @@ class Settings(BaseSettings):
     
     # Coarse Tracking
     enable_coarse_tracking: bool = Field(default=True, alias="ENABLE_COARSE_TRACKING")
-    coarse_track_survival_ms: int = Field(default=8000, ge=1000, alias="COARSE_TRACK_SURVIVAL_MS")
+    # Phase 2E: lower default — 8000ms let ghost/coarse tracks survive 192+ frames
+    # at 24fps.  3000ms caps survival at ~72 frames which is enough for re-ID
+    # but kills persistent ghost boxes quickly.
+    coarse_track_survival_ms: int = Field(default=3000, ge=500, alias="COARSE_TRACK_SURVIVAL_MS")
     coarse_track_min_hits: int = Field(default=2, ge=1, alias="COARSE_TRACK_MIN_HITS")
 
     temporal_window_size: int = Field(default=8, ge=1, alias="TEMPORAL_WINDOW_SIZE")
@@ -209,8 +212,10 @@ class Settings(BaseSettings):
     tracking_confirm_duration_ms: int = Field(default=500, ge=50, alias="TRACKING_CONFIRM_DURATION_MS")
     tracking_decay_duration_ms: int = Field(default=2000, ge=100, alias="TRACKING_DECAY_DURATION_MS")
     tracking_recovery_buffer_ms: int = Field(default=1000, ge=100, alias="TRACKING_RECOVERY_BUFFER_MS")
-    tracking_ghost_persistence_ms: int = Field(default=1500, ge=100, alias="TRACKING_GHOST_PERSISTENCE_MS")
-    tracking_expiration_ms: int = Field(default=5000, ge=500, alias="TRACKING_EXPIRATION_MS")
+    tracking_ghost_persistence_ms: int = Field(default=1000, ge=100, alias="TRACKING_GHOST_PERSISTENCE_MS")
+    # Phase 2E: 5000ms let ghost tracks hold boxes for 120+ frames at 24fps.
+    # Lower to 3000ms so ghost boxes disappear within ~72 frames.
+    tracking_expiration_ms: int = Field(default=3000, ge=500, alias="TRACKING_EXPIRATION_MS")
     tracking_aggressive_decay_ms: int = Field(default=500, ge=50, alias="TRACKING_AGGRESSIVE_DECAY_MS")
     tracking_stable_duration_ms: int = Field(default=1500, ge=100, alias="TRACKING_STABLE_DURATION_MS")
     

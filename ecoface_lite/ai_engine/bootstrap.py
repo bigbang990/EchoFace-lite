@@ -17,19 +17,61 @@ from ecoface_lite.core.metrics import metrics
 logger = get_logger(__name__)
 
 
+def _get_providers(settings: Settings) -> list[str]:
+    """Select ONNX Runtime execution providers based on ctx_id and availability.
+
+    ctx_id >= 0  → GPU requested.  Check for CUDAExecutionProvider at runtime.
+    ctx_id < 0   → CPU requested.  Return CPU only.
+
+    This replaces the previous hardcoded ["CPUExecutionProvider"] which silently
+    prevented GPU inference even when INSIGHTFACE_CTX_ID=0 was set.
+    """
+    if settings.insightface_ctx_id >= 0:
+        try:
+            import onnxruntime as ort
+            available = ort.get_available_providers()
+            if "CUDAExecutionProvider" in available:
+                logger.info(
+                    "GPU requested (ctx_id=%d) — CUDAExecutionProvider available, using CUDA inference",
+                    settings.insightface_ctx_id,
+                )
+                return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            logger.warning(
+                "GPU requested (ctx_id=%d) but CUDAExecutionProvider is NOT in available providers %s. "
+                "Falling back to CPU. To enable GPU: pip install onnxruntime-gpu",
+                settings.insightface_ctx_id,
+                available,
+            )
+        except ImportError:
+            logger.warning(
+                "onnxruntime not importable — cannot check GPU providers, falling back to CPU"
+            )
+        except Exception as e:
+            logger.warning("Provider detection failed (%s) — falling back to CPU", e)
+    return ["CPUExecutionProvider"]
+
+
 def _create_face_analysis(settings: Settings) -> Any:
     from insightface.app import FaceAnalysis
 
+    providers = _get_providers(settings)
     logger.info(
-        "Initializing InsightFace FaceAnalysis model=%s ctx_id=%s",
+        "Initializing InsightFace FaceAnalysis model=%s ctx_id=%s providers=%s",
         settings.insightface_model_name,
         settings.insightface_ctx_id,
+        providers,
     )
-    app = FaceAnalysis(name=settings.insightface_model_name, providers=["CPUExecutionProvider"])
+    app = FaceAnalysis(name=settings.insightface_model_name, providers=providers)
     det_size = (settings.detector_input_width, settings.detector_input_height)
     app.prepare(ctx_id=settings.insightface_ctx_id, det_size=det_size)
     metrics.observe("detector_input_resolution", det_size[0] * det_size[1])
     metrics.observe("detector_resolution", det_size[0] * det_size[1])
+    is_gpu = "CUDAExecutionProvider" in providers
+    logger.info(
+        "InsightFace ready — backend=%s det_size=%s",
+        "GPU/CUDA" if is_gpu else "CPU",
+        det_size,
+    )
     return app
 
 
