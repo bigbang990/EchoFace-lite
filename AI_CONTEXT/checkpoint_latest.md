@@ -1,22 +1,25 @@
-## Checkpoint — 2026-06-07 — AI_CONTEXT setup
+## Checkpoint — 2026-06-07 — patch AI_CONTEXT with platform_bootstrap facts
 
 ### Done
-Created AI_CONTEXT/ directory with 5 context files and wrote CLAUDE.md (under 60 lines).
-System is now ready for low-token session starts — read architecture.md + checkpoint_latest.md
-instead of scanning the repo.
+Patched missing platform_bootstrap.py facts into AI_CONTEXT/architecture.md
+(GPU and CPU config dicts with exact key:value pairs) and corrected the
+detector selection note in AI_CONTEXT/detectors.md. AI_CONTEXT system is now
+complete and accurate.
 
 ### Files changed
-- AI_CONTEXT/architecture.md — new: stack, constraints, detector config from config.py defaults
-- AI_CONTEXT/roadmap.md — new: completed phases, active phase 6, pending work, branch index
-- AI_CONTEXT/detectors.md — new: DetectedFace contract, SCRFD and YOLOv8 provider specs
-- AI_CONTEXT/decisions.md — new: detector abstraction, enrollment, incident system, landmarks
-- AI_CONTEXT/session_template.md — new: copy-paste start template + checkpoint template
-- CLAUDE.md — new: session rules, stable systems list, branch strategy (under 60 lines)
+- AI_CONTEXT/architecture.md — replaced placeholder GPU/CPU config sections with
+  exact values from platform_bootstrap.py; corrected constraint note (file exists
+  on phase5-colab-ready, not yet on main)
+- AI_CONTEXT/detectors.md — clarified that DETECTOR_PROVIDER is NOT a key in the
+  platform_bootstrap dict; it is a separate env var; bootstrap.py still hardcodes
+  InsightFaceDetector regardless of detect_platform() result
 
 ### State
-- Working: full pipeline, InsightFace/SCRFD on CPU via CPUExecutionProvider
-- Blocked on: Phase 6 YOLOv8 feasibility gate (weights download + 5-point landmark inspection)
-- Next task: run Phase 1 feasibility prompt against downloaded yolov8n-face.pt weights
+- Working: full pipeline, InsightFace/SCRFD on CPU (CPUExecutionProvider)
+- platform_bootstrap.py: on phase5-colab-ready branch only — not merged to main
+- AI_CONTEXT: complete and accurate
+- Blocked on: Phase 6 YOLOv8 feasibility gate (weights download + landmark inspection)
+- Next task: Phase 6 — YOLOv8 feasibility gate (Phase 1 prompt)
 
 ### Branch
-claude/happy-nobel-d5b2ab — worktree branch; commit and merge to main when ready
+claude/happy-nobel-d5b2ab → target: phase6-detector-abstraction

@@ -35,10 +35,12 @@ Validator hard-rejects landmarks=None ("low_landmarks").
 - Feasibility gate: Phase 1 must confirm 5-point keypoints before proceeding
 - Use when: Colab T4, any CUDA 12.8+ environment
 
-## Selection (planned — not yet wired)
+## Selection (planned — not yet wired in bootstrap.py)
 DETECTOR_PROVIDER=scrfd → SCRFD/InsightFace
 DETECTOR_PROVIDER=yolo  → YOLOv8-face
-Default: scrfd (InsightFace hardcoded in bootstrap.py as of June 2026)
+Default: scrfd — platform_bootstrap.py sets backend (CPU/GPU) via detect_platform(),
+but does NOT set DETECTOR_PROVIDER. Bootstrap.py still hardcodes InsightFaceDetector.
+detector_provider is not a key in the platform_bootstrap dict — it is a separate env var.
 
 ## Revert path
 When onnxruntime supports CUDA 12.8:
