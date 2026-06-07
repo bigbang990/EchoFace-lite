@@ -41,3 +41,9 @@ Do not construct separate instances for detector and embedder.
 onnxruntime-gpu has no CUDA 12.8 wheel.
 CPUExecutionProvider is the only viable provider.
 Do not attempt CUDAExecutionProvider — it will fail at runtime.
+
+## Decision: YOLOv8 feasibility — Gate A failure (2026-06-08)
+YOLOv8 model yolov8n-face.pt failed feasibility: Gate A — weights file not
+found at weights/yolov8n-face.pt and scripts/download_yolov8_face.py does not
+exist. Alternative: create the download script, fetch the weights, then re-run
+the full feasibility gate (Phases 1–4).
