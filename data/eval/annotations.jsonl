@@ -1,0 +1,10 @@
+# Each line is a JSON object describing one evaluation image.
+# Fields:
+#   person_id    (str)   matches directory name under persons/ or negatives/
+#   image_path   (str)   relative path from data/eval/ e.g. "persons/p001/img01.jpg"
+#   source       (str)   dataset origin e.g. "cctv_indoor", "webcam", "synthetic"
+#   age_group    (str)   "child" | "young_adult" | "adult" | "senior"
+#   illumination (str)   "bright" | "normal" | "dim" | "dark"
+#   resolution_class (str) "high" (>150px face) | "medium" (80-150px) | "small" (<80px)
+#   yaw_deg      (float) approximate yaw angle; frontal=0, profile=±90
+#   is_negative  (bool)  true for negatives gallery images

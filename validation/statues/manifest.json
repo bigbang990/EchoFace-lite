@@ -1,0 +1,6 @@
+{
+  "category": "statues",
+  "description": "Mannequins, statues, sculptures with face-like features. Zero real humans.",
+  "videos": [],
+  "notes": "expected_faces_visible = 0. Tests resistance to 3D non-human face shapes."
+}

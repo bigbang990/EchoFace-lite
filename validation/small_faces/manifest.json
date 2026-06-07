@@ -1,0 +1,6 @@
+{
+  "category": "small_faces",
+  "description": "Videos where faces occupy <80px width — distant persons, overhead CCTV angles.",
+  "videos": [],
+  "notes": "Key metric: detector must find the face even at 40-60px. expected_faces_visible = manually counted small faces per representative frame."
+}

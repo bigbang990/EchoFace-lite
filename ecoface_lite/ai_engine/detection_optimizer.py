@@ -83,18 +83,25 @@ class DetectionOptimizer:
         if self._settings.detector_resolution_cap_enabled:
             min_pixels = self._settings.detector_min_input_pixels
             max_pixels = self._settings.detector_max_input_pixels
-            
-            # Clamp target pixels within safe bounds
+            is_gpu = self._settings.insightface_ctx_id >= 0
+
+            # Clamp target pixels within safe bounds.
+            # Phase 2E: On CPU, NEVER clamp up — upscaling on CPU adds compute
+            # with no benefit since the model was prepared at cpu_detector_resolution.
             if requested_pixels > max_pixels:
                 final_width, final_height = self._compute_scaled_dims(
                     target_width, initial_height, max_pixels
                 )
                 metrics.increment("resolution_clamped_down_count")
-            elif requested_pixels < min_pixels:
+            elif requested_pixels < min_pixels and is_gpu:
+                # GPU only: clamp up to ensure minimum anchor coverage
                 final_width, final_height = self._compute_scaled_dims(
                     target_width, initial_height, min_pixels
                 )
                 metrics.increment("resolution_clamped_up_count")
+            elif requested_pixels < min_pixels and not is_gpu:
+                # CPU: accept natural resolution, no upscale
+                metrics.increment("resolution_cpu_natural_count")
             else:
                 metrics.increment("resolution_within_safe_band_count")
 
@@ -236,6 +243,16 @@ class DetectionOptimizer:
         return DetectionFilterDecision(True)
 
     def _select_detector_size(self, frame_shape: tuple[int, ...]) -> tuple[int, int]:
+        # Phase 2E: On CPU, never upgrade to medium/large resolution.
+        # 416px or 512px at 4+/8+ tracks costs 1200–2000ms on CPU per cycle.
+        # Fixed 320px ceiling keeps each cycle at 400–800ms.
+        is_gpu = self._settings.insightface_ctx_id >= 0
+        if not is_gpu:
+            cpu_res = self._settings.cpu_detector_resolution
+            metrics.observe("track_count", self.active_track_count())
+            return (cpu_res, cpu_res)
+
+        # GPU: existing adaptive logic — upgrade resolution for crowd/density
         active_tracks = self.active_track_count()
         occupancy = self._occupancy_ratio(frame_shape)
         metrics.observe("track_count", active_tracks)
@@ -246,7 +263,8 @@ class DetectionOptimizer:
             size = (self._settings.detector_medium_width, self._settings.detector_medium_height)
         else:
             size = (self._settings.detector_input_width, self._settings.detector_input_height)
-        return size
+        gpu_res = self._settings.gpu_detector_resolution
+        return (min(size[0], gpu_res), min(size[1], gpu_res))
 
     def _occupancy_ratio(self, frame_shape: tuple[int, ...]) -> float:
         frame_area = max(1, int(frame_shape[0]) * int(frame_shape[1]))

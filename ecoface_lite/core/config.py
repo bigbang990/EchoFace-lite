@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     face_quality_max_aspect_ratio_skew: float = Field(default=1.9, ge=1.0, alias="FACE_QUALITY_MAX_ASPECT_RATIO_SKEW")
     detector_input_width: int = Field(default=320, ge=160, alias="DETECTOR_INPUT_WIDTH")
     detector_input_height: int = Field(default=320, ge=160, alias="DETECTOR_INPUT_HEIGHT")
+    # ── Phase 2E: Hardware-aware detector resolution ceiling ──────────────────
+    # On CPU the medium/large size upgrades (416/512px) are too expensive —
+    # 4+ tracks triggers 416px at ~1200ms, 8+ triggers 512px at ~2000ms each.
+    # Force CPU to stay at base resolution (320px) regardless of track count.
+    cpu_detector_resolution: int = Field(default=320, ge=160, alias="CPU_DETECTOR_RESOLUTION")
+    gpu_detector_resolution: int = Field(default=640, ge=160, alias="GPU_DETECTOR_RESOLUTION")
     detector_medium_width: int = Field(default=416, ge=160, alias="DETECTOR_MEDIUM_WIDTH")
     detector_medium_height: int = Field(default=416, ge=160, alias="DETECTOR_MEDIUM_HEIGHT")
     detector_large_width: int = Field(default=512, ge=160, alias="DETECTOR_LARGE_WIDTH")
@@ -115,6 +121,21 @@ class Settings(BaseSettings):
     governance_high_pressure_interval: int = Field(default=16, ge=1, alias="GOVERNANCE_HIGH_PRESSURE_INTERVAL")
     governance_critical_cooldown_frames: int = Field(default=30, ge=1, alias="GOVERNANCE_CRITICAL_COOLDOWN_FRAMES")
     governance_max_detector_runtime_ms: float = Field(default=150.0, ge=10.0, alias="GOVERNANCE_MAX_DETECTOR_RUNTIME_MS")
+    # ── Hardware-aware detector budgets (Phase 2D) ────────────────────────────
+    # CPU: 400–1200ms per cycle is NORMAL; don't treat it as overload.
+    # GPU: 150ms is the legitimate budget ceiling.
+    cpu_governance_max_detector_runtime_ms: float = Field(default=2000.0, ge=100.0, alias="CPU_GOVERNANCE_MAX_DETECTOR_RUNTIME_MS")
+    gpu_governance_max_detector_runtime_ms: float = Field(default=150.0, ge=10.0, alias="GPU_GOVERNANCE_MAX_DETECTOR_RUNTIME_MS")
+    # Maximum detection interval (frames between full detections) per backend.
+    # CPU offline video: detect at least every 3 frames (slow but complete).
+    # GPU real-time: up to 12 frames between detections at high load.
+    cpu_max_detector_interval: int = Field(default=3, ge=1, alias="CPU_MAX_DETECTOR_INTERVAL")
+    gpu_max_detector_interval: int = Field(default=12, ge=1, alias="GPU_MAX_DETECTOR_INTERVAL")
+    # ── Phase 2E: Disable governance lockout on CPU ───────────────────────────
+    # On CPU, lockout creates a feedback loop: slow detection → no confirmed
+    # tracks → lockout activates → force detect every frame → still slow →
+    # validator rejects → stay locked. Disable until GPU testing validates it.
+    disable_governance_lockout_on_cpu: bool = Field(default=True, alias="DISABLE_GOVERNANCE_LOCKOUT_ON_CPU")
     governance_max_candidate_queue_size: int = Field(default=25, ge=1, alias="GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE")
     governance_mature_track_age: int = Field(default=50, ge=1, alias="GOVERNANCE_MATURE_TRACK_AGE")
     enable_priority_ingestion: bool = Field(default=True, alias="ENABLE_PRIORITY_INGESTION")
@@ -173,6 +194,10 @@ class Settings(BaseSettings):
     tracking_min_quality_score: float = Field(default=0.35, ge=0, le=1, alias="TRACKING_MIN_QUALITY_SCORE")
     face_crop_min_eye_band_ratio: float = Field(default=0.12, ge=0, le=1, alias="FACE_CROP_MIN_EYE_BAND_RATIO")
     face_crop_max_forehead_ratio: float = Field(default=0.55, ge=0, le=1, alias="FACE_CROP_MAX_FOREHEAD_RATIO")
+    # ── Phase 2E: Forehead check size gate ───────────────────────────────────
+    # Small faces have noisy geometry — the forehead ratio measurement is
+    # unreliable at <80px.  Only apply this hallucination-filter to large faces.
+    oversized_forehead_min_face_px: int = Field(default=80, ge=0, alias="OVERSIZED_FOREHEAD_MIN_FACE_PX")
     face_crop_min_chin_ratio: float = Field(default=0.08, ge=0, le=1, alias="FACE_CROP_MIN_CHIN_RATIO")
     tracking_bbox_area_change_ratio: float = Field(default=0.25, ge=0, le=1, alias="TRACKING_BBOX_AREA_CHANGE_RATIO")
     tracking_confidence_drop_threshold: float = Field(default=0.15, ge=0, le=1, alias="TRACKING_CONFIDENCE_DROP_THRESHOLD")
@@ -254,6 +279,11 @@ class Settings(BaseSettings):
     validator_size_weight: float = Field(default=0.15, ge=0, le=1, alias="VALIDATOR_SIZE_WEIGHT")
     validator_quality_cutoff: float = Field(default=0.35, ge=0, le=1, alias="VALIDATOR_QUALITY_CUTOFF")
     validator_strict_cutoff: float = Field(default=0.70, ge=0, le=1, alias="VALIDATOR_STRICT_CUTOFF")
+    # ── Phase 2E: Adaptive confidence/cutoff gap enforcement ─────────────────
+    # The adaptive system can drift to adaptive_det_confidence < validator_cutoff,
+    # which means the detector generates candidates that the validator is
+    # guaranteed to reject.  Enforce a minimum gap between the two.
+    min_confidence_validator_gap: float = Field(default=0.05, ge=0.0, le=0.5, alias="MIN_CONFIDENCE_VALIDATOR_GAP")
     validator_snapshot_enabled: bool = Field(default=False, alias="VALIDATOR_SNAPSHOT_ENABLED")
     validator_snapshot_max_count: int = Field(default=500, ge=1, alias="VALIDATOR_SNAPSHOT_MAX_COUNT")
     validator_snapshot_sampling_rate: float = Field(default=0.15, ge=0, le=1, alias="VALIDATOR_SNAPSHOT_SAMPLING_RATE")

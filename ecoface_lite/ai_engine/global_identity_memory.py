@@ -21,6 +21,7 @@ class GlobalPersonProfile:
     confidence_peak: float = 0.0
     observation_count: int = 0
     pose_embeddings: dict[str, np.ndarray] = field(default_factory=dict)
+    camera_id: str = "default"
 
 
 @dataclass
@@ -33,6 +34,7 @@ class LostTrackSnapshot:
     last_frame: int
     identity_confidence: float
     pose_bucket: str = PoseBucket.UNKNOWN.value
+    camera_id: str = "default"
 
 
 class GlobalIdentityMemory:
@@ -90,6 +92,7 @@ class GlobalIdentityMemory:
             last_frame=frame_index,
             identity_confidence=track.smoothed_confidence or track.identity_confidence,
             pose_bucket=str(track.metadata.get("pose_bucket", PoseBucket.UNKNOWN.value)),
+            camera_id=str(track.metadata.get("camera_id", "default")),
         )
         self._lost.append(snapshot)
         metrics.increment("global_lost_tracks_archived")

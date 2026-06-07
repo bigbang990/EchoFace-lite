@@ -1,0 +1,6 @@
+{
+  "category": "posters",
+  "description": "Videos or images containing printed/digital face posters — missing-person flyers, advertising, movie posters. Zero real humans.",
+  "videos": [],
+  "notes": "expected_faces_visible = 0 (all are false positive candidates). Any detection here is a FP."
+}

@@ -1,0 +1,6 @@
+{
+  "category": "paintings",
+  "description": "Artwork containing painted or drawn faces — portraits, murals, illustrations. Zero real humans.",
+  "videos": [],
+  "notes": "expected_faces_visible = 0. Tests whether validator suppresses non-photographic faces."
+}

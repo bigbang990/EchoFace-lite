@@ -82,8 +82,10 @@ class RecognitionPipeline:
         recognition_session: RecognitionSession | None = None,
         event_validator: EventValidator | None = None,
         effective_config: EffectiveRuntimeConfig | None = None,
+        camera_id: str = "default",
     ) -> None:
         self._settings = settings
+        self.camera_id = camera_id
         self._effective_config = effective_config
         self._tracking_cfg: TrackingConfig = get_tracking_config(settings)
         
@@ -171,6 +173,17 @@ class RecognitionPipeline:
         self._governance_lockout_active = False
         self._emergency_rebuild_active = False
         self._recovery_cooldown_frames = 0
+
+        # ── Phase 2D: Hardware-aware governance startup log ───────────────────
+        _is_gpu = settings.insightface_ctx_id >= 0
+        _backend = "GPU" if _is_gpu else "CPU"
+        _interval_ceil = settings.gpu_max_detector_interval if _is_gpu else settings.cpu_max_detector_interval
+        _budget_ms = settings.gpu_governance_max_detector_runtime_ms if _is_gpu else settings.cpu_governance_max_detector_runtime_ms
+        logger.info(
+            "GOVERNANCE [%s]: interval_ceiling=%d frames  detector_budget=%.0fms  "
+            "(CPU: 400–1200ms/cycle is normal — budget violation only fires above %.0fms)",
+            _backend, _interval_ceil, _budget_ms, _budget_ms,
+        )
 
     @property
     def _track_manager(self):
@@ -268,15 +281,15 @@ class RecognitionPipeline:
             )
             diagnostics.record("regression", msg)
             
-        # 2. Detector Runtime Check
+        # 2. Detector Runtime Check — threshold is hardware-aware (Phase 2D)
+        is_gpu = self._settings.insightface_ctx_id >= 0
+        runtime_warn_ms = self._settings.gpu_governance_max_detector_runtime_ms if is_gpu else self._settings.cpu_governance_max_detector_runtime_ms
         avg_det_runtime = snapshot.averages.get("detector_runtime_per_cycle_ms", 0.0)
-        if avg_det_runtime > 120.0:
-            msg = f"detector_runtime_ms > 120ms (Avg: {avg_det_runtime:.2f}ms)"
+        if avg_det_runtime > runtime_warn_ms:
+            msg = f"detector_runtime_ms > {runtime_warn_ms:.0f}ms budget (Avg: {avg_det_runtime:.2f}ms)"
+            action = "Lower DETECTOR_MAX_INPUT_PIXELS or upgrade hardware." if is_gpu else "Check for memory pressure or thermal throttling — CPU 400–1200ms/cycle is normal."
             logger.warning(
-                "REGRESSION WARNING: %s. "
-                "Probable Root Cause: Detector tensor inflation. "
-                "Suggested Action: Lower DETECTOR_MAX_INPUT_PIXELS.",
-                msg
+                "REGRESSION WARNING: %s. Suggested Action: %s", msg, action,
             )
             diagnostics.record("regression", msg)
 
@@ -401,7 +414,20 @@ class RecognitionPipeline:
             metrics.observe("emergency_recall_mode_active", 0.0)
 
         # ── Phase 2: Governance Lockout Mode ──────────────────────────────────
-        if confirmed_tracks == 0 and (pending_queue > 0 or has_coarse):
+        # Phase 2E: On CPU, lockout creates a feedback loop —
+        #   slow detection → no confirmed tracks → lockout → detect every frame
+        #   → validator kills 80% → tracks never confirm → stay locked forever.
+        # Skip lockout entirely on CPU until GPU testing validates the behaviour.
+        is_cpu_backend = self._settings.insightface_ctx_id < 0
+        lockout_suppressed = is_cpu_backend and self._settings.disable_governance_lockout_on_cpu
+        if lockout_suppressed:
+            if self._governance_lockout_active:
+                # Clear any leftover lockout state from previous frames
+                self._governance_lockout_active = False
+                self._track_manager.lockout_mode = False
+                self._detection_optimizer.emergency_mode = False
+                metrics.increment("governance_lockout_cpu_bypasses")
+        elif confirmed_tracks == 0 and (pending_queue > 0 or has_coarse):
             if not self._governance_lockout_active:
                 metrics.increment("governance_lockout_activations")
             self._governance_lockout_active = True
@@ -490,15 +516,43 @@ class RecognitionPipeline:
         self._adaptive_det_confidence = target_conf
         self._adaptive_validator_cutoff = target_cutoff
 
+        # ── Phase 2E: Confidence/cutoff gap enforcement ───────────────────────
+        # adaptive_det_confidence must stay above adaptive_validator_cutoff + gap.
+        # If not, the detector generates candidates the validator is guaranteed
+        # to reject — pure wasted work.  Raise confidence to enforce the gap.
+        gap = self._settings.min_confidence_validator_gap
+        min_conf = self._adaptive_validator_cutoff + gap
+        if self._adaptive_det_confidence < min_conf:
+            logger.warning(
+                "GOVERNANCE gap enforced: adaptive_conf %.3f < cutoff %.3f + gap %.2f → raised to %.3f",
+                self._adaptive_det_confidence, self._adaptive_validator_cutoff,
+                gap, min_conf,
+            )
+            self._adaptive_det_confidence = min_conf
+            metrics.increment("adaptive_confidence_gap_enforcements")
+
         # Apply adaptive thresholds (Phase 1.1)
         metrics.observe("adaptive_detector_confidence", self._adaptive_det_confidence)
         metrics.observe("adaptive_validator_cutoff", self._adaptive_validator_cutoff)
 
-        # 4. Phase 5: Budget Enforcement
-        if det_runtime > self._settings.governance_max_detector_runtime_ms:
+        # ── Phase 2D: Hardware-aware budget enforcement ───────────────────────
+        # On CPU, 400–1200ms per detection cycle is expected, not overload.
+        # Only fire budget violation when runtime genuinely exceeds the hw ceiling.
+        # Also: never stretch the interval during lockout — lockout already owns it.
+        is_gpu = self._settings.insightface_ctx_id >= 0
+        hw_budget_ms = (
+            self._settings.gpu_governance_max_detector_runtime_ms
+            if is_gpu
+            else self._settings.cpu_governance_max_detector_runtime_ms
+        )
+        if not self._governance_lockout_active and det_runtime > hw_budget_ms:
             target_interval = max(target_interval, 16)
             metrics.increment("governance_budget_violations")
-            
+            logger.debug(
+                "GOVERNANCE budget violation: det_runtime=%.0fms > hw_budget=%.0fms → interval=%d",
+                det_runtime, hw_budget_ms, target_interval,
+            )
+
         # 5. Queue Pressure secondary check
         if pending_queue > self._settings.governance_max_candidate_queue_size:
             target_interval = max(target_interval, 14)
@@ -511,6 +565,17 @@ class RecognitionPipeline:
             recovery_limit = 5 if has_coarse else 10
             target_interval = min(target_interval, recovery_limit)
             metrics.increment("protected_track_preservations")
+
+        # ── Phase 2D: Hard interval ceiling per hardware backend ─────────────
+        # Prevent governance from stretching the interval beyond what the
+        # hardware backend can tolerate. On CPU (offline video), max = 3 frames.
+        # On GPU (real-time), max = 12 frames. Both are configurable.
+        hw_max_interval = (
+            self._settings.gpu_max_detector_interval
+            if is_gpu
+            else self._settings.cpu_max_detector_interval
+        )
+        target_interval = min(target_interval, hw_max_interval)
 
         self._dynamic_detector_interval = target_interval
         metrics.observe("adaptive_detector_interval", float(target_interval))
@@ -798,19 +863,28 @@ class RecognitionPipeline:
                 track.metadata["no_reassociation"] = True
 
         for track in self._track_manager.consume_removed_tracks():
+            track.metadata.setdefault("camera_id", self.camera_id)
             self._global_identity_memory.archive_lost_track(track, frame_index)
         self._global_identity_memory.prune(frame_index)
 
     def _handle_detector_overload(self, frame_index: int, raw_count: int) -> None:
         """Actively manage pipeline parameters during high load."""
         self._overload_active = True
-        # Push detector interval up to save CPU
-        self._dynamic_detector_interval = min(16, self._settings.detector_interval_frames + 4)
+        # Push detector interval up to save CPU — but respect the hw ceiling
+        # so on CPU (offline video) we never stretch past cpu_max_detector_interval.
+        is_gpu = self._settings.insightface_ctx_id >= 0
+        hw_max_interval = (
+            self._settings.gpu_max_detector_interval
+            if is_gpu
+            else self._settings.cpu_max_detector_interval
+        )
+        bumped = min(self._settings.detector_interval_frames + 2, 16)
+        self._dynamic_detector_interval = min(bumped, hw_max_interval)
         metrics.increment("detector_queue_stall_count")
-        
+
         logger.warning(
-            "Detector overload frame_index=%s count=%s. Activating load-shedding: interval=%s",
-            frame_index, raw_count, self._dynamic_detector_interval
+            "Detector overload frame_index=%s count=%s. Load-shedding interval=%s (hw_ceil=%s)",
+            frame_index, raw_count, self._dynamic_detector_interval, hw_max_interval,
         )
         diagnostics.record("overload", "load_shedding_active", frame_index=frame_index, count=raw_count)
 

@@ -1,0 +1,6 @@
+{
+  "category": "occlusion",
+  "description": "Faces partially blocked by objects, other people, or frame edges — tests tracking continuity across occlusion.",
+  "videos": [],
+  "notes": "expected_faces_visible counts distinct persons visible at any point, not per-frame peak."
+}
