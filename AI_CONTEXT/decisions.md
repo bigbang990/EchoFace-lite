@@ -51,3 +51,14 @@ Gate B failed locally: torch and ultralytics not installed on the local Windows
 machine. Project is Colab-first; no local ML environment exists.
 Alternative: run gates B–E inside Google Colab after mounting the repo.
 URL attempted for weights: https://huggingface.co/arnabdhar/YOLOv8-Face-Detection/resolve/main/model.pt — succeeded.
+
+## Decision: YOLOv8-face weights source (June 2026)
+Confirmed source: derronqi/yolov8-face (Google Drive)
+Drive ID: 1qcr9DbgsX3ryrz2uU8w4Xm3cOrRywXqb
+Gate results: A PASS(6.4MB)  B PASS(cuda)  C PASS(5-kpt [N,5,2])
+              D PASS(8.5ms avg, 117.9fps T4)
+Rejected: arnabdhar/YOLOv8-Face-Detection — detection-only, no keypoint head
+  (6.2MB HuggingFace mirror; Gate C would fail — r.keypoints is None)
+Rejected: akanametov/yolo-face — detection-only fork, no keypoint head
+Keypoint order confirmed: [left_eye, right_eye, nose, left_mouth, right_mouth]
+  — matches FaceLandmarks convention exactly.

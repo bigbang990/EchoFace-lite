@@ -25,23 +25,28 @@ Validator hard-rejects landmarks=None ("low_landmarks").
 - Shares FaceAnalysis instance with embedder (loaded once per worker)
 - Use when: local CPU dev, future GPU servers with CUDA ≤12.4
 
-## Provider 2: YOLOv8-face (GPU path — planned)
-- File: ecoface_lite/ai_engine/detection/detectors/yolov8_detector.py (to be created)
+## Provider 2: YOLOv8-face (Phase 6 complete — detect() implemented and merged)
+- File: ecoface_lite/ai_engine/detection/detectors/yolov8_detector.py
 - PyTorch-native — works on any CUDA PyTorch supports
 - Weights: weights/yolov8n-face.pt (gitignored)
-- Download: python scripts/download_yolov8_face.py
+- Download: pip install gdown && python scripts/download_yolov8_face.py
+  (uses gdown; Drive ID: 1qcr9DbgsX3ryrz2uU8w4Xm3cOrRywXqb — derronqi model)
 - Accuracy: ~88-90% WiderFace Hard AP
-- Speed: ~15-25ms on T4 GPU
-- Feasibility gate: Phase 1 must confirm 5-point keypoints before proceeding
+- Speed: 8.5ms avg, 117.9 FPS on T4 GPU (Gate D confirmed)
+- Keypoint order confirmed: [0]=left_eye [1]=right_eye [2]=nose
+  [3]=left_mouth [4]=right_mouth — matches FaceLandmarks convention exactly
 - Use when: Colab T4, any CUDA 12.8+ environment
 
-## Selection (planned — not yet wired in bootstrap.py)
+## Selection (wired in bootstrap.py — Phase 6 complete)
 DETECTOR_PROVIDER=scrfd → SCRFD/InsightFace
 DETECTOR_PROVIDER=yolo  → YOLOv8-face
-Default: scrfd — platform_bootstrap.py sets backend (CPU/GPU) via detect_platform(),
-but does NOT set DETECTOR_PROVIDER. Bootstrap.py still hardcodes InsightFaceDetector.
-detector_provider is not a key in the platform_bootstrap dict — it is a separate env var.
+Default: scrfd — platform_bootstrap.py "detector_provider" key set to "scrfd"
+in both CPU and GPU branches. Env var overrides the platform dict value.
+
+## Known issue (Phase 7)
+face_app = _create_face_analysis(settings) loads unconditionally in bootstrap.py
+even when DETECTOR_PROVIDER=yolo. InsightFace weights load unnecessarily.
+Fix: decouple embedder construction from detector selection in Phase 7.
 
 ## Revert path
-When onnxruntime supports CUDA 12.8:
-  Set DETECTOR_PROVIDER=scrfd in Colab .env — no code change required.
+Set DETECTOR_PROVIDER=scrfd in Colab .env — no code change required.
