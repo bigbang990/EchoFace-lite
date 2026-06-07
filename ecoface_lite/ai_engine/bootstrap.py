@@ -9,12 +9,15 @@ from ecoface_lite.ai_engine.embedder import FaceEmbedder, InsightFaceEmbedder
 from ecoface_lite.ai_engine.matcher import FaceMatcher
 from ecoface_lite.ai_engine.pipeline import RecognitionPipeline
 from ecoface_lite.core.config import Settings, get_settings
+from ecoface_lite.core.platform_bootstrap import detect_platform
 from ecoface_lite.core.runtime_config import EffectiveRuntimeConfig
 from ecoface_lite.core.runtime_state import get_runtime_state
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
 
 logger = get_logger(__name__)
+
+PLATFORM = detect_platform()
 
 
 def _get_providers(settings: Settings) -> list[str]:
@@ -54,16 +57,16 @@ def _get_providers(settings: Settings) -> list[str]:
 def _create_face_analysis(settings: Settings) -> Any:
     from insightface.app import FaceAnalysis
 
-    providers = _get_providers(settings)
+    providers = PLATFORM["providers"]
     logger.info(
         "Initializing InsightFace FaceAnalysis model=%s ctx_id=%s providers=%s",
         settings.insightface_model_name,
-        settings.insightface_ctx_id,
+        PLATFORM["ctx_id"],
         providers,
     )
     app = FaceAnalysis(name=settings.insightface_model_name, providers=providers)
-    det_size = (settings.detector_input_width, settings.detector_input_height)
-    app.prepare(ctx_id=settings.insightface_ctx_id, det_size=det_size)
+    det_size = PLATFORM["det_size"]
+    app.prepare(ctx_id=PLATFORM["ctx_id"], det_size=det_size)
     metrics.observe("detector_input_resolution", det_size[0] * det_size[1])
     metrics.observe("detector_resolution", det_size[0] * det_size[1])
     is_gpu = "CUDAExecutionProvider" in providers
@@ -77,6 +80,20 @@ def _create_face_analysis(settings: Settings) -> Any:
 
 def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionPipeline:
     settings = settings or get_settings()
+    # Apply hardware-detected threshold overrides.
+    # PLATFORM is module-level (evaluated once at import).  These two fields are
+    # set by PLATFORM so GPU Colab gets 0.45/0.55 and CPU dev gets 0.35/0.40
+    # regardless of what the .env file says — the .env values remain the fallback
+    # for every other field.
+    settings.detection_confidence_threshold = PLATFORM["conf_threshold"]
+    settings.validator_strict_cutoff = PLATFORM["validator_cutoff"]
+    logger.info(
+        "Platform threshold overrides applied: detection_confidence_threshold=%.2f  "
+        "validator_strict_cutoff=%.2f  (backend=%s)",
+        settings.detection_confidence_threshold,
+        settings.validator_strict_cutoff,
+        PLATFORM["backend"],
+    )
     # Perform startup validation
     try:
         from ecoface_lite.ai_engine.tracking.tracked_face import TrackedFace

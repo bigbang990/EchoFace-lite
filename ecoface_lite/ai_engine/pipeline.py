@@ -258,7 +258,12 @@ class RecognitionPipeline:
         # Check for impossible timing (synchronous execution check)
         # Total frame time must be >= effective detector cost
         total_ms = (1.0 / max(0.1, current_fps)) * 1000.0
-        if effective_cost > total_ms * 1.1: # 10% margin for timing jitter
+        # Guard: total_ms > 50.0 (< 20 fps budget) prevents false triggers when
+        # current_fps is derived from a tracker-only frame (~11ms, ~90fps).
+        # On those frames the detector did not run, so effective_cost reflects
+        # the *previous* cycle's detection time — an apples-to-oranges comparison.
+        # det_raw_ms > 0 prevents a spurious fire on cold-start before any detection.
+        if effective_cost > total_ms * 1.1 and det_raw_ms > 0 and total_ms > 50.0:
             msg = f"Timing Inconsistency: detector_cost({effective_cost:.1f}ms) > total_frame({total_ms:.1f}ms)"
             logger.warning("TELEMETRY INTEGRITY WARNING: %s", msg)
             diagnostics.record("telemetry_integrity", msg)

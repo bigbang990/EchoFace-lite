@@ -22,6 +22,18 @@ from ecoface_lite.ai_engine.tracking.tracked_face import TrackedFace
 from ecoface_lite.config.tracking import TrackingConfig, get_tracking_config
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
+from ecoface_lite.core.platform_bootstrap import detect_platform
+
+# Hardware-appropriate survival ceiling — evaluated once at import time so it
+# is never re-computed inside the per-frame loop.
+_PLATFORM = detect_platform()
+_MAX_TRACK_SURVIVAL_MS = _PLATFORM["max_track_survival_ms"]
+
+# Absolute hard-kill ceiling: no track survives longer than this, even if
+# starvation prevention would otherwise preserve it indefinitely.
+# CPU: 6000 * 3 = 18,000ms   GPU: 3000 * 3 = 9,000ms
+_HARD_KILL_MULTIPLIER = 3
+_HARD_KILL_MS = _MAX_TRACK_SURVIVAL_MS * _HARD_KILL_MULTIPLIER
 
 if TYPE_CHECKING:
     from ecoface_lite.core.config import Settings
@@ -322,8 +334,10 @@ class FaceTrackManager:
             
             # Use time-based expiration for tracks
             survival_horizon = self._cfg.track_expiration_ms * survival_boost * cadence_multiplier
+            survival_horizon = min(survival_horizon, _MAX_TRACK_SURVIVAL_MS)
             if track.state == TrackLifecycleState.COARSE.value:
                 survival_horizon = self._cfg.coarse_track_survival_ms
+                survival_horizon = min(survival_horizon, _MAX_TRACK_SURVIVAL_MS)
                 
             # ── Phase 1: Track Survival Floor ─────────────────────────────────
             active_count = self.active_track_count
@@ -351,7 +365,12 @@ class FaceTrackManager:
                     metrics.increment("protected_track_preservations")
                     metrics.increment("starvation_prevented_events")
                     metrics.observe("governance_starvation_prevention_triggered", 1.0)
-                    continue # Preserve this track even if expired
+                    # Hard kill: starvation counters always fire, but a track that has
+                    # been lost longer than _HARD_KILL_MS is removed regardless of
+                    # population.  This prevents ghost immortality in single-person scenes.
+                    if time_lost <= _HARD_KILL_MS:
+                        continue  # Preserve this track — still within hard-kill window
+                    metrics.increment("ghost_hard_kill_count")
                 
                 metrics.observe("governance_starvation_prevention_triggered", 0.0)
                 metrics.increment("recovery_window_expired")
