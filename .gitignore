@@ -44,3 +44,13 @@ models/
 Thumbs.db
 
 
+
+__pycache__/
+*.pyc
+*.pth
+*.pkl
+*.mp4
+*.jpg'n*.avi
+weights/
+outputs/
+.env
