@@ -15,6 +15,7 @@
 - Phase 6: detector abstraction —
   YOLOv8-face feasibility gate (Phase 1) pending
   Branch: phase6-detector-abstraction (not yet created locally — main is current head)
+- Phase 6 Phase 1: PASSED 2026-06-08 — proceed to Phase 2 scaffold
 
 ## Pending
 - Phase 2D Part 2: Detection Truthfulness Validation Framework

@@ -1,23 +1,23 @@
-## Checkpoint — 2026-06-08 — Phase 6 Phase 1 re-run (partial)
+## Checkpoint — 2026-06-08 — Phase 6 Phase 1 PASSED
 
 ### Done
-Download script created at scripts/download_yolov8_face.py.
-weights/yolov8n-face.pt downloaded (6.2 MB, HuggingFace source).
-Gate A passed locally.
-Gate B failed — torch and ultralytics are not installed on this local machine.
-The project runs on Google Colab; local Python 3.10 has no ML packages.
-Instruction: do not install automatically.
+Download script updated to use gdown + derronqi/yolov8-face (5-kpt pose model).
+All feasibility gates passed on Colab T4.
+YOLOv8-face confirmed: 5-point keypoints, 117.9 fps on cuda.
 
 ### Gate results
-A: PASS (5.96 MB)  B: FAIL (torch not installed locally)
-C: not run  D: not run  E: skip
+A: PASS (6.4 MB)  B: PASS (cuda)
+C: PASS [N, 5, 2]  D: PASS (117.9 fps on T4)
+E: skip (no image files found in data dirs)
 
 ### State
-- Working: weights downloaded and valid
-- scripts/download_yolov8_face.py: created and tested
-- Blocked on: Gates B–E must run on Google Colab (no local torch/ultralytics)
-- Next task: re-run gates B–E in Colab by mounting the repo and running
-  python _gate_bc.py (or equivalent inline), then report results here
+- Working: weights downloaded, model loads on cuda, 5-point landmarks
+  confirmed, 117.9 fps on T4 — well above 10 fps GPU threshold
+- scripts/download_yolov8_face.py: uses gdown, derronqi model
+  (Google Drive id 1qcr9DbgsX3ryrz2uU8w4Xm3cOrRywXqb)
+- Blocked on: nothing
+- Next task: Phase 6 Phase 2 — architecture scaffold
+  (detector abstraction layer, stub class, bootstrap wiring)
 
 ### Branch
 phase5-colab-ready
