@@ -106,12 +106,34 @@ def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionP
         logger.error("!!! PIPELINE IMPORT VALIDATION FAILED: %s !!!", e)
         raise RuntimeError(f"Startup validation failed: {e}") from e
 
+    import os as _os
+    _provider = _os.environ.get(
+        "DETECTOR_PROVIDER",
+        PLATFORM.get("detector_provider", "scrfd")
+    ).lower()
+
     face_app = _create_face_analysis(settings)
-    detector: FaceDetector = InsightFaceDetector(
-        model_name=settings.insightface_model_name,
-        ctx_id=settings.insightface_ctx_id,
-        face_app=face_app,
-    )
+
+    if _provider == "yolo":
+        from ecoface_lite.ai_engine.detection.detectors\
+            .yolov8_detector import YOLOv8FaceDetector
+        from pathlib import Path as _Path
+        _weights = (
+            _Path(__file__).resolve().parent.parent.parent
+            / "weights" / "yolov8n-face.pt"
+        )
+        detector = YOLOv8FaceDetector(
+            weights_path=_weights,
+            det_size=PLATFORM["det_size"]
+        )
+        logger.info("Detector: YOLOv8-face (PyTorch GPU)")
+    else:
+        detector: FaceDetector = InsightFaceDetector(
+            model_name=settings.insightface_model_name,
+            ctx_id=settings.insightface_ctx_id,
+            face_app=face_app,
+        )
+        logger.info("Detector: SCRFD (InsightFace)")
     embedder: FaceEmbedder = InsightFaceEmbedder(
         model_name=settings.insightface_model_name,
         ctx_id=settings.insightface_ctx_id,

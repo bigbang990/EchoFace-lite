@@ -106,6 +106,7 @@ def detect_platform() -> dict:
             "detector_budget_ms":    150,
             "max_track_survival_ms": 3000,
             "interval_ceiling":      8,
+            "detector_provider":     "scrfd",
         }
         logger.info("EchoFace backend=GPU/CUDA — production mode, %s", gpu_name)
     else:
@@ -120,6 +121,7 @@ def detect_platform() -> dict:
             "detector_budget_ms":    5000,
             "max_track_survival_ms": 6000,
             "interval_ceiling":      12,
+            "detector_provider":     "scrfd",
         }
         logger.info("EchoFace backend=CPU — development mode, not real-time")
 
