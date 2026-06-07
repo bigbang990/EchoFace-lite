@@ -1,21 +1,23 @@
-## Checkpoint — 2026-06-08 — Phase 6 feasibility gate
+## Checkpoint — 2026-06-08 — Phase 6 Phase 1 re-run (partial)
 
 ### Done
-Ran YOLOv8-face feasibility gate (Phase 1).
-Result: NO-GO
-Weights file `weights/yolov8n-face.pt` is absent and the download script
-`scripts/download_yolov8_face.py` does not yet exist.
+Download script created at scripts/download_yolov8_face.py.
+weights/yolov8n-face.pt downloaded (6.2 MB, HuggingFace source).
+Gate A passed locally.
+Gate B failed — torch and ultralytics are not installed on this local machine.
+The project runs on Google Colab; local Python 3.10 has no ML packages.
+Instruction: do not install automatically.
 
 ### Gate results
-A: FAIL  B: not run  C: not run  D: not run — fps not measured  E: skip
+A: PASS (5.96 MB)  B: FAIL (torch not installed locally)
+C: not run  D: not run  E: skip
 
 ### State
-- Working: full pipeline, InsightFace/SCRFD on CPU (CPUExecutionProvider)
-- platform_bootstrap.py: on phase5-colab-ready branch only — not merged to main
-- AI_CONTEXT: complete and accurate
-- Blocked on: Gate A — weights file missing; download script also missing
-- Next task: create scripts/download_yolov8_face.py, download yolov8n-face.pt,
-  then re-run Phase 6 Phase 1 feasibility gate
+- Working: weights downloaded and valid
+- scripts/download_yolov8_face.py: created and tested
+- Blocked on: Gates B–E must run on Google Colab (no local torch/ultralytics)
+- Next task: re-run gates B–E in Colab by mounting the repo and running
+  python _gate_bc.py (or equivalent inline), then report results here
 
 ### Branch
-phase6-detector-abstraction (not yet created locally)
+phase5-colab-ready

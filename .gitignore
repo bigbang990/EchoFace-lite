@@ -52,6 +52,7 @@ __pycache__/
 *.mp4
 *.jpg'n*.avi
 weights/
+*.pt
 outputs/
 .env
 
@@ -62,5 +63,6 @@ __pycache__/
 *.mp4
 *.jpg'n*.avi
 weights/
+*.pt
 outputs/
 .env
