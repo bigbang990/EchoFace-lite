@@ -35,18 +35,22 @@ class YOLOv8FaceDetector(BaseDetector):
 
         import torch
         from ultralytics import YOLO
-        from ultralytics.nn.tasks import PoseModel, DetectionModel
 
-        # Allowlist ultralytics globals for PyTorch 2.6+ weights_only=True
-        _safe = [PoseModel, DetectionModel]
+        # PyTorch 2.6+ sets weights_only=True by default.
+        # ultralytics checkpoint contains arbitrary globals
+        # (PoseModel, Sequential, etc.) — allowlist is unbounded.
+        # Patch torch.load at the serialization module level
+        # to force weights_only=False, restore immediately after.
+        import torch.serialization as _ts
+        _orig = _ts.load
+        _ts.load = lambda *a, **kw: _orig(*a, **{**kw, "weights_only": False})
+        torch.load = _ts.load
         try:
-            from ultralytics.nn.modules import Conv, C2f, SPPF, Detect, Pose
-            _safe += [Conv, C2f, SPPF, Detect, Pose]
-        except ImportError:
-            pass
+            self._model = YOLO(str(weights_path))
+        finally:
+            _ts.load = _orig
+            torch.load = _orig
 
-        torch.serialization.add_safe_globals(_safe)
-        self._model = YOLO(str(weights_path))
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
         self._model.to(self._device)
         logger.info("YOLOv8FaceDetector loaded on %s", self._device)
