@@ -263,6 +263,9 @@ class DetectionOptimizer:
             size = (self._settings.detector_medium_width, self._settings.detector_medium_height)
         else:
             size = (self._settings.detector_input_width, self._settings.detector_input_height)
+        # Respect DETECTOR_RESOLUTION_CAP_ENABLED — skip ceiling when flag is False
+        if not self._settings.detector_resolution_cap_enabled:
+            return size
         gpu_res = self._settings.gpu_detector_resolution
         return (min(size[0], gpu_res), min(size[1], gpu_res))
 
