@@ -9,6 +9,8 @@ YOLOv8-face GPU detector production verified:
   identity_switch_rate: 0
   average_processing_fps: 56
 
+CLAUDE.md updated with regression gate, modularity rule, observability rule.
+
 ### Known debt
 1. ghost_survival > 18s in crowd scenes (starvation override)
    — Phase 5 known issue, tracked
@@ -20,7 +22,7 @@ YOLOv8-face GPU detector production verified:
 
 ### State
 - Working: full pipeline on main, YOLOv8 GPU verified
-- Next session: Phase 7 — detection_optimizer resolution cap fix,
+- Next session: Phase 7 — detection_optimizer.py resolution cap fix,
   then Phase 2D Part 2 Detection Truthfulness Validation Framework
 
 ### Branch
