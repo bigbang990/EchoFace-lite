@@ -52,6 +52,14 @@ machine. Project is Colab-first; no local ML environment exists.
 Alternative: run gates B–E inside Google Colab after mounting the repo.
 URL attempted for weights: https://huggingface.co/arnabdhar/YOLOv8-Face-Detection/resolve/main/model.pt — succeeded.
 
+## Decision: Phase 6 merge approved
+Date: June 2026
+Evidence: stable_matches=183, alerts=2, detector_runtime=17ms,
+          identity_switch_rate=0, FPS=56 on T4
+Known debt: ghost_survival 26s (starvation override),
+            resolution cap 480px (detection_optimizer.py:112)
+Neither blocks production use.
+
 ## Decision: YOLOv8-face weights source (June 2026)
 Confirmed source: derronqi/yolov8-face (Google Drive)
 Drive ID: 1qcr9DbgsX3ryrz2uU8w4Xm3cOrRywXqb

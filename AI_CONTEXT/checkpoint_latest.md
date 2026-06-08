@@ -1,19 +1,27 @@
-## Checkpoint — 2026-06-08 — torch.load patch approach
+## Checkpoint — 2026-06-09 — Phase 6 MERGED v0.6.0
 
 ### Done
-Replaced unbounded add_safe_globals allowlist with a scoped torch.load patch
-in YOLOv8FaceDetector.__init__. Patch forces weights_only=False for the
-YOLO() call only, then restores the original torch.load in a finally block.
-No add_safe_globals calls remain. Only yolov8_detector.py was modified.
+Phase 6 merged to main. Tagged v0.6.0.
+YOLOv8-face GPU detector production verified:
+  detector_runtime_ms: 16.8ms
+  stable_matches: 183
+  alerts_per_video: 2
+  identity_switch_rate: 0
+  average_processing_fps: 56
+
+### Known debt
+1. ghost_survival > 18s in crowd scenes (starvation override)
+   — Phase 5 known issue, tracked
+2. capped_detector_resolution fixed at 480px
+   — detection_optimizer.py:112, separate from settings flag
+   — Phase 7 target
+3. face_app loads on YOLO path unnecessarily
+   — Phase 7 target
 
 ### State
-- Working: phase6-detector-abstraction, torch.load patch applied
-- Blocked on: re-run Colab cell to confirm no UnpicklingError, then real video test
-- Next task: confirm 422 on enroll, run real video through pipeline.
-  Targets: detector_runtime_ms < 50ms,
-           validator_rejection_rate < 0.30,
-           identity_switch_rate = 0,
-           stable_matches > 35
+- Working: full pipeline on main, YOLOv8 GPU verified
+- Next session: Phase 7 — detection_optimizer resolution cap fix,
+  then Phase 2D Part 2 Detection Truthfulness Validation Framework
 
 ### Branch
-phase6-detector-abstraction — not yet on main
+main — v0.6.0 tagged
