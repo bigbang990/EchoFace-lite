@@ -1,0 +1,6 @@
+{
+  "category": "walking_person",
+  "description": "Person walking toward or away from camera — tests profile-to-frontal transition and small-to-large face acquisition.",
+  "videos": [],
+  "notes": "expected_faces_visible counts the face when it is largest in the frame."
+}

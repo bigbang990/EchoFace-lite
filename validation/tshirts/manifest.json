@@ -1,0 +1,6 @@
+{
+  "category": "tshirts",
+  "description": "Clothing with face prints — band tees, sports jerseys, graphic shirts. Zero real humans in face position.",
+  "videos": [],
+  "notes": "expected_faces_visible = 0. Tests whether face-printed fabric triggers false positives."
+}

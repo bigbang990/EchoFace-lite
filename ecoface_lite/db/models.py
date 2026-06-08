@@ -67,6 +67,7 @@ class DetectionEvent(Base):
     frame_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     snapshot_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     extra_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
+    camera_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     person: Mapped[Person | None] = relationship(back_populates="detection_events")
@@ -91,6 +92,7 @@ class ProcessingStatus(Base):
     duplicate_suppressions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     processing_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    camera_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

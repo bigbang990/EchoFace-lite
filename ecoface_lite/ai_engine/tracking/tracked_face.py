@@ -24,6 +24,9 @@ class TrackedFace:
     visibility_age: int
     lost_frames: int
 
+    first_seen_ts: float = field(default_factory=time.monotonic)
+    last_seen_ts: float = field(default_factory=time.monotonic)
+
     last_embedding: np.ndarray | None = None
     embedding_timestamp: float = 0.0
     last_embedding_frame: int = 0
@@ -47,7 +50,16 @@ class TrackedFace:
 
     confirmation_hits: int = 0
     track_quality_score: float = 0.0
+    governance_protected: bool = True
+    
+    # ── Stability Hardening (Phase 3) ────────────────────────────────────────
+    smoothed_bbox: tuple[float, float, float, float] | None = None
 
+    # ── Phase 6: Telemetry & Grace ──────────────────────────────────────────
+    governance_lockout_active: bool = False
+    emergency_rebuild_active: bool = False
+    recovery_grace_frames: int = 0
+    
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -66,6 +78,14 @@ class TrackedFace:
     @property
     def is_stable(self) -> bool:
         return self.state == TrackLifecycleState.STABLE.value
+
+    @property
+    def lifetime_ms(self) -> float:
+        return (time.monotonic() - self.first_seen_ts) * 1000.0
+
+    @property
+    def time_since_last_seen_ms(self) -> float:
+        return (time.monotonic() - self.last_seen_ts) * 1000.0
 
     def touch_embedding(self, embedding: np.ndarray, frame_index: int) -> None:
         self.last_embedding = embedding
@@ -94,6 +114,32 @@ class TrackedFace:
         if dominant is not None:
             self.stable_match_count = sum(1 for pid in self.recent_matches if pid == dominant)
         self.metadata["temporal_consistency"] = temporal.temporal_consistency
+
+    def update_bbox(self, new_bbox: tuple[float, float, float, float], alpha: float) -> None:
+        """Apply EMA smoothing to bounding box coordinates."""
+        from ecoface_lite.core.metrics import metrics
+        
+        if self.smoothed_bbox is None:
+            self.smoothed_bbox = new_bbox
+            self.bbox = new_bbox
+            return
+
+        # Telemetry for stability analysis
+        old_bbox = self.bbox
+        delta = sum(abs(a - b) for a, b in zip(old_bbox, new_bbox)) / 4.0
+        metrics.observe("avg_bbox_delta_before", delta)
+
+        # Apply EMA: smoothed = alpha * new + (1 - alpha) * old
+        smoothed = tuple(
+            alpha * n + (1.0 - alpha) * o 
+            for n, o in zip(new_bbox, self.smoothed_bbox)
+        )
+        self.smoothed_bbox = smoothed
+        self.bbox = smoothed # Tracker uses smoothed coords
+        
+        new_delta = sum(abs(a - b) for a, b in zip(old_bbox, smoothed)) / 4.0
+        metrics.observe("avg_bbox_delta_after", new_delta)
+        metrics.increment("bbox_smoothing_applied_count")
 
     def _majority_identity(self) -> int | None:
         if not self.recent_matches:

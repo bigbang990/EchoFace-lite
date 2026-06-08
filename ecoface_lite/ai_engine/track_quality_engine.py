@@ -34,7 +34,12 @@ class TrackQualityEngine:
     def __init__(self, settings: Settings, quality_assessor: FaceQualityAssessor | None = None) -> None:
         self._settings = settings
         self._quality = quality_assessor or FaceQualityAssessor(settings)
-        self._decay = settings.tracking_quality_decay
+        # ── Step 2: Progressive Decay Parameters ─────────────────────────────
+        self._base_decay = settings.tracking_quality_decay
+        self._decay_new = settings.tracking_decay_new_alpha
+        self._decay_stable = settings.tracking_decay_stable_alpha
+        self._decay_aggressive = settings.tracking_decay_aggressive_alpha
+        self._new_threshold = settings.tracking_decay_new_frames
 
     def update(
         self,
@@ -66,7 +71,8 @@ class TrackQualityEngine:
         )
 
         if track.track_quality_score > 0:
-            blended = (self._decay * track.track_quality_score) + ((1.0 - self._decay) * instant)
+            decay = self._select_decay(track, embedding_consistency, motion_score)
+            blended = (decay * track.track_quality_score) + ((1.0 - decay) * instant)
         else:
             blended = instant
 
@@ -103,8 +109,35 @@ class TrackQualityEngine:
     def decay_lost_track(self, track: TrackedFace) -> None:
         if track.lost_frames <= 0:
             return
-        track.track_quality_score *= self._decay
+            
+        consistency = track.metadata.get("embedding_consistency", 1.0)
+        motion = track.metadata.get("motion_score", 1.0)
+        decay = self._select_decay(track, consistency, motion)
+        
+        track.track_quality_score *= decay
         metrics.increment("track_quality_decay_events")
+        if decay > self._base_decay:
+            metrics.increment("track_decay_softened_count")
+        elif decay < self._base_decay:
+            metrics.increment("aggressive_decay_trigger_count")
+        
+        metrics.increment("progressive_decay_applied_count")
+
+    def _select_decay(self, track: TrackedFace, consistency: float, motion: float) -> float:
+        """Select appropriate decay alpha based on track state and quality signals."""
+        # 1. Aggressive decay for unstable/failed signals
+        if consistency < 0.35 or motion < 0.15 or track.lost_frames > self._settings.tracking_soft_recovery_frames:
+            return self._decay_aggressive
+            
+        # 2. Ultra-stable decay for confirmed identities
+        if track.is_stable:
+            return self._decay_stable
+            
+        # 3. Gentle decay for new tracks to give them a chance
+        if track.visibility_age <= self._new_threshold:
+            return self._decay_new
+            
+        return self._base_decay
 
     @dataclass(frozen=True)
     class _FrameQuality:

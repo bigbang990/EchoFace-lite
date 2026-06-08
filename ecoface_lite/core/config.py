@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     face_quality_max_aspect_ratio_skew: float = Field(default=1.9, ge=1.0, alias="FACE_QUALITY_MAX_ASPECT_RATIO_SKEW")
     detector_input_width: int = Field(default=320, ge=160, alias="DETECTOR_INPUT_WIDTH")
     detector_input_height: int = Field(default=320, ge=160, alias="DETECTOR_INPUT_HEIGHT")
+    # ── Phase 2E: Hardware-aware detector resolution ceiling ──────────────────
+    # On CPU the medium/large size upgrades (416/512px) are too expensive —
+    # 4+ tracks triggers 416px at ~1200ms, 8+ triggers 512px at ~2000ms each.
+    # Force CPU to stay at base resolution (320px) regardless of track count.
+    cpu_detector_resolution: int = Field(default=320, ge=160, alias="CPU_DETECTOR_RESOLUTION")
+    gpu_detector_resolution: int = Field(default=640, ge=160, alias="GPU_DETECTOR_RESOLUTION")
     detector_medium_width: int = Field(default=416, ge=160, alias="DETECTOR_MEDIUM_WIDTH")
     detector_medium_height: int = Field(default=416, ge=160, alias="DETECTOR_MEDIUM_HEIGHT")
     detector_large_width: int = Field(default=512, ge=160, alias="DETECTOR_LARGE_WIDTH")
@@ -97,6 +103,9 @@ class Settings(BaseSettings):
     detector_edge_high_confidence: float = Field(default=0.95, ge=0, le=1, alias="DETECTOR_EDGE_HIGH_CONFIDENCE")
     detector_max_landmark_asymmetry: float = Field(default=0.55, ge=0, le=2, alias="DETECTOR_MAX_LANDMARK_ASYMMETRY")
     detector_input_enable_enhancement: bool = Field(default=True, alias="DETECTOR_INPUT_ENABLE_ENHANCEMENT")
+    detector_resolution_cap_enabled: bool = Field(default=True, alias="DETECTOR_RESOLUTION_CAP_ENABLED")
+    detector_min_input_pixels: int = Field(default=90000, alias="DETECTOR_MIN_INPUT_PIXELS")
+    detector_max_input_pixels: int = Field(default=120000, alias="DETECTOR_MAX_INPUT_PIXELS")
     detector_temporal_blend_current: float = Field(default=0.7, ge=0, le=1, alias="DETECTOR_TEMPORAL_BLEND_CURRENT")
     detector_temporal_blend_history: float = Field(default=0.3, ge=0, le=1, alias="DETECTOR_TEMPORAL_BLEND_HISTORY")
     detector_temporal_iou_match: float = Field(default=0.35, ge=0, le=1, alias="DETECTOR_TEMPORAL_IOU_MATCH")
@@ -104,6 +113,64 @@ class Settings(BaseSettings):
     detector_center_priority_enabled: bool = Field(default=False, alias="DETECTOR_CENTER_PRIORITY_ENABLED")
     detector_center_max_distance: float = Field(default=0.9, ge=0, le=2, alias="DETECTOR_CENTER_MAX_DISTANCE")
     detector_overload_face_count: int = Field(default=12, ge=1, alias="DETECTOR_OVERLOAD_FACE_COUNT")
+    
+    # ── Adaptive Load Governance (Phase 3) ────────────────────────────────────
+    enable_adaptive_load_governance: bool = Field(default=True, alias="ENABLE_ADAPTIVE_LOAD_GOVERNANCE")
+    governance_low_pressure_interval: int = Field(default=8, ge=1, alias="GOVERNANCE_LOW_PRESSURE_INTERVAL")
+    governance_medium_pressure_interval: int = Field(default=12, ge=1, alias="GOVERNANCE_MEDIUM_PRESSURE_INTERVAL")
+    governance_high_pressure_interval: int = Field(default=16, ge=1, alias="GOVERNANCE_HIGH_PRESSURE_INTERVAL")
+    governance_critical_cooldown_frames: int = Field(default=30, ge=1, alias="GOVERNANCE_CRITICAL_COOLDOWN_FRAMES")
+    governance_max_detector_runtime_ms: float = Field(default=150.0, ge=10.0, alias="GOVERNANCE_MAX_DETECTOR_RUNTIME_MS")
+    # ── Hardware-aware detector budgets (Phase 2D) ────────────────────────────
+    # CPU: 400–1200ms per cycle is NORMAL; don't treat it as overload.
+    # GPU: 150ms is the legitimate budget ceiling.
+    cpu_governance_max_detector_runtime_ms: float = Field(default=2000.0, ge=100.0, alias="CPU_GOVERNANCE_MAX_DETECTOR_RUNTIME_MS")
+    gpu_governance_max_detector_runtime_ms: float = Field(default=150.0, ge=10.0, alias="GPU_GOVERNANCE_MAX_DETECTOR_RUNTIME_MS")
+    # Maximum detection interval (frames between full detections) per backend.
+    # CPU offline video: detect at least every 3 frames (slow but complete).
+    # GPU real-time: up to 12 frames between detections at high load.
+    cpu_max_detector_interval: int = Field(default=3, ge=1, alias="CPU_MAX_DETECTOR_INTERVAL")
+    gpu_max_detector_interval: int = Field(default=12, ge=1, alias="GPU_MAX_DETECTOR_INTERVAL")
+    # ── Phase 2E: Disable governance lockout on CPU ───────────────────────────
+    # On CPU, lockout creates a feedback loop: slow detection → no confirmed
+    # tracks → lockout activates → force detect every frame → still slow →
+    # validator rejects → stay locked. Disable until GPU testing validates it.
+    disable_governance_lockout_on_cpu: bool = Field(default=True, alias="DISABLE_GOVERNANCE_LOCKOUT_ON_CPU")
+    governance_max_candidate_queue_size: int = Field(default=25, ge=1, alias="GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE")
+    governance_mature_track_age: int = Field(default=50, ge=1, alias="GOVERNANCE_MATURE_TRACK_AGE")
+    enable_priority_ingestion: bool = Field(default=True, alias="ENABLE_PRIORITY_INGESTION")
+    enable_track_survival_protection: bool = Field(default=True, alias="ENABLE_TRACK_SURVIVAL_PROTECTION")
+    governance_min_survival_tracks: int = Field(default=3, ge=1, alias="GOVERNANCE_MIN_SURVIVAL_TRACKS")
+    governance_min_survival_candidates: int = Field(default=5, ge=1, alias="GOVERNANCE_MIN_SURVIVAL_CANDIDATES")
+    governance_candidate_grace_frames: int = Field(default=15, ge=1, alias="GOVERNANCE_CANDIDATE_GRACE_FRAMES")
+    governance_candidate_immunity_frames: int = Field(default=20, ge=1, alias="GOVERNANCE_CANDIDATE_IMMUNITY_FRAMES")
+    enable_emergency_recall_mode: bool = Field(default=True, alias="ENABLE_EMERGENCY_RECALL_MODE")
+
+    # ── Adaptive Recall & Degradation (Phase 4) ──────────────────────────────
+    enable_adaptive_degradation: bool = Field(default=True, alias="ENABLE_ADAPTIVE_DEGRADATION")
+    governance_pressure_hysteresis_frames: int = Field(default=15, ge=1, alias="GOVERNANCE_PRESSURE_HYSTERESIS_FRAMES")
+    
+    # Validation Relaxation
+    relaxation_low_confidence: float = Field(default=0.45, ge=0.1, alias="RELAXATION_LOW_CONFIDENCE")
+    relaxation_medium_confidence: float = Field(default=0.38, ge=0.1, alias="RELAXATION_MEDIUM_CONFIDENCE")
+    relaxation_high_confidence: float = Field(default=0.30, ge=0.1, alias="RELAXATION_HIGH_CONFIDENCE")
+    
+    relaxation_low_cutoff: float = Field(default=0.70, ge=0.1, alias="RELAXATION_LOW_CUTOFF")
+    relaxation_medium_cutoff: float = Field(default=0.58, ge=0.1, alias="RELAXATION_MEDIUM_CUTOFF")
+    relaxation_high_cutoff: float = Field(default=0.45, ge=0.1, alias="RELAXATION_HIGH_CUTOFF")
+    
+    # Embedding Throttling
+    governance_embedding_refresh_cooldown_ms: int = Field(default=2000, ge=0, alias="GOVERNANCE_EMBEDDING_REFRESH_COOLDOWN_MS")
+    governance_stable_identity_freeze_enabled: bool = Field(default=True, alias="GOVERNANCE_STABLE_IDENTITY_FREEZE_ENABLED")
+    
+    # Coarse Tracking
+    enable_coarse_tracking: bool = Field(default=True, alias="ENABLE_COARSE_TRACKING")
+    # Phase 2E: lower default — 8000ms let ghost/coarse tracks survive 192+ frames
+    # at 24fps.  3000ms caps survival at ~72 frames which is enough for re-ID
+    # but kills persistent ghost boxes quickly.
+    coarse_track_survival_ms: int = Field(default=3000, ge=500, alias="COARSE_TRACK_SURVIVAL_MS")
+    coarse_track_min_hits: int = Field(default=2, ge=1, alias="COARSE_TRACK_MIN_HITS")
+
     temporal_window_size: int = Field(default=8, ge=1, alias="TEMPORAL_WINDOW_SIZE")
     temporal_min_confirmations: int = Field(default=3, ge=1, alias="TEMPORAL_MIN_CONFIRMATIONS")
     temporal_min_average_confidence: float = Field(default=0.50, ge=0, le=1, alias="TEMPORAL_MIN_AVERAGE_CONFIDENCE")
@@ -121,22 +188,49 @@ class Settings(BaseSettings):
     event_cooldown_frames: int = Field(default=90, ge=0, alias="EVENT_COOLDOWN_FRAMES")
     event_min_stable_frames: int = Field(default=3, ge=1, alias="EVENT_MIN_STABLE_FRAMES")
     tracking_min_track_age: int = Field(default=10, ge=1, alias="TRACKING_MIN_TRACK_AGE")
-    tracking_max_lost_frames: int = Field(default=18, ge=1, alias="TRACKING_MAX_LOST_FRAMES")
+    tracking_max_lost_frames: int = Field(default=28, ge=1, alias="TRACKING_MAX_LOST_FRAMES")
     tracking_overlay_interval: int = Field(default=5, ge=1, alias="TRACKING_OVERLAY_INTERVAL")
     tracking_ema_alpha: float = Field(default=0.35, ge=0, le=1, alias="TRACKING_EMA_ALPHA")
-    tracking_confirm_frames: int = Field(default=2, ge=1, alias="TRACKING_CONFIRM_FRAMES")
+    tracking_bbox_ema_alpha: float = Field(default=0.5, ge=0, le=1, alias="TRACKING_BBOX_EMA_ALPHA")
+    tracking_soft_recovery_frames: int = Field(default=10, ge=1, alias="TRACKING_SOFT_RECOVERY_FRAMES")
+    tracking_confirm_frames: int = Field(default=4, ge=1, alias="TRACKING_CONFIRM_FRAMES")
     tracking_min_quality_score: float = Field(default=0.35, ge=0, le=1, alias="TRACKING_MIN_QUALITY_SCORE")
     face_crop_min_eye_band_ratio: float = Field(default=0.12, ge=0, le=1, alias="FACE_CROP_MIN_EYE_BAND_RATIO")
     face_crop_max_forehead_ratio: float = Field(default=0.55, ge=0, le=1, alias="FACE_CROP_MAX_FOREHEAD_RATIO")
+    # ── Phase 2E: Forehead check size gate ───────────────────────────────────
+    # Small faces have noisy geometry — the forehead ratio measurement is
+    # unreliable at <80px.  Only apply this hallucination-filter to large faces.
+    oversized_forehead_min_face_px: int = Field(default=80, ge=0, alias="OVERSIZED_FOREHEAD_MIN_FACE_PX")
     face_crop_min_chin_ratio: float = Field(default=0.08, ge=0, le=1, alias="FACE_CROP_MIN_CHIN_RATIO")
     tracking_bbox_area_change_ratio: float = Field(default=0.25, ge=0, le=1, alias="TRACKING_BBOX_AREA_CHANGE_RATIO")
     tracking_confidence_drop_threshold: float = Field(default=0.15, ge=0, le=1, alias="TRACKING_CONFIDENCE_DROP_THRESHOLD")
     tracking_vote_window: int = Field(default=10, ge=1, alias="TRACKING_VOTE_WINDOW")
     tracking_stable_frames: int = Field(default=15, ge=1, alias="TRACKING_STABLE_FRAMES")
     tracking_quality_decay: float = Field(default=0.92, ge=0.5, le=1, alias="TRACKING_QUALITY_DECAY")
+    
+    # --- Phase 2: Time-Aware Lifecycle Parameters ---
+    tracking_confirm_duration_ms: int = Field(default=500, ge=50, alias="TRACKING_CONFIRM_DURATION_MS")
+    tracking_decay_duration_ms: int = Field(default=2000, ge=100, alias="TRACKING_DECAY_DURATION_MS")
+    tracking_recovery_buffer_ms: int = Field(default=1000, ge=100, alias="TRACKING_RECOVERY_BUFFER_MS")
+    tracking_ghost_persistence_ms: int = Field(default=1000, ge=100, alias="TRACKING_GHOST_PERSISTENCE_MS")
+    # Phase 2E: 5000ms let ghost tracks hold boxes for 120+ frames at 24fps.
+    # Lower to 3000ms so ghost boxes disappear within ~72 frames.
+    tracking_expiration_ms: int = Field(default=3000, ge=500, alias="TRACKING_EXPIRATION_MS")
+    tracking_aggressive_decay_ms: int = Field(default=500, ge=50, alias="TRACKING_AGGRESSIVE_DECAY_MS")
+    tracking_stable_duration_ms: int = Field(default=1500, ge=100, alias="TRACKING_STABLE_DURATION_MS")
+    
+    tracking_decay_new_alpha: float = Field(default=0.97, ge=0.5, le=1, alias="TRACKING_DECAY_NEW_ALPHA")
+    tracking_decay_stable_alpha: float = Field(default=0.99, ge=0.5, le=1, alias="TRACKING_DECAY_STABLE_ALPHA")
+    tracking_decay_aggressive_alpha: float = Field(default=0.85, ge=0.5, le=1, alias="TRACKING_DECAY_AGGRESSIVE_ALPHA")
+    tracking_decay_new_frames: int = Field(default=15, ge=1, alias="TRACKING_DECAY_NEW_FRAMES")
+    
+    tracking_fast_confirm_min_consistency: float = Field(default=0.65, ge=0, le=1, alias="TRACKING_FAST_CONFIRM_MIN_CONSISTENCY")
+    tracking_fast_confirm_max_jitter: float = Field(default=15.0, ge=0, alias="TRACKING_FAST_CONFIRM_MAX_JITTER")
+    
     tracking_min_motion_stability: float = Field(default=0.25, ge=0, le=1, alias="TRACKING_MIN_MOTION_STABILITY")
     tracking_min_recognition_quality: float = Field(default=0.40, ge=0, le=1, alias="TRACKING_MIN_RECOGNITION_QUALITY")
     tracking_embedding_cooldown_frames: int = Field(default=12, ge=1, alias="TRACKING_EMBEDDING_COOLDOWN_FRAMES")
+    tracking_embedding_quality_jump: float = Field(default=0.18, ge=0.05, le=0.5, alias="TRACKING_EMBEDDING_QUALITY_JUMP")
     tracking_identity_lock_frames: int = Field(default=8, ge=1, alias="TRACKING_IDENTITY_LOCK_FRAMES")
     tracking_identity_lock_margin: float = Field(default=0.04, ge=0, le=0.2, alias="TRACKING_IDENTITY_LOCK_MARGIN")
     tracking_fused_embedding_alpha: float = Field(default=0.25, ge=0.05, le=1, alias="TRACKING_FUSED_EMBEDDING_ALPHA")
@@ -190,11 +284,22 @@ class Settings(BaseSettings):
     validator_size_weight: float = Field(default=0.15, ge=0, le=1, alias="VALIDATOR_SIZE_WEIGHT")
     validator_quality_cutoff: float = Field(default=0.35, ge=0, le=1, alias="VALIDATOR_QUALITY_CUTOFF")
     validator_strict_cutoff: float = Field(default=0.70, ge=0, le=1, alias="VALIDATOR_STRICT_CUTOFF")
+    # ── Phase 2E: Adaptive confidence/cutoff gap enforcement ─────────────────
+    # The adaptive system can drift to adaptive_det_confidence < validator_cutoff,
+    # which means the detector generates candidates that the validator is
+    # guaranteed to reject.  Enforce a minimum gap between the two.
+    min_confidence_validator_gap: float = Field(default=0.05, ge=0.0, le=0.5, alias="MIN_CONFIDENCE_VALIDATOR_GAP")
     validator_snapshot_enabled: bool = Field(default=False, alias="VALIDATOR_SNAPSHOT_ENABLED")
     validator_snapshot_max_count: int = Field(default=500, ge=1, alias="VALIDATOR_SNAPSHOT_MAX_COUNT")
     validator_snapshot_sampling_rate: float = Field(default=0.15, ge=0, le=1, alias="VALIDATOR_SNAPSHOT_SAMPLING_RATE")
     validator_weak_pass_max_age_frames: int = Field(default=90, ge=1, alias="VALIDATOR_WEAK_PASS_MAX_AGE_FRAMES")
     validator_weak_pass_retry_limit: int = Field(default=3, ge=1, alias="VALIDATOR_WEAK_PASS_RETRY_LIMIT")
+    validator_weak_pass_temporal_min: float = Field(default=0.65, ge=0, le=1, alias="VALIDATOR_WEAK_PASS_TEMPORAL_MIN")
+    validator_weak_pass_landmark_min: float = Field(default=0.5, ge=0, le=1, alias="VALIDATOR_WEAK_PASS_LANDMARK_MIN")
+    validator_weak_pass_confidence_boost: float = Field(default=0.15, ge=0, le=0.5, alias="VALIDATOR_WEAK_PASS_CONFIDENCE_BOOST")
+    validator_weak_pass_soft_temporal: float = Field(default=0.55, ge=0, le=1, alias="VALIDATOR_WEAK_PASS_SOFT_TEMPORAL")
+    validator_weak_pass_motion_min: float = Field(default=0.6, ge=0, le=1, alias="VALIDATOR_WEAK_PASS_MOTION_MIN")
+    validator_weak_pass_persistence_min: float = Field(default=0.3, ge=0, le=1, alias="VALIDATOR_WEAK_PASS_PERSISTENCE_MIN")
     validator_track_only_max_age_frames: int = Field(default=45, ge=1, alias="VALIDATOR_TRACK_ONLY_MAX_AGE_FRAMES")
     validator_temporal_decay: float = Field(default=0.92, ge=0.5, le=1, alias="VALIDATOR_TEMPORAL_DECAY")
     validator_adaptive_brightness: bool = Field(default=False, alias="VALIDATOR_ADAPTIVE_BRIGHTNESS")

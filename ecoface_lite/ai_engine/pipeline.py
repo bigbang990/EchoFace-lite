@@ -8,20 +8,22 @@ from __future__ import annotations
 
 import numpy as np
 
+from ecoface_lite.ai_engine.detection.detectors.multiscale_detector import MultiScaleDetector
+from ecoface_lite.ai_engine.detection.detectors.base_detector import BaseDetector, DetectionConfig
+from ecoface_lite.ai_engine.detection.fusion.weighted_box_fusion import WeightedBoxFusion, FusionConfig
+from ecoface_lite.ai_engine.detection.temporal.weak_detection_memory import WeakDetectionMemory, MemoryConfig
+from ecoface_lite.core.detection_metrics.detection_metrics import DetectionMetricsCollector
 from ecoface_lite.ai_engine.confidence import ConfidencePolicy
 from ecoface_lite.ai_engine.detection_optimizer import DetectionOptimizer
 from ecoface_lite.ai_engine.diagnostics import diagnostics
-from ecoface_lite.ai_engine.detector import DetectedFace, FaceDetector
-from ecoface_lite.ai_engine.detection.detectors import SCRFDDetector, MultiScaleDetector
-from ecoface_lite.ai_engine.detection.fusion import WeightedBoxFusion, DuplicateFilter, ConfidenceNormalizer
-from ecoface_lite.ai_engine.detection.temporal import WeakDetectionMemory
+from ecoface_lite.ai_engine.detector import BoundingBox, DetectedFace, FaceDetector
 from ecoface_lite.ai_engine.embedder import FaceEmbedder
 from ecoface_lite.ai_engine.event_validator import EventValidator
 from ecoface_lite.ai_engine.face_candidate_validator import FaceCandidateValidator
 from ecoface_lite.ai_engine.face_crop_validator import FaceCropValidator
 from ecoface_lite.ai_engine.face_quality import FaceQualityAssessor
 from ecoface_lite.ai_engine.temporal_detector import TemporalDetectorFilter
-from ecoface_lite.ai_engine.geometry import compute_face_geometry, scale_face_to_original
+from ecoface_lite.ai_engine.geometry import bbox_iou, compute_face_geometry, scale_face_to_original
 from ecoface_lite.ai_engine.embedding_fusion import EmbeddingFusion
 from ecoface_lite.ai_engine.global_identity_memory import GlobalIdentityMemory
 from ecoface_lite.ai_engine.identity_confidence_engine import IdentityConfidenceEngine
@@ -33,17 +35,38 @@ from ecoface_lite.ai_engine.track_reassociator import TrackReassociator
 from ecoface_lite.ai_engine.pipeline_types import FaceDebugTrace, FrameMatch
 from ecoface_lite.ai_engine.preprocessing import FramePreprocessor
 from ecoface_lite.ai_engine.recognition_session import RecognitionSession
-from ecoface_lite.ai_engine.tracking.track_state import ACTIVE_RECOGNITION_STATES
+from ecoface_lite.ai_engine.tracking.track_state import ACTIVE_RECOGNITION_STATES, TrackLifecycleState
 from ecoface_lite.ai_engine.tracking.tracked_face import TrackedFace
 from ecoface_lite.config.tracking import TrackingConfig, get_tracking_config
 from ecoface_lite.core.config import Settings
-from ecoface_lite.core.detection_metrics import DetectionMetricsCollector, RecallMetricsCalculator, FalsePositiveLogger
-from ecoface_lite.core.experiment_export import ExperimentExporter, EventTimeline, ExperimentNotesTracker
+from ecoface_lite.core.runtime_config import EffectiveRuntimeConfig
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
 from ecoface_lite.core.validator import FaceValidator, ValidationTier, ValidationResult
 
 logger = get_logger(__name__)
+
+
+class LegacyDetectorWrapper(BaseDetector):
+    """Minimal wrapper for legacy detectors that don't implement BaseDetector."""
+
+    def __init__(self, detector: FaceDetector):
+        self._detector = detector
+
+    def detect(
+        self,
+        frame_bgr: np.ndarray,
+        config: DetectionConfig | None = None,
+    ) -> list[DetectedFace]:
+        # Legacy detector only takes frame_bgr.
+        # MultiScaleDetector resizes the frame BEFORE calling detect.
+        return self._detector.detect(frame_bgr)
+
+    def get_model_name(self) -> str:
+        return getattr(self._detector, "_model_name", "legacy_insightface")
+
+    def get_input_size(self) -> tuple[int, int]:
+        return getattr(self._detector, "_det_size", (640, 640))
 
 
 class RecognitionPipeline:
@@ -58,38 +81,18 @@ class RecognitionPipeline:
         confidence_policy: ConfidencePolicy | None = None,
         recognition_session: RecognitionSession | None = None,
         event_validator: EventValidator | None = None,
+        effective_config: EffectiveRuntimeConfig | None = None,
+        camera_id: str = "default",
     ) -> None:
         self._settings = settings
+        self.camera_id = camera_id
+        self._effective_config = effective_config
         self._tracking_cfg: TrackingConfig = get_tracking_config(settings)
 
-        # ── Phase 2A.2: Wrap detector with MultiScaleDetector if enabled ──────────
-        if settings.enable_multiscale_detection:
-            # Convert InsightFaceDetector to SCRFDDetector wrapper
-            if hasattr(detector, '_app'):
-                # Extract parameters from existing detector
-                model_name = getattr(detector, '_model_name', 'buffalo_l')
-                ctx_id = getattr(detector, '_ctx_id', -1)
-                det_size = getattr(detector, '_det_size', (640, 640))
-                face_app = getattr(detector, '_injected_app', None) or getattr(detector, '_app', None)
-
-                # Create SCRFDDetector wrapper
-                scrfd_detector = SCRFDDetector(
-                    model_name=model_name,
-                    ctx_id=ctx_id,
-                    face_app=face_app,
-                    default_det_size=det_size,
-                )
-
-                # Wrap with MultiScaleDetector
-                self._detector = MultiScaleDetector(scrfd_detector, settings)
-                logger.info("Multi-scale detection enabled with scales: %s", settings.multiscale_scales)
-            else:
-                # Already a BaseDetector or compatible
-                self._detector = detector
-                logger.warning("Detector does not support multi-scale wrapping, using as-is")
-        else:
-            self._detector = detector
-
+        # Log configuration integrity if available
+        if self._effective_config:
+            self._effective_config.log_integrity()
+        self._detector = detector
         self._embedder = embedder
         self._matcher = matcher
         self._preprocessor = preprocessor or FramePreprocessor(settings)
@@ -114,95 +117,73 @@ class RecognitionPipeline:
         self._identity_confidence = IdentityConfidenceEngine(settings)
         self._track_reassociator = TrackReassociator(settings, self._global_identity_memory)
 
-        # ── Phase 2A.1: Detection Observability Foundation ─────────────────────
-        if settings.detection_metrics_enabled:
-            self._detection_metrics = DetectionMetricsCollector(
-                export_dir=settings.resolved_detection_metrics_log_dir(),
-                export_interval=settings.detection_metrics_export_interval,
-            )
-            self._recall_metrics = RecallMetricsCalculator(window_size=100)
-            self._false_positive_logger = FalsePositiveLogger(
-                base_dir=settings.resolved_false_positive_dataset_dir(),
-                enabled=settings.false_positive_snapshot_enabled,
-                max_snapshots=settings.false_positive_max_snapshots,
-                sampling_rate=settings.false_positive_sampling_rate,
-                min_confidence=settings.false_positive_min_confidence,
-            )
-        else:
-            self._detection_metrics = None
-            self._recall_metrics = None
-            self._false_positive_logger = None
+        # ── Phase 2A.1: Detection Observability Foundation ───────────────────
+        self._detection_metrics: DetectionMetricsCollector | None = None
+        if self._settings.detection_metrics_enabled:
+            try:
+                log_dir = self._settings.resolved_detection_metrics_log_dir()
+                self._detection_metrics = DetectionMetricsCollector(
+                    export_dir=log_dir,
+                    export_interval=self._settings.detection_metrics_export_interval
+                )
+                logger.info("Detection observability initialized at %s", log_dir)
+            except Exception as e:
+                logger.warning("Failed to initialize detection observability: %s", e)
 
-        # ── Phase 2A.4: Proposal Fusion Engine ─────────────────────────────────
-        if settings.enable_confidence_normalization:
-            from ecoface_lite.ai_engine.detection.fusion import FusionConfig, NormalizationConfig
+        # ── Phase 2A.4: Proposal Fusion Engine ───────────────────────────────
+        fusion_cfg = FusionConfig(
+            iou_threshold=self._settings.fusion_wbf_iou_threshold,
+            crowd_iou_threshold=self._settings.fusion_crowd_iou_threshold,
+            scale_weight_tiny=self._settings.fusion_scale_weight_tiny,
+            scale_weight_small=self._settings.fusion_scale_weight_small,
+            scale_weight_baseline=self._settings.fusion_scale_weight_baseline,
+        )
+        self._proposal_fusion = WeightedBoxFusion(fusion_cfg)
 
-            fusion_config = FusionConfig(
-                iou_threshold=settings.fusion_wbf_iou_threshold,
-                crowd_iou_threshold=settings.fusion_crowd_iou_threshold,
-                scale_weight_tiny=settings.fusion_scale_weight_tiny,
-                scale_weight_small=settings.fusion_scale_weight_small,
-                scale_weight_baseline=settings.fusion_scale_weight_baseline,
-            )
+        # ── Phase 2A.5: Temporal Weak Detection Memory ───────────────────────
+        memory_cfg = MemoryConfig(
+            max_frames=self._settings.weak_memory_max_frames,
+            cluster_iou=self._settings.weak_memory_cluster_iou,
+            min_recurrence=self._settings.weak_memory_min_recurrence,
+            promotion_boost=self._settings.weak_memory_promotion_boost,
+        )
+        self._weak_detection_memory = WeakDetectionMemory(memory_cfg)
 
-            norm_config = NormalizationConfig(
-                tiny_threshold=settings.multiscale_tiny_face_threshold,
-                small_threshold=settings.multiscale_small_face_threshold,
-            )
+        # ── Phase 2A.2: Multi-Scale Detection Wrapper ────────────────────────
+        self._multiscale_detector: MultiScaleDetector | None = None
+        if self._settings.enable_multiscale_detection:
+            try:
+                base = self._detector if isinstance(self._detector, BaseDetector) else LegacyDetectorWrapper(self._detector)
+                self._multiscale_detector = MultiScaleDetector(base, self._settings)
+                logger.info("Multi-scale detection wrapper initialized")
+            except Exception as e:
+                logger.warning("Failed to initialize multi-scale detector: %s", e)
 
-            self._wbf_fusion = WeightedBoxFusion(fusion_config)
-            self._duplicate_filter = DuplicateFilter()
-            self._confidence_normalizer = ConfidenceNormalizer(norm_config)
-            logger.info("Proposal fusion engine enabled")
-        else:
-            self._wbf_fusion = None
-            self._duplicate_filter = None
-            self._confidence_normalizer = None
+        # ── Overload Management State ────────────────────────────────────────
+        self._overload_active = False
+        self._dynamic_detector_interval = settings.detector_interval_frames
+        self._governance_cooldown_frames = 0
+        self._detector_cooldown_active = False
+        self._current_pressure_band = 0
+        self._band_persistence_frames = 0
+        self._adaptive_det_confidence = settings.detection_confidence_threshold
+        self._adaptive_validator_cutoff = settings.validator_strict_cutoff
 
-        # ── Phase 2A.5: Temporal Weak Detection Recovery ────────────────────────
-        if settings.enable_weak_detection_memory:
-            from ecoface_lite.ai_engine.detection.temporal import MemoryConfig
+        # ── Phase 2 & 3 State Flags ──────────────────────────────────────────
+        self._governance_lockout_active = False
+        self._emergency_rebuild_active = False
+        self._recovery_cooldown_frames = 0
 
-            memory_config = MemoryConfig(
-                max_frames=settings.weak_memory_max_frames,
-                cluster_iou=settings.weak_memory_cluster_iou,
-                min_recurrence=settings.weak_memory_min_recurrence,
-                promotion_boost=settings.weak_memory_promotion_boost,
-                max_boost=settings.weak_memory_max_boost,
-                motion_threshold=settings.weak_memory_motion_threshold,
-            )
-
-            self._weak_detection_memory = WeakDetectionMemory(memory_config)
-            logger.info("Temporal weak detection memory enabled")
-        else:
-            self._weak_detection_memory = None
-
-        # ── Experiment Export System ───────────────────────────────────────────
-        if settings.export_enabled:
-            from ecoface_lite.core.experiment_export import ExportConfig
-
-            export_config = ExportConfig(
-                export_format=settings.export_format,
-                include_screenshots=settings.export_include_screenshots,
-                include_false_positives=settings.export_include_false_positives,
-                include_graph_data=settings.export_include_graph_data,
-                include_event_timeline=settings.export_include_event_timeline,
-                compress_images=settings.export_compress_images,
-            )
-
-            self._experiment_exporter = ExperimentExporter(settings, export_config)
-            self._event_timeline = EventTimeline()
-            self._notes_tracker = ExperimentNotesTracker()
-
-            # Link timeline and tracker to exporter
-            self._experiment_exporter.set_event_timeline(self._event_timeline)
-            self._experiment_exporter.set_notes_tracker(self._notes_tracker)
-
-            logger.info("Experiment export system enabled")
-        else:
-            self._experiment_exporter = None
-            self._event_timeline = None
-            self._notes_tracker = None
+        # ── Phase 2D: Hardware-aware governance startup log ───────────────────
+        _is_gpu = settings.insightface_ctx_id >= 0
+        _backend = "GPU" if _is_gpu else "CPU"
+        _interval_ceil = settings.gpu_max_detector_interval if _is_gpu else settings.cpu_max_detector_interval
+        _budget_ms = settings.gpu_governance_max_detector_runtime_ms if _is_gpu else settings.cpu_governance_max_detector_runtime_ms
+        logger.info(
+            "GOVERNANCE [%s]: interval_ceiling=%d frames  detector_budget=%.0fms  "
+            "(CPU: 400–1200ms/cycle is normal — budget violation only fires above %.0fms)",
+            _backend, _interval_ceil, _budget_ms, _budget_ms,
+        )
 
     @property
     def _track_manager(self):
@@ -320,8 +301,144 @@ class RecognitionPipeline:
         gallery: list[tuple[int, np.ndarray]],
     ) -> list[FrameMatch]:
         metrics.increment("total_frames_processed")
+        
+        # ── Phase 2: Governance Lockout Mode Activation ──────────────────────
+        active_tracks = self._track_manager.active_track_count
+        # We need to peek at detections count to decide on lockout
+        # This is handled inside _apply_load_governance but we need the flag here
+        
         with metrics.timer("total_frame_processing_duration"):
-            return self._process_frame_staged(frame_bgr, frame_index, gallery)
+            matches = self._process_frame_staged(frame_bgr, frame_index, gallery)
+            
+        # Update metrics and flags
+        metrics.observe("governance_lockout_active", 1.0 if self._governance_lockout_active else 0.0)
+        metrics.observe("emergency_rebuild_active", 1.0 if self._emergency_rebuild_active else 0.0)
+            
+        # Track average processing FPS for observability
+        durations = metrics.snapshot().recent_values.get("total_frame_processing_duration", [])
+        if durations:
+            last_duration = durations[-1]
+            if last_duration > 0:
+                fps = 1.0 / last_duration
+                metrics.observe("average_processing_fps", fps)
+                
+                # ── Phase 6: Parity Comparison Readiness ──────────────────────
+                # Observe current hardware execution context
+                metrics.observe("hardware_backend_type", 1.0 if self._settings.insightface_ctx_id >= 0 else 0.0) # 1 for GPU, 0 for CPU
+                
+                # ── Step 5 & 6: Integrity & Regression Checks ────────────────
+                self._check_telemetry_integrity(fps)
+                self._check_regressions(fps)
+        
+        return matches
+
+    def _check_telemetry_integrity(self, current_fps: float) -> None:
+        """Audit timing metrics for mathematical coherence."""
+        snapshot = metrics.snapshot()
+        
+        # ── Step 5: Telemetry Integrity Audit ────────────────────────────────
+        det_raw_ms = snapshot.recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
+        cadence = self._settings.detector_interval_frames
+        if self._overload_active:
+            cadence = self._dynamic_detector_interval
+            
+        # Per-cycle runtime is the raw measurement
+        metrics.observe("detector_runtime_per_cycle_ms", det_raw_ms)
+        
+        # Effective frame cost = per-cycle time spread across cadence
+        effective_cost = det_raw_ms / max(1, cadence)
+        metrics.observe("detector_effective_frame_cost_ms", effective_cost)
+        
+        # Check for impossible timing (synchronous execution check)
+        # Total frame time must be >= effective detector cost
+        total_ms = (1.0 / max(0.1, current_fps)) * 1000.0
+        # Guard: total_ms > 50.0 (< 20 fps budget) prevents false triggers when
+        # current_fps is derived from a tracker-only frame (~11ms, ~90fps).
+        # On those frames the detector did not run, so effective_cost reflects
+        # the *previous* cycle's detection time — an apples-to-oranges comparison.
+        # det_raw_ms > 0 prevents a spurious fire on cold-start before any detection.
+        if effective_cost > total_ms * 1.1 and det_raw_ms > 0 and total_ms > 50.0:
+            msg = f"Timing Inconsistency: detector_cost({effective_cost:.1f}ms) > total_frame({total_ms:.1f}ms)"
+            logger.warning("TELEMETRY INTEGRITY WARNING: %s", msg)
+            diagnostics.record("telemetry_integrity", msg)
+            metrics.increment("telemetry_integrity_warnings")
+
+    def _check_regressions(self, current_fps: float) -> None:
+        """Log warnings if performance or quality regresses below baselines."""
+        snapshot = metrics.snapshot()
+        
+        # ── Step 4 & 6: Regression Guardrails ────────────────────────────────
+        
+        # 1. FPS Check
+        if current_fps < 15.0:
+            msg = f"FPS < 15 (Current: {current_fps:.2f})"
+            logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: System resource exhaustion or high-resolution input. "
+                "Suggested Action: Reduce input resolution or check CPU/GPU load.",
+                msg
+            )
+            diagnostics.record("regression", msg)
+            
+        # 2. Detector Runtime Check — threshold is hardware-aware (Phase 2D)
+        is_gpu = self._settings.insightface_ctx_id >= 0
+        runtime_warn_ms = self._settings.gpu_governance_max_detector_runtime_ms if is_gpu else self._settings.cpu_governance_max_detector_runtime_ms
+        avg_det_runtime = snapshot.averages.get("detector_runtime_per_cycle_ms", 0.0)
+        if avg_det_runtime > runtime_warn_ms:
+            msg = f"detector_runtime_ms > {runtime_warn_ms:.0f}ms budget (Avg: {avg_det_runtime:.2f}ms)"
+            action = "Lower DETECTOR_MAX_INPUT_PIXELS or upgrade hardware." if is_gpu else "Check for memory pressure or thermal throttling — CPU 400–1200ms/cycle is normal."
+            logger.warning(
+                "REGRESSION WARNING: %s. Suggested Action: %s", msg, action,
+            )
+            diagnostics.record("regression", msg)
+
+        # 3. Track Lifetime Check
+        avg_lifetime = snapshot.averages.get("avg_track_duration", 0.0)
+        if avg_lifetime > 0 and avg_lifetime < 10.0:
+            msg = f"avg_track_lifetime < 10 (Avg: {avg_lifetime:.2f})"
+            logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: Tracking instability or coordinate teleportation. "
+                "Suggested Action: Check BBox smoothing parameters (TRACKING_BBOX_EMA_ALPHA).",
+                msg
+            )
+            diagnostics.record("regression", msg)
+
+        # 4. Identity Switch Check
+        if snapshot.counters.get("identity_switches", 0) > 0:
+            msg = "identity_switch_rate > 0"
+            logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: Identity memory instability or low embedding quality. "
+                "Suggested Action: Check recognition thresholds or embedding cooldown.",
+                msg
+            )
+            diagnostics.record("regression", msg)
+            
+        # 5. Recovery Failure Check
+        recovered = snapshot.counters.get("recovered_tracks", 0)
+        total_detections = snapshot.counters.get("total_faces_detected", 0)
+        if total_detections > 50 and recovered == 0:
+            msg = "Zero track recoveries despite active detections"
+            logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: Ghosting window too small or association logic too strict. "
+                "Suggested Action: Increase TRACKING_SOFT_RECOVERY_FRAMES or TEMPORAL_MAX_TRACK_DISTANCE.",
+                msg
+            )
+            diagnostics.record("regression", msg)
+
+        # 6. Confirmation Pending Saturation
+        pending = snapshot.counters.get("track_confirmation_pending", 0)
+        if pending > 20:
+            msg = f"Confirmation Pending Saturation ({pending} tracks)"
+            logger.warning(
+                "REGRESSION WARNING: %s. "
+                "Probable Root Cause: Adaptive confirmation criteria not being met. "
+                "Suggested Action: Lower TRACKING_FAST_CONFIRM_MIN_CONSISTENCY or check image quality.",
+                msg
+            )
+            diagnostics.record("regression", msg)
 
     def _process_frame_staged(
         self,
@@ -330,16 +447,237 @@ class RecognitionPipeline:
         gallery: list[tuple[int, np.ndarray]],
     ) -> list[FrameMatch]:
         prepared, output_scale = self._stage_preprocess(frame_bgr)
+        
+        # Defensive check: if preprocessing failed, we can't continue safely
+        if prepared is None or prepared.bgr is None:
+            logger.warning("Preprocessing failed for frame %s", frame_index)
+            return []
+
+        # ── Adaptive Load Governance (Phase 1 & 5) ───────────────────────────
+        if self._settings.enable_adaptive_load_governance:
+            self._apply_load_governance(frame_index)
+
         active = self._track_manager.active_tracks()
         stable_count = sum(1 for t in active if t.is_stable)
-        if self._detection_optimizer.should_detect(
+
+        # Use dynamic detector interval if overload is active
+        detection_interval = self._settings.detector_interval_frames
+        if self._overload_active or self._settings.enable_adaptive_load_governance:
+            detection_interval = self._dynamic_detector_interval
+
+        if not self._detector_cooldown_active and self._detection_optimizer.should_detect(
             frame_index,
             active_tracks=len(active),
             stable_tracks=stable_count,
             avg_motion_stability=self._track_manager.average_motion_stability(),
+            detector_interval_override=detection_interval
         ):
+            metrics.observe("average_detector_interval", float(detection_interval))
             return self._stage_detection_path(prepared, frame_bgr, frame_index, gallery, output_scale)
         return self._stage_tracking_path(prepared, frame_index, gallery, output_scale)
+
+    def _apply_load_governance(self, frame_index: int) -> None:
+        """Dynamically adjust detector cadence and budget (Phase 1, 3, 4, 5)."""
+        snapshot = metrics.snapshot()
+        raw_pressure_band = int(snapshot.recent_values.get("tracking_pressure_band", [0.0])[-1])
+        active_tracks = self._track_manager.active_track_count
+        confirmed_tracks = self._track_manager.confirmed_track_count
+        has_coarse = self._track_manager.has_coarse_tracks
+        pending_queue = self._track_manager.candidate_queue_size
+        det_runtime = snapshot.recent_values.get("detector_runtime_ms", [0.0])[-1]
+        
+        # ── Phase 3: Emergency Recall Recovery ──────────────────────────────
+        emergency_recall_active = False
+        if (self._settings.enable_emergency_recall_mode and 
+            confirmed_tracks == 0 and 
+            raw_pressure_band >= 2):
+            if pending_queue > 0 or has_coarse:
+                emergency_recall_active = True
+                if not self._emergency_rebuild_active:
+                    metrics.increment("emergency_track_rebuilds")
+                self._emergency_rebuild_active = True
+                metrics.increment("emergency_recall_recoveries")
+                metrics.observe("emergency_recall_mode_active", 1.0)
+                logger.warning("GOVERNANCE: Emergency recall mode active (confirmed_tracks=0, candidates=%d, has_coarse=%s)", pending_queue, has_coarse)
+        else:
+            if self._emergency_rebuild_active and confirmed_tracks >= self._settings.governance_min_survival_tracks:
+                if self._recovery_cooldown_frames == 0:
+                    self._recovery_cooldown_frames = 15 # Hysteresis cooldown
+                
+                if self._recovery_cooldown_frames > 0:
+                    self._recovery_cooldown_frames -= 1
+                    if self._recovery_cooldown_frames == 0:
+                        self._emergency_rebuild_active = False
+                        metrics.increment("starvation_recovery_successes")
+            
+            metrics.observe("emergency_recall_mode_active", 0.0)
+
+        # ── Phase 2: Governance Lockout Mode ──────────────────────────────────
+        # Phase 2E: On CPU, lockout creates a feedback loop —
+        #   slow detection → no confirmed tracks → lockout → detect every frame
+        #   → validator kills 80% → tracks never confirm → stay locked forever.
+        # Skip lockout entirely on CPU until GPU testing validates the behaviour.
+        is_cpu_backend = self._settings.insightface_ctx_id < 0
+        lockout_suppressed = is_cpu_backend and self._settings.disable_governance_lockout_on_cpu
+        if lockout_suppressed:
+            if self._governance_lockout_active:
+                # Clear any leftover lockout state from previous frames
+                self._governance_lockout_active = False
+                self._track_manager.lockout_mode = False
+                self._detection_optimizer.emergency_mode = False
+                metrics.increment("governance_lockout_cpu_bypasses")
+        elif confirmed_tracks == 0 and (pending_queue > 0 or has_coarse):
+            if not self._governance_lockout_active:
+                metrics.increment("governance_lockout_activations")
+            self._governance_lockout_active = True
+            self._track_manager.lockout_mode = True
+            self._detection_optimizer.emergency_mode = True
+        elif confirmed_tracks >= self._settings.governance_min_survival_tracks:
+            self._governance_lockout_active = False
+            self._track_manager.lockout_mode = False
+            self._detection_optimizer.emergency_mode = False
+        
+        # 1. Update Cooldown State
+        # Bypassed during lockout/emergency rebuild or when coarse tracks need recovery (Step 5)
+        if self._governance_cooldown_frames > 0 and not self._governance_lockout_active and not has_coarse:
+            self._governance_cooldown_frames -= 1
+            self._detector_cooldown_active = True
+            metrics.observe("detector_cooldown_active", 1.0)
+            return
+        else:
+            if self._governance_lockout_active or has_coarse:
+                self._governance_cooldown_frames = 0
+            self._detector_cooldown_active = False
+            metrics.observe("detector_cooldown_active", 0.0)
+
+        # 2. Hysteresis Protection (Phase 1.3)
+        if raw_pressure_band != self._current_pressure_band:
+            self._band_persistence_frames += 1
+            if self._band_persistence_frames >= self._settings.governance_pressure_hysteresis_frames:
+                old_band = self._current_pressure_band
+                self._current_pressure_band = raw_pressure_band
+                self._band_persistence_frames = 0
+                metrics.increment("pressure_hysteresis_transitions")
+                logger.info("GOVERNANCE: Pressure band transitioned %d -> %d", old_band, self._current_pressure_band)
+        else:
+            self._band_persistence_frames = 0
+
+        # 3. Phase 1 & 4: Adaptive Cadence & Thresholds
+        # Hierarchy: Continuity > Compute Efficiency
+        band = self._current_pressure_band
+        
+        # Base settings from band
+        if band == 0: # NORMAL
+            target_interval = self._settings.governance_low_pressure_interval
+            target_conf = self._settings.relaxation_low_confidence
+            target_cutoff = self._settings.relaxation_low_cutoff
+        elif band == 1: # ELEVATED
+            target_interval = self._settings.governance_medium_pressure_interval
+            target_conf = self._settings.relaxation_medium_confidence
+            target_cutoff = self._settings.relaxation_medium_cutoff
+        elif band == 2: # HIGH
+            target_interval = self._settings.governance_high_pressure_interval
+            target_conf = self._settings.relaxation_high_confidence
+            target_cutoff = self._settings.relaxation_high_cutoff
+        else: # CRITICAL
+            target_interval = self._settings.governance_high_pressure_interval + 4
+            target_conf = self._settings.relaxation_high_confidence
+            target_cutoff = self._settings.relaxation_high_cutoff
+            if self._governance_cooldown_frames == 0:
+                self._governance_cooldown_frames = self._settings.governance_critical_cooldown_frames
+                logger.warning("LOAD GOVERNANCE: Entering CRITICAL cooldown for %d frames", self._governance_cooldown_frames)
+
+        # ── Phase 3: Emergency Relaxation ────────────────────────────────────
+        if emergency_recall_active or self._emergency_rebuild_active or self._governance_lockout_active:
+            # Drop thresholds to absolute minimum to recover recall
+            # Phase 3 linear reduction step: gradually relax
+            current_conf = self._adaptive_det_confidence
+            target_min_conf = 0.25
+            if current_conf > target_min_conf:
+                target_conf = max(target_min_conf, current_conf - 0.05)
+            else:
+                target_conf = target_min_conf
+                
+            current_cutoff = self._adaptive_validator_cutoff
+            target_min_cutoff = 0.35
+            if current_cutoff > target_min_cutoff:
+                target_cutoff = max(target_min_cutoff, current_cutoff - 0.05)
+            else:
+                target_cutoff = target_min_cutoff
+
+            # Reduce interval to get more frequent detections
+            target_interval = max(getattr(self._settings, "detector_interval_min_frames", 4), 4)
+            
+            # During Lockout, disable aggressive degradation
+            if self._governance_lockout_active:
+                 target_interval = 1 # Force detection on every frame for immediate recovery
+
+        self._adaptive_det_confidence = target_conf
+        self._adaptive_validator_cutoff = target_cutoff
+
+        # ── Phase 2E: Confidence/cutoff gap enforcement ───────────────────────
+        # adaptive_det_confidence must stay above adaptive_validator_cutoff + gap.
+        # If not, the detector generates candidates the validator is guaranteed
+        # to reject — pure wasted work.  Raise confidence to enforce the gap.
+        gap = self._settings.min_confidence_validator_gap
+        min_conf = self._adaptive_validator_cutoff + gap
+        if self._adaptive_det_confidence < min_conf:
+            logger.warning(
+                "GOVERNANCE gap enforced: adaptive_conf %.3f < cutoff %.3f + gap %.2f → raised to %.3f",
+                self._adaptive_det_confidence, self._adaptive_validator_cutoff,
+                gap, min_conf,
+            )
+            self._adaptive_det_confidence = min_conf
+            metrics.increment("adaptive_confidence_gap_enforcements")
+
+        # Apply adaptive thresholds (Phase 1.1)
+        metrics.observe("adaptive_detector_confidence", self._adaptive_det_confidence)
+        metrics.observe("adaptive_validator_cutoff", self._adaptive_validator_cutoff)
+
+        # ── Phase 2D: Hardware-aware budget enforcement ───────────────────────
+        # On CPU, 400–1200ms per detection cycle is expected, not overload.
+        # Only fire budget violation when runtime genuinely exceeds the hw ceiling.
+        # Also: never stretch the interval during lockout — lockout already owns it.
+        is_gpu = self._settings.insightface_ctx_id >= 0
+        hw_budget_ms = (
+            self._settings.gpu_governance_max_detector_runtime_ms
+            if is_gpu
+            else self._settings.cpu_governance_max_detector_runtime_ms
+        )
+        if not self._governance_lockout_active and det_runtime > hw_budget_ms:
+            target_interval = max(target_interval, 16)
+            metrics.increment("governance_budget_violations")
+            logger.debug(
+                "GOVERNANCE budget violation: det_runtime=%.0fms > hw_budget=%.0fms → interval=%d",
+                det_runtime, hw_budget_ms, target_interval,
+            )
+
+        # 5. Queue Pressure secondary check
+        if pending_queue > self._settings.governance_max_candidate_queue_size:
+            target_interval = max(target_interval, 14)
+
+        # ── Phase 1: Minimum Survival Guarantees ─────────────────────────────
+        # If we have very few tracks, or we have COARSE tracks awaiting recovery,
+        # don't allow the interval to become too wide.
+        if (active_tracks > 0 and active_tracks <= self._settings.governance_min_survival_tracks) or has_coarse:
+            # If has_coarse, we want faster recovery if possible
+            recovery_limit = 5 if has_coarse else 10
+            target_interval = min(target_interval, recovery_limit)
+            metrics.increment("protected_track_preservations")
+
+        # ── Phase 2D: Hard interval ceiling per hardware backend ─────────────
+        # Prevent governance from stretching the interval beyond what the
+        # hardware backend can tolerate. On CPU (offline video), max = 3 frames.
+        # On GPU (real-time), max = 12 frames. Both are configurable.
+        hw_max_interval = (
+            self._settings.gpu_max_detector_interval
+            if is_gpu
+            else self._settings.cpu_max_detector_interval
+        )
+        target_interval = min(target_interval, hw_max_interval)
+
+        self._dynamic_detector_interval = target_interval
+        metrics.observe("adaptive_detector_interval", float(target_interval))
 
     def _stage_preprocess(self, frame_bgr: np.ndarray):
         with metrics.timer("preprocessing_duration"):
@@ -355,6 +693,9 @@ class RecognitionPipeline:
         gallery: list[tuple[int, np.ndarray]],
         output_scale: float,
     ) -> list[FrameMatch]:
+        if self._detection_metrics:
+            self._detection_metrics.record_frame_start(frame_index)
+
         matches: list[FrameMatch] = []
 
         # ── Phase 2A.1: Record frame start for metrics ─────────────────────────
@@ -363,124 +704,83 @@ class RecognitionPipeline:
 
         detection_frame, scale = self._detection_optimizer.prepare_for_detection(prepared.bgr)
         with metrics.timer("face_detection_duration"):
-            raw_faces = self._detector.detect(detection_frame)
+            if self._multiscale_detector and self._settings.enable_multiscale_detection:
+                det_config = DetectionConfig(det_size=detection_frame.shape[:2][::-1])
+                raw_faces = self._multiscale_detector.detect(detection_frame, det_config)
+            else:
+                raw_faces = self._detector.detect(detection_frame)
         detection_latency_ms = metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
         metrics.observe(
             "detector_runtime_ms",
             detection_latency_ms,
         )
+        
+        det_runtime_ms = metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
+        if det_runtime_ms > 150.0:
+            metrics.increment("detector_over_budget_count")
+            logger.warning("DETECTOR OVER BUDGET: %.2fms", det_runtime_ms)
         raw_faces = self._detection_optimizer.scale_faces(raw_faces, scale)
         raw_faces = self._temporal_detector.apply(raw_faces, frame_index)
 
-        # ── Phase 2A.4: Apply proposal fusion if enabled ─────────────────────────
-        if self._wbf_fusion and self._confidence_normalizer:
-            # Detect if this is a crowd scene
-            is_crowd = len(raw_faces) >= 8
-
-            # Normalize confidence across scales
-            raw_faces = self._confidence_normalizer.normalize(raw_faces)
-
-            # Apply weighted box fusion
-            raw_faces = self._wbf_fusion.fuse(raw_faces, prepared.bgr.shape, is_crowd_scene=is_crowd)
-
-            # Apply duplicate filtering
-            raw_faces = self._duplicate_filter.filter(raw_faces, is_crowd_scene=is_crowd)
-
-            # Limit to max proposals
-            if len(raw_faces) > self._settings.fusion_max_proposals_per_frame:
-                raw_faces = sorted(raw_faces, key=lambda f: f.det_score, reverse=True)
-                raw_faces = raw_faces[:self._settings.fusion_max_proposals_per_frame]
-
-            logger.debug(
-                "Fusion applied: %d -> %d faces, crowd=%s",
-                len(raw_faces),
-                len(raw_faces),
-                is_crowd,
+        # -- Phase 2A.4: Proposal Fusion Engine -------------------------------
+        if self._proposal_fusion and len(raw_faces) > 1:
+            raw_faces = self._proposal_fusion.fuse(
+                raw_faces,
+                prepared.bgr.shape[:2],
+                is_crowd_scene=len(raw_faces) > self._settings.tile_crowd_threshold
             )
+            if len(raw_faces) > self._settings.fusion_max_proposals_per_frame:
+                raw_faces = sorted(raw_faces, key=lambda f: f.det_score, reverse=True)[:self._settings.fusion_max_proposals_per_frame]
 
-        # ── Phase 2A.5: Apply temporal weak detection recovery ───────────────────
-        if self._weak_detection_memory:
-            promoted = self._weak_detection_memory.update(raw_faces, frame_index)
-
-            # Apply confidence boosts to promoted faces
-            for face, boost in promoted:
-                # Find the face in raw_faces and boost its confidence
-                for i, rf in enumerate(raw_faces):
-                    if id(rf) == id(face):
-                        boosted_confidence = min(1.0, rf.det_score + boost)
-                        raw_faces[i] = DetectedFace(
-                            bbox=rf.bbox,
-                            det_score=boosted_confidence,
-                            aligned_face=rf.aligned_face,
-                            embedding=rf.embedding,
-                            landmarks=rf.landmarks,
-                            temporal_score=rf.temporal_score,
-                        )
-                        logger.debug(
-                            "Weak detection promotion applied: boost=%.3f, new_conf=%.3f",
-                            boost,
-                            boosted_confidence,
-                        )
-
-                        # ── Export: Record weak detection promotion event ─────────────
-                        if self._event_timeline:
-                            face_size = max(rf.bbox.x2 - rf.bbox.x1, rf.bbox.y2 - rf.bbox.y1)
-                            self._event_timeline.record_weak_detection_promoted(
-                                frame_id=frame_index,
-                                track_id=None,
-                                face_size=face_size,
-                                confidence_before=rf.det_score,
-                                confidence_after=boosted_confidence,
-                            )
-                        break
-
-        # ── Phase 2A: Unified Face Validator pre-filter ─────────────────────
+        # -- Phase 2A: Unified Face Validator pre-filter ---------------------
         validator_results: dict[str, ValidationResult] = {}
         face_tier: dict[int, ValidationTier] = {}
         strict_pass_faces: list[DetectedFace] = []
         weak_pass_faces: list[DetectedFace] = []
         track_only_faces: list[DetectedFace] = []
+        validator_rejections_this_frame = 0
 
         for idx, face in enumerate(raw_faces):
             face_uuid = f"{frame_index}_{idx}"
-            result = self._unified_face_validator.validate(
-                face, prepared.bgr, prepared.bgr.shape, frame_index
-            )
-            validator_results[face_uuid] = result
-            face_tier[id(face)] = result.tier
+            
+            # Phase 1.2: Temporal Stability Bias
+            # Check if this face likely belongs to a stable track before validating
+            is_continuity_candidate = False
+            if self._current_pressure_band >= 1:
+                # Simple IoU check against active stable tracks
+                for t in self._track_manager.active_tracks():
+                    if t.is_stable and bbox_iou(face.bbox, BoundingBox(*t.bbox)) > 0.4:
+                        is_continuity_candidate = True
+                        break
 
-            if result.tier == ValidationTier.REJECT:
+            result = self._unified_face_validator.validate(
+                face, prepared.bgr, prepared.bgr.shape, frame_index,
+                min_det_confidence=self._adaptive_det_confidence,
+                strict_cutoff=self._adaptive_validator_cutoff,
+                emergency_rebuild_active=self._emergency_rebuild_active or self._governance_lockout_active
+            )
+            
+            # Override REJECT if continuity exists (Phase 1.2)
+            if result.tier == ValidationTier.REJECT and is_continuity_candidate and self._current_pressure_band >= 1:
+                # Force to TRACK_ONLY instead of REJECT to preserve spatial continuity
+                face_tier[id(face)] = ValidationTier.TRACK_ONLY
+                metrics.increment("continuity_override_accepts")
+                metrics.increment("validation_relaxation_events")
+            else:
+                face_tier[id(face)] = result.tier
+
+            validator_results[face_uuid] = result
+
+            if face_tier[id(face)] == ValidationTier.REJECT:
                 matches.append(self._validator_rejection_match(
                     face, frame_index, prepared, output_scale, result
                 ))
                 metrics.increment("validator_reject_count")
-
-                # ── Phase 2A.1: Log false positive for rejected faces ─────────────
-                if self._false_positive_logger and result.primary_reason:
-                    self._false_positive_logger.log_false_positive(
-                        frame_bgr=prepared.bgr,
-                        frame_id=frame_index,
-                        bbox=(face.bbox.x1, face.bbox.y1, face.bbox.x2, face.bbox.y2),
-                        confidence=face.det_score,
-                        rejection_reason=result.primary_reason,
-                        category="unknown",  # Will be enhanced with motion consistency in 2A.6
-                        metadata={"validation_score": result.quality_score},
-                    )
-
-                # ── Export: Record validator rejection event ─────────────────────
-                if self._event_timeline:
-                    face_size = max(face.bbox.x2 - face.bbox.x1, face.bbox.y2 - face.bbox.y1)
-                    self._event_timeline.record_validator_rejected(
-                        frame_id=frame_index,
-                        track_id=None,
-                        face_size=face_size,
-                        confidence=face.det_score,
-                        rejection_reason=result.primary_reason,
-                    )
-            elif result.tier == ValidationTier.TRACK_ONLY:
+                validator_rejections_this_frame += 1
+            elif face_tier[id(face)] == ValidationTier.TRACK_ONLY:
                 track_only_faces.append(face)
                 metrics.increment("validator_track_only_count")
-            elif result.tier == ValidationTier.WEAK_PASS:
+            elif face_tier[id(face)] == ValidationTier.WEAK_PASS:
                 weak_pass_faces.append(face)
                 metrics.increment("validator_weak_pass_count")
             else:
@@ -494,7 +794,7 @@ class RecognitionPipeline:
             metrics.observe_rolling("validator_avg_fused_confidence",
                 sum(r.fused_confidence for r in vals) / len(vals))
 
-        # ── Legacy validators (secondary safety net, feature-flagged) ───────
+        # -- Legacy validators (secondary safety net, feature-flagged) -------
         if self._settings.enable_legacy_face_validation:
             legacy_faces = strict_pass_faces + weak_pass_faces
             geometry_accepted: list[DetectedFace] = []
@@ -515,7 +815,8 @@ class RecognitionPipeline:
                     metrics.increment("geometry_validation_rejections")
 
             faces, detector_rejections = self._detection_optimizer.filter_faces(
-                geometry_accepted, prepared.bgr.shape
+                geometry_accepted, prepared.bgr.shape,
+                emergency_mode=self._emergency_rebuild_active or self._governance_lockout_active
             )
             total_rejected = len(raw_faces) - len(faces)
             self._detection_optimizer.observe_detection_cycle(
@@ -539,20 +840,59 @@ class RecognitionPipeline:
         metrics.observe("avg_faces_per_frame", len(faces))
 
         if len(raw_faces) >= self._settings.detector_overload_face_count:
-            logger.warning(
-                "Detector overload frame_index=%s raw_faces=%s accepted=%s rejected=%s",
-                frame_index, len(raw_faces), len(faces), total_rejected,
-            )
+            self._handle_detector_overload(frame_index, len(raw_faces))
+        else:
+            self._overload_active = False
 
-        tracks = self._track_manager.update_from_detections(
+        # -- Phase 2A.5: Temporal Weak Memory ---------------------------------
+        weak_promotions = 0
+        if self._weak_detection_memory and self._settings.enable_weak_detection_memory:
+            promoted = self._weak_detection_memory.update(faces, frame_index)
+            weak_promotions = len(promoted)
+            if promoted:
+                boosted_faces = []
+                promoted_map = {id(f): b for f, b in promoted}
+                for face in faces:
+                    if id(face) in promoted_map:
+                        boost = promoted_map[id(face)]
+                        new_face = DetectedFace(
+                            bbox=face.bbox,
+                            det_score=min(1.0, face.det_score + boost),
+                            aligned_face=face.aligned_face,
+                            embedding=face.embedding,
+                            landmarks=face.landmarks,
+                            temporal_score=face.temporal_score
+                        )
+                        boosted_faces.append(new_face)
+                    else:
+                        boosted_faces.append(face)
+                faces = boosted_faces
+
+        # -- Phase 2A.1: Record detection metrics -----------------------------
+        if self._detection_metrics:
+            try:
+                det_latency = metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
+                self._detection_metrics.record_detection(
+                    faces=faces,
+                    frame_shape=prepared.bgr.shape,
+                    detection_latency_ms=det_latency,
+                    validator_rejections=validator_rejections_this_frame,
+                    weak_promotions=weak_promotions,
+                )
+            except Exception as e:
+                logger.warning("Failed to record detection metrics: %s", e)
+
+        # Use new return type: List of (DetectedFace, TrackedFace | None)
+        face_track_results = self._track_manager.update_from_detections(
             faces, frame_index,
             frame_shape=prepared.bgr.shape, frame_bgr=prepared.bgr,
+            detector_interval=self._dynamic_detector_interval
         )
 
         if not faces:
             diagnostics.record("frame", "no_face_detected", frame_index=frame_index)
 
-        for face, track in zip(faces, tracks):
+        for face, track in face_track_results:
             tier = face_tier.get(id(face), ValidationTier.STRICT_PASS)
             match = self._process_tracked_face(
                 face=face, track=track, prepared=prepared,
@@ -604,7 +944,7 @@ class RecognitionPipeline:
         diagnostics.record("tracking", "detector_skipped_reused_tracks", frame_index=frame_index)
 
         matches: list[FrameMatch] = []
-        tracks = self._track_manager.propagate(frame_index)
+        tracks = self._track_manager.propagate(frame_index, detector_interval=self._dynamic_detector_interval)
         for track in tracks:
             if track.state not in ACTIVE_RECOGNITION_STATES:
                 continue
@@ -631,9 +971,51 @@ class RecognitionPipeline:
         return matches
 
     def _finalize_frame(self, frame_index: int) -> None:
+        """Post-processing and metric aggregation (Phase 5)."""
+        active_tracks = self._track_manager.active_tracks()
+        
+        # State Visibility (Phase 5)
+        metrics.observe("emergency_recall_mode_active", 1.0 if self._settings.enable_emergency_recall_mode and self._track_manager.active_track_count == 0 else 0.0)
+        
+        # Aggressive expiration for TRACK_ONLY (garbage) tracks
+        for track in active_tracks:
+            if track.metadata.get("tier") == ValidationTier.TRACK_ONLY.value:
+                # TRACK_ONLY tracks have much shorter lifetime (3 frames)
+                if track.lost_frames > 2:
+                    track.metadata["no_recovery"] = True
+                    track.metadata["no_reassociation"] = True
+            
+            # Phase 3: Coarse tracking maintenance
+            if track.state == TrackLifecycleState.COARSE.value:
+                # COARSE tracks bypass biometric validation
+                track.metadata["no_recovery"] = True
+                track.metadata["no_reassociation"] = True
+
         for track in self._track_manager.consume_removed_tracks():
+            track.metadata.setdefault("camera_id", self.camera_id)
             self._global_identity_memory.archive_lost_track(track, frame_index)
         self._global_identity_memory.prune(frame_index)
+
+    def _handle_detector_overload(self, frame_index: int, raw_count: int) -> None:
+        """Actively manage pipeline parameters during high load."""
+        self._overload_active = True
+        # Push detector interval up to save CPU — but respect the hw ceiling
+        # so on CPU (offline video) we never stretch past cpu_max_detector_interval.
+        is_gpu = self._settings.insightface_ctx_id >= 0
+        hw_max_interval = (
+            self._settings.gpu_max_detector_interval
+            if is_gpu
+            else self._settings.cpu_max_detector_interval
+        )
+        bumped = min(self._settings.detector_interval_frames + 2, 16)
+        self._dynamic_detector_interval = min(bumped, hw_max_interval)
+        metrics.increment("detector_queue_stall_count")
+
+        logger.warning(
+            "Detector overload frame_index=%s count=%s. Load-shedding interval=%s (hw_ceil=%s)",
+            frame_index, raw_count, self._dynamic_detector_interval, hw_max_interval,
+        )
+        diagnostics.record("overload", "load_shedding_active", frame_index=frame_index, count=raw_count)
 
     def _process_tracked_face(
         self,
@@ -650,78 +1032,118 @@ class RecognitionPipeline:
         width, height = _face_size(face)
         metrics.observe("avg_detected_face_area", width * height)
 
-        # ── TRACK_ONLY: tracking only, no embedding/matching ────────────
+        # Stage 1: Validation Tiering & Presence
+        if track is not None:
+            track.metadata["tier"] = validation_tier.value
+            
         if validation_tier == ValidationTier.TRACK_ONLY:
-            metrics.increment("validator_embedding_skips")
-            return FrameMatch(
-                frame_index=frame_index, person_id=None, confidence=None,
-                threshold=self._settings.match_confidence_threshold,
-                reason="track_only", track_id=track.numeric_track_id if track else None,
-                face=_scale_face_for_output(face, output_scale),
-                trace=_trace(face, "yellow", ("DETECTED", "TRACK_ONLY"),
-                    "track_only", detector_confidence=face.det_score,
-                    frame_shape=prepared.bgr.shape, output_scale=output_scale,
-                    validation_tier=validation_tier.value),
-            )
-
-        # ── WEAK_PASS: track, defer embedding, enforce retry limit ──────
+            return self._handle_track_only(face, track, prepared, frame_index, output_scale)
+            
         if validation_tier == ValidationTier.WEAK_PASS:
-            if track is not None:
-                tid = track.numeric_track_id
-                attempts = self._weak_pass_attempts.get(tid, 0) + 1
-                self._weak_pass_attempts[tid] = attempts
-                if attempts > self._settings.validator_weak_pass_retry_limit:
-                    metrics.increment("validator_embedding_skips")
-                    return FrameMatch(
-                        frame_index=frame_index, person_id=None, confidence=None,
-                        threshold=self._settings.match_confidence_threshold,
-                        reason="weak_pass_exhausted", track_id=tid,
-                        face=_scale_face_for_output(face, output_scale),
-                        trace=_trace(face, "yellow", ("DETECTED", "WEAK_PASS_EXHAUSTED"),
-                            "weak_pass_exhausted", detector_confidence=face.det_score,
-                            frame_shape=prepared.bgr.shape, output_scale=output_scale,
-                            validation_tier=validation_tier.value),
-                    )
-            metrics.increment("validator_embedding_skips")
-            return FrameMatch(
-                frame_index=frame_index, person_id=None, confidence=None,
-                threshold=self._settings.match_confidence_threshold,
-                reason="weak_pass_deferred", track_id=track.numeric_track_id if track else None,
-                face=_scale_face_for_output(face, output_scale),
-                trace=_trace(face, "yellow", ("DETECTED", "WEAK_PASS"),
-                    "weak_pass_deferred", detector_confidence=face.det_score,
-                    frame_shape=prepared.bgr.shape, output_scale=output_scale,
-                    validation_tier=validation_tier.value),
-            )
+            if not self._check_weak_pass_escalation(face, track, frame_index):
+                return self._handle_weak_pass_deferred(face, track, prepared, frame_index, output_scale)
+            metrics.increment("validator_weak_pass_escalated")
 
-        # ── STRICT_PASS: full pipeline (unchanged below) ────────────────
+        # Stage 2: Quality & Geometry Safety (Legacy net)
+        quality = self._stage_validate_quality(face, prepared, frame_index, from_detection)
+        if not quality.accepted:
+            return self._handle_quality_rejection(face, frame_index, prepared, output_scale, quality, width, height)
+
+        # Stage 3: Embedding Policy & Reassociation
+        emb = self._stage_embedding_policy(face, track, prepared, frame_index, quality)
+        if emb is None:
+            return None
+
+        # Stage 4: Recognition & Identity Stabilization
+        match_result = self._stage_recognition(face, track, emb, gallery, frame_index, quality, prepared)
+        
+        # Stage 5: Event Validation & Output
+        return self._stage_event_generation(face, track, emb, match_result, prepared, frame_index, output_scale, quality, from_detection)
+
+    def _handle_track_only(self, face, track, prepared, frame_index, output_scale) -> FrameMatch:
+        """Handle presence-only tracking for non-human or low-quality objects."""
+        if track is not None:
+            track.metadata["no_reassociation"] = True
+            track.metadata["no_recovery"] = True
+            
+        metrics.increment("validator_embedding_skips")
+        return FrameMatch(
+            frame_index=frame_index, person_id=None, confidence=None,
+            threshold=self._settings.match_confidence_threshold,
+            reason="track_only", track_id=track.numeric_track_id if track else None,
+            face=_scale_face_for_output(face, output_scale),
+            trace=_trace(face, "yellow", ("DETECTED", "TRACK_ONLY"),
+                "track_only", detector_confidence=face.det_score,
+                frame_shape=prepared.bgr.shape, output_scale=output_scale,
+                validation_tier=ValidationTier.TRACK_ONLY.value),
+        )
+
+    def _check_weak_pass_escalation(self, face: DetectedFace, track: TrackedFace | None, frame_index: int) -> bool:
+        """Time and stability-based trust accumulation for weak detections."""
+        if track is None:
+            return False
+            
+        # Time-based trust: stable tiny faces eventually get embeddings
+        weak_promote_age = self._settings.validator_weak_pass_retry_limit * 3
+        temporal = get_temporal_identity(track)
+        motion_score = float(track.metadata.get("motion_score", 1.0))
+        
+        # Multi-signal stability
+        landmark_score = float(track.metadata.get("landmark_score", 0.0))
+        persistence = min(1.0, track.visibility_age / max(self._settings.tracking_stable_frames, 1))
+        
+        return (
+            (
+                track.visibility_age >= weak_promote_age 
+                and temporal.temporal_consistency >= self._settings.validator_weak_pass_temporal_min 
+                and landmark_score > self._settings.validator_weak_pass_landmark_min
+            )
+            or face.det_score >= (self._settings.validator_min_detector_confidence + self._settings.validator_weak_pass_confidence_boost)
+            or (
+                temporal.temporal_consistency >= self._settings.validator_weak_pass_soft_temporal 
+                and motion_score > self._settings.validator_weak_pass_motion_min 
+                and persistence > self._settings.validator_weak_pass_persistence_min
+            )
+        )
+
+    def _handle_weak_pass_deferred(self, face, track, prepared, frame_index, output_scale) -> FrameMatch:
+        """Defer recognition for weak candidates until they earn trust."""
+        metrics.increment("validator_embedding_skips")
+        return FrameMatch(
+            frame_index=frame_index, person_id=None, confidence=None,
+            threshold=self._settings.match_confidence_threshold,
+            reason="weak_pass_deferred", track_id=track.numeric_track_id if track else None,
+            face=_scale_face_for_output(face, output_scale),
+            trace=_trace(face, "yellow", ("DETECTED", "WEAK_PASS"),
+                "weak_pass_deferred", detector_confidence=face.det_score,
+                frame_shape=prepared.bgr.shape, output_scale=output_scale,
+                validation_tier=ValidationTier.WEAK_PASS.value),
+        )
+
+    def _stage_validate_quality(self, face, prepared, frame_index, from_detection):
+        """Stage 2: Apply legacy quality/crop validators as safety net."""
         if from_detection and self._settings.enable_legacy_quality_checks:
             crop_check = self._crop_validator.validate(prepared.bgr, face)
             if not crop_check.accepted:
-                label = f"REJECTED: {crop_check.reason}" if crop_check.reason else "REJECTED: bad_crop"
-                return self._rejection_match(
-                    face,
-                    frame_index,
-                    prepared,
-                    output_scale,
-                    label,
-                    "yellow",
-                    ("DETECTED", "CROP_REJECTED"),
-                )
+                return crop_check # Result has accepted=False
 
         if self._settings.enable_legacy_quality_checks:
-            quality = self._quality_assessor.assess(prepared.bgr, face)
-            if not quality.accepted:
-                return self._quality_rejection(face, frame_index, prepared, output_scale, quality, width, height)
+            return self._quality_assessor.assess(prepared.bgr, face)
         else:
             from ecoface_lite.ai_engine.face_quality import FaceQualityResult
-            quality = FaceQualityResult(True, blur_score=50.0, quality_score=0.7)
+            return FaceQualityResult(True, blur_score=50.0, quality_score=0.7)
 
-        metrics.increment("accepted_faces")
-        threshold = self._confidence_policy.threshold_for(prepared.diagnostics, quality)
-
+    def _stage_embedding_policy(self, face, track, prepared, frame_index, quality):
+        """Stage 3: Decide if embedding is needed; apply reassociation if new track."""
         if track is None:
             track = self._track_manager.candidate_track(face, frame_index)
+
+        # Phase 3: Coarse Tracking Biometric Bypass
+        if track is not None and track.state == TrackLifecycleState.COARSE.value:
+            metrics.increment("biometric_bypass_events")
+            if track.last_embedding is not None:
+                return track.last_embedding
+            return None
 
         track_quality = None
         if track is not None:
@@ -730,194 +1152,149 @@ class RecognitionPipeline:
         need_embedding = track is None or self._track_manager.should_compute_embedding(
             track, frame_index, face, quality=track_quality
         )
-        if (
-            track is not None
-            and not need_embedding
-            and track.identity is not None
-            and track.stable_match_count >= self._tracking_cfg.min_stable_matches
-        ):
-            return self._match_from_track_identity(
-                face, track, prepared, frame_index, gallery, output_scale, from_detection, quality
-            )
+        
+        # Phase 4: Priority-Aware Biometric Budgeting
+        if track is not None and need_embedding:
+            priority = self._track_manager._calculate_track_priority(track)
+            pressure_band = self._current_pressure_band
+            
+            # P3 (Background) + High Pressure = Degrade Background
+            if priority >= 3 and pressure_band >= 2:
+                metrics.increment("degraded_background_tracks")
+                if track.last_embedding is not None:
+                    return track.last_embedding
+                return None
+                
+            # P2 (Recently confirmed) + High Pressure = Partial throttle
+            if priority >= 2 and pressure_band >= 2:
+                # 75% chance to skip if we already have an identity
+                if track.identity is not None and (hash(track.track_id + str(frame_index)) % 100 < 75):
+                    metrics.increment("priority_embedding_throttles")
+                    return track.last_embedding
 
-        emb: np.ndarray | None = None
+            metrics.increment("priority_embedding_allocations")
+
+        # Embedding Cooldown: Avoid thrashing in unstable scenes
+        if track is not None and not need_embedding:
+            last_emb_frame = track.last_embedding_frame
+            min_interval = self._tracking_cfg.embedding_cooldown_frames
+            
+            # Significant quality improvement override
+            prev_quality = track.metadata.get("last_quality_score", 0.0)
+            quality_jump = quality.quality_score - prev_quality > self._tracking_cfg.embedding_quality_jump
+            
+            if (frame_index - last_emb_frame < min_interval) and not quality_jump:
+                if track.last_embedding is not None:
+                    metrics.increment("embedding_skips_cooldown")
+                    return track.last_embedding
+        
+        # Check cache/reuse
         if track is not None and not need_embedding and track.last_embedding is not None:
-            emb = track.last_embedding
             metrics.increment("embedding_cache_hits")
-            metrics.increment("reused_embeddings")
-        elif need_embedding:
-            with metrics.timer("embedding_generation_duration"):
-                emb = self._embedder.embed_face(prepared.bgr, face)
-            metrics.increment("embeddings_generated")
-            if track is not None:
-                track.touch_embedding(emb, frame_index)
-        else:
-            with metrics.timer("embedding_generation_duration"):
-                emb = self._embedder.embed_face(prepared.bgr, face)
-            metrics.increment("embeddings_generated")
+            return track.last_embedding
 
-        if emb is None:
-            return None
+        # Generate new embedding
+        with metrics.timer("embedding_generation_duration"):
+            emb = self._embedder.embed_face(prepared.bgr, face)
+        metrics.increment("embeddings_generated")
+        
+        if track is not None:
+            track.touch_embedding(emb, frame_index)
+            track.metadata["last_quality_score"] = quality.quality_score
+            # Reassociation attempt for new tracks
+            if track.visibility_age <= 2 and track.recovery_count == 0:
+                if not track.metadata.get("no_recovery"):
+                    self._track_reassociator.try_recover_identity(track, emb, frame_index)
+        
+        return emb
 
-        fusion_weight = (
-            self._identity_confidence.embedding_suppression_weight(
+    def _stage_recognition(self, face, track, emb, gallery, frame_index, quality, prepared):
+        """Stage 4: Multi-stage identity matching and stabilization."""
+        # Use diagnostics from prepared frame for adaptive thresholds
+        diagnostics_obj = prepared.diagnostics if prepared is not None else None
+        policy_threshold = self._confidence_policy.threshold_for(diagnostics_obj, quality)
+        
+        if track is not None:
+            fusion_weight = self._identity_confidence.embedding_suppression_weight(
                 track,
                 blur_score=quality.blur_score,
-                quality_weight=track_quality.overall_score if track_quality is not None else quality.quality_score,
+                quality_weight=quality.quality_score,
             )
-            if track is not None
-            else (track_quality.overall_score if track_quality is not None else quality.quality_score)
-        )
-        pose_bucket = None
-        if face.landmarks is not None:
-            pose_bucket = classify_pose_bucket(face.landmarks, face.bbox)
-            if track is not None:
+            
+            pose_bucket = None
+            if face.landmarks is not None:
+                pose_bucket = classify_pose_bucket(face.landmarks, face.bbox)
                 get_temporal_identity(track).record_pose_blur(pose_bucket, quality.blur_score)
 
-        if track is not None and track.visibility_age <= 2 and track.recovery_count == 0:
-            self._track_reassociator.try_recover_identity(track, emb, frame_index)
-
-        with metrics.timer("matching_duration"):
-            if track is not None:
+            with metrics.timer("matching_duration"):
                 decision_match = self._identity_matcher.match_track(
-                    track,
-                    emb,
-                    gallery,
-                    threshold,
+                    track, emb, gallery, policy_threshold,
                     quality_weight=fusion_weight,
                     frame_index=frame_index,
                     pose_bucket=pose_bucket,
                     blur_score=quality.blur_score,
                 )
-                m = None
-                id_conf = None
-                if decision_match is not None and decision_match.person_id is not None:
-                    id_conf = self._identity_confidence.evaluate(
-                        track,
-                        decision_match.confidence,
-                        threshold,
-                        quality=track_quality,
-                        person_id=decision_match.person_id,
-                    )
-                    accepted_stages = {"verified", "soft_verified", "locked", "weak_candidate"}
-                    if decision_match.stage in accepted_stages:
-                        if (
-                            decision_match.confidence >= threshold
-                            or decision_match.soft_match
-                            or (id_conf is not None and id_conf.soft_accept)
-                        ):
-                            conf = max(decision_match.confidence, id_conf.temporal_confidence)
-                            m = MatchResult(person_id=decision_match.person_id, confidence=conf)
-                            if decision_match.stage == "weak_candidate":
-                                metrics.increment("identity_recovery_weak_accept")
-            else:
-                m = self._matcher.best_match(emb, gallery, threshold)
+            
+            if decision_match and decision_match.person_id is not None:
+                # Candidate Persistence: Accumulate uncertain identity evidence
+                track.metadata["candidate_identity"] = decision_match.person_id
+                track.metadata["candidate_confidence"] = decision_match.confidence
+                track.metadata["candidate_last_frame"] = frame_index
+                
+                id_conf = self._identity_confidence.evaluate(
+                    track, decision_match.confidence, policy_threshold,
+                    person_id=decision_match.person_id,
+                )
+                
+                accepted_stages = {"verified", "soft_verified", "locked", "weak_candidate"}
+                if decision_match.stage in accepted_stages:
+                    if decision_match.confidence >= policy_threshold or decision_match.soft_match or id_conf.soft_accept:
+                        conf = max(decision_match.confidence, id_conf.temporal_confidence)
+                        return MatchResult(person_id=decision_match.person_id, confidence=conf)
+            return None
+        else:
+            with metrics.timer("matching_duration"):
+                return self._matcher.best_match(emb, gallery, policy_threshold)
 
-        if m is None:
+    def _stage_event_generation(self, face, track, emb, match_result, prepared, frame_index, output_scale, quality, from_detection):
+        """Stage 5: Final decision on event emission and overlay state."""
+        if match_result is None:
             metrics.increment("failed_matches")
-            metrics.increment("red_box_count")
-            diagnostics.record("matching", "no_match_above_threshold", frame_index=frame_index, threshold=threshold)
-            return FrameMatch(
-                frame_index=frame_index,
-                person_id=None,
-                confidence=None,
-                threshold=threshold,
-                reason="no_match_above_threshold",
-                track_id=track.numeric_track_id if track else None,
-                face=_scale_face_for_output(face, output_scale),
-                trace=_trace(
-                    face,
-                    "red",
-                    ("TRACKED" if not from_detection else "DETECTED", "FILTERED", "EMBEDDED", "MATCHED_FAILED"),
-                    "no_match_above_threshold",
-                    detector_confidence=face.det_score,
-                    blur_score=quality.blur_score,
-                    frame_shape=prepared.bgr.shape,
-                    output_scale=output_scale,
-                ),
-            )
+            return self._handle_failed_match(face, track, frame_index, output_scale, prepared, quality, from_detection)
 
         metrics.increment("successful_matches")
-        metrics.observe("confidence_score", m.confidence)
-        temporal_accept = False
-        if track is not None:
-            id_snap = self._identity_confidence.evaluate(
-                track, m.confidence, threshold, quality=track_quality, person_id=m.person_id
-            )
-            temporal_accept = id_snap.soft_accept
-            metrics.observe("identity_stabilization_latency", float(track.visibility_age))
-        decision = self._confidence_policy.decide(m.confidence, prepared.diagnostics, quality)
-        if not decision.accepted and not temporal_accept:
-            metrics.increment("rejected_due_to_low_confidence")
-            metrics.increment("red_box_count")
-            return FrameMatch(
-                frame_index=frame_index,
-                person_id=m.person_id,
-                confidence=m.confidence,
-                threshold=decision.adjusted_threshold,
-                reason="below_adaptive_threshold",
-                track_id=track.numeric_track_id if track else None,
-                face=_scale_face_for_output(face, output_scale),
-                trace=_trace(
-                    face,
-                    "red",
-                    ("DETECTED", "FILTERED", "EMBEDDED", "MATCHED", "VALIDATION_REJECTED"),
-                    "below_adaptive_threshold",
-                    detector_confidence=face.det_score,
-                    blur_score=quality.blur_score,
-                    frame_shape=prepared.bgr.shape,
-                    output_scale=output_scale,
-                ),
-            )
-
-        if track is None:
-            tracks = self._track_manager.update_from_detections(
-                [face], frame_index, frame_shape=prepared.bgr.shape
-            )
-            track = tracks[0] if tracks else None
-        if track is not None:
-            track.touch_embedding(emb, frame_index)
+        
+        # Identity session observation
         recognition = (
-            self._recognition_session.observe_track(track, m.person_id, m.confidence)
+            self._recognition_session.observe_track(track, match_result.person_id, match_result.confidence)
             if track is not None
-            else self._recognition_session.observe(face, frame_index, m.person_id, m.confidence)
+            else self._recognition_session.observe(face, frame_index, match_result.person_id, match_result.confidence)
         )
 
-        unstable = recognition.stable_match_count < self._tracking_cfg.min_stable_matches or (
-            recognition.smoothed_confidence < self._settings.temporal_min_average_confidence
-        )
-        overlay_state = "green"
-        if unstable and recognition.confirmations > 0:
-            overlay_state = "yellow"
-            reason = "unstable"
-        elif not recognition.stable:
-            overlay_state = "red"
-
+        # Event validation
         with metrics.timer("event_validation_duration"):
             event = self._event_validator.evaluate(recognition, frame_index)
 
+        # Determine overlay color
+        overlay_state = "green" if event.should_emit else ("yellow" if recognition.confirmations > 0 else "red")
         if event.should_emit:
             metrics.increment("detection_events_validated")
             metrics.increment("green_box_count")
-            overlay_state = "green"
-        elif overlay_state != "yellow":
+        else:
             metrics.increment("red_box_count")
-            if event.reason == "cooldown":
-                metrics.increment("cooldown_suppressions")
 
         return FrameMatch(
             frame_index=frame_index,
-            person_id=recognition.person_id if recognition.stable else m.person_id,
-            confidence=recognition.smoothed_confidence or recognition.confidence,
-            threshold=decision.adjusted_threshold,
+            person_id=recognition.person_id if recognition.stable else match_result.person_id,
+            confidence=recognition.smoothed_confidence or match_result.confidence,
+            threshold=self._settings.match_confidence_threshold,
             stable=recognition.stable,
             should_alert=event.should_emit,
             track_id=recognition.track_id,
             reason=event.reason if not event.should_emit else "accepted",
             face=_scale_face_for_output(face, output_scale),
             trace=_trace(
-                face,
-                overlay_state,
+                face, overlay_state,
                 ("DETECTED", "TRACKED", "RECOGNIZED", "VALIDATED") if event.should_emit else ("DETECTED", "TRACKED", "RECOGNIZED"),
                 event.reason if not event.should_emit else None,
                 detector_confidence=face.det_score,
@@ -925,6 +1302,34 @@ class RecognitionPipeline:
                 frame_shape=prepared.bgr.shape,
                 output_scale=output_scale,
             ),
+        )
+
+    def _handle_failed_match(self, face, track, frame_index, output_scale, prepared, quality, from_detection) -> FrameMatch:
+        metrics.increment("red_box_count")
+        return FrameMatch(
+            frame_index=frame_index, person_id=None, confidence=None,
+            threshold=self._settings.match_confidence_threshold,
+            reason="no_match_above_threshold",
+            track_id=track.numeric_track_id if track else None,
+            face=_scale_face_for_output(face, output_scale),
+            trace=_trace(
+                face, "red",
+                ("TRACKED" if not from_detection else "DETECTED", "FILTERED", "EMBEDDED", "MATCHED_FAILED"),
+                "no_match_above_threshold",
+                detector_confidence=face.det_score,
+                blur_score=quality.blur_score,
+                frame_shape=prepared.bgr.shape,
+                output_scale=output_scale,
+            ),
+        )
+
+    def _handle_quality_rejection(self, face, frame_index, prepared, output_scale, quality, width, height) -> FrameMatch:
+        # Check if it was a crop rejection or assessment rejection
+        reason = getattr(quality, "reason", "quality_rejected")
+        label = f"REJECTED: {reason}"
+        return self._rejection_match(
+            face, frame_index, prepared, output_scale,
+            label, "yellow", ("DETECTED", "QUALITY_REJECTED")
         )
 
     def _quality_rejection(self, face, frame_index, prepared, output_scale, quality, width, height) -> FrameMatch:

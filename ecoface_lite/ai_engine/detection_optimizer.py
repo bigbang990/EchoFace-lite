@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import math
 import cv2
 import numpy as np
 
@@ -22,6 +23,7 @@ class DetectionOptimizer:
         self._settings = settings
         self._last_detection_frame: int | None = None
         self._last_faces: list[DetectedFace] = []
+        self.emergency_mode: bool = False
 
     def active_track_count(self) -> int:
         return len(self._last_faces)
@@ -33,8 +35,9 @@ class DetectionOptimizer:
         active_tracks: int = 0,
         stable_tracks: int = 0,
         avg_motion_stability: float = 0.0,
+        detector_interval_override: int | None = None,
     ) -> bool:
-        interval = self._adaptive_interval(active_tracks, stable_tracks, avg_motion_stability)
+        interval = detector_interval_override or self._adaptive_interval(active_tracks, stable_tracks, avg_motion_stability)
         metrics.observe("detector_adaptive_interval", float(interval))
         if frame_index % interval != 0:
             return False
@@ -51,8 +54,10 @@ class DetectionOptimizer:
         base = max(1, self._settings.detector_interval_frames)
         min_iv = max(1, self._settings.detector_interval_min_frames)
         max_iv = max(min_iv, self._settings.detector_interval_max_frames)
-        if active_tracks == 0:
+        if active_tracks == 0 and not self.emergency_mode:
             return min_iv
+        if self.emergency_mode:
+            return min_iv # Force minimum interval during emergency
         if avg_motion_stability < self._settings.motion_high_threshold:
             return max(min_iv, self._settings.detector_interval_motion_frames)
         if stable_tracks >= max(1, active_tracks // 2) and active_tracks > 0:
@@ -62,15 +67,73 @@ class DetectionOptimizer:
     def prepare_for_detection(self, frame_bgr: np.ndarray) -> tuple[np.ndarray, float]:
         enhanced = self._enhance_detector_input(frame_bgr)
         target_width, target_height = self._select_detector_size(enhanced.shape)
-        metrics.observe("detector_input_resolution", target_width * target_height)
-        metrics.observe("detector_resolution", target_width * target_height)
-        if target_width <= 0 or enhanced.shape[1] <= target_width:
+        
+        # Calculate initial target dimensions preserving aspect ratio
+        if enhanced.shape[1] > 0:
+            initial_scale = target_width / enhanced.shape[1]
+            initial_height = max(1, int(enhanced.shape[0] * initial_scale))
+        else:
+            initial_height = target_height
+            
+        requested_pixels = target_width * initial_height
+        metrics.observe("adaptive_resolution_requested", requested_pixels)
+        
+        # Apply experiment cap with safe bounds if enabled
+        final_width, final_height = target_width, initial_height
+        if self._settings.detector_resolution_cap_enabled:
+            min_pixels = self._settings.detector_min_input_pixels
+            max_pixels = self._settings.detector_max_input_pixels
+            is_gpu = self._settings.insightface_ctx_id >= 0
+
+            # Clamp target pixels within safe bounds.
+            # Phase 2E: On CPU, NEVER clamp up — upscaling on CPU adds compute
+            # with no benefit since the model was prepared at cpu_detector_resolution.
+            if requested_pixels > max_pixels:
+                final_width, final_height = self._compute_scaled_dims(
+                    target_width, initial_height, max_pixels
+                )
+                metrics.increment("resolution_clamped_down_count")
+            elif requested_pixels < min_pixels and is_gpu:
+                # GPU only: clamp up to ensure minimum anchor coverage
+                final_width, final_height = self._compute_scaled_dims(
+                    target_width, initial_height, min_pixels
+                )
+                metrics.increment("resolution_clamped_up_count")
+            elif requested_pixels < min_pixels and not is_gpu:
+                # CPU: accept natural resolution, no upscale
+                metrics.increment("resolution_cpu_natural_count")
+            else:
+                metrics.increment("resolution_within_safe_band_count")
+
+        final_pixels = final_width * final_height
+        metrics.observe("adaptive_resolution_final", final_pixels)
+        metrics.observe("detector_input_resolution", final_pixels)
+        metrics.observe("detector_resolution", final_pixels)
+        metrics.observe("capped_detector_resolution", final_pixels)
+        metrics.observe("original_detector_resolution", requested_pixels)
+        
+        # Categorize resolution band
+        if final_pixels <= self._settings.detector_min_input_pixels:
+            metrics.observe("detector_resolution_band", 0.0) # LOW
+        elif final_pixels >= self._settings.detector_max_input_pixels:
+            metrics.observe("detector_resolution_band", 2.0) # HIGH
+        else:
+            metrics.observe("detector_resolution_band", 1.0) # MID
+
+        if final_width <= 0 or enhanced.shape[1] <= final_width:
             return enhanced, 1.0
-        scale = target_width / enhanced.shape[1]
-        height = max(1, int(enhanced.shape[0] * scale))
-        resized = cv2.resize(enhanced, (target_width, height), interpolation=cv2.INTER_AREA)
+            
+        scale = final_width / enhanced.shape[1]
+        resized = cv2.resize(enhanced, (final_width, final_height), interpolation=cv2.INTER_AREA)
         metrics.observe("coordinate_scale_factor", scale)
         return resized, scale
+
+    def _compute_scaled_dims(self, width: int, height: int, target_pixels: int) -> tuple[int, int]:
+        current_pixels = width * height
+        if current_pixels == target_pixels:
+            return width, height
+        scale = math.sqrt(target_pixels / current_pixels)
+        return int(width * scale), int(height * scale)
 
     def _enhance_detector_input(self, frame_bgr: np.ndarray) -> np.ndarray:
         if not self._settings.detector_input_enable_enhancement:
@@ -94,11 +157,11 @@ class DetectionOptimizer:
         metrics.increment("coordinate_scaling_validations", len(faces))
         return [scale_face_to_original(face, scale) for face in faces]
 
-    def filter_faces(self, faces: list[DetectedFace], frame_shape: tuple[int, ...]) -> tuple[list[DetectedFace], list[tuple[DetectedFace, str]]]:
+    def filter_faces(self, faces: list[DetectedFace], frame_shape: tuple[int, ...], emergency_mode: bool = False) -> tuple[list[DetectedFace], list[tuple[DetectedFace, str]]]:
         accepted: list[DetectedFace] = []
         rejected: list[tuple[DetectedFace, str]] = []
         for face in faces:
-            decision = self.evaluate(face, frame_shape)
+            decision = self.evaluate(face, frame_shape, emergency_mode=emergency_mode)
             if decision.accepted:
                 accepted.append(face)
             else:
@@ -125,7 +188,7 @@ class DetectionOptimizer:
         metrics.increment("tracking_only_cycles")
         metrics.observe("tracker_reuse_rate", 1.0)
 
-    def evaluate(self, face: DetectedFace, frame_shape: tuple[int, ...]) -> DetectionFilterDecision:
+    def evaluate(self, face: DetectedFace, frame_shape: tuple[int, ...], emergency_mode: bool = False) -> DetectionFilterDecision:
         height, width = int(frame_shape[0]), int(frame_shape[1])
         geometry = compute_face_geometry(face, frame_shape)
         area = geometry.area
@@ -134,16 +197,29 @@ class DetectionOptimizer:
         score = face.temporal_score if face.temporal_score is not None else face.det_score
         frame_area = max(1, width * height)
         area_ratio = area / frame_area
-        if area_ratio < self._settings.detector_small_face_area_ratio:
+        
+        if emergency_mode:
+            min_score = 0.25 # Drastic reduction during emergency
+        elif area_ratio < self._settings.detector_small_face_area_ratio:
             min_score = self._settings.detector_small_face_threshold
         elif area_ratio < self._settings.detector_medium_face_area_ratio:
             min_score = self._settings.detector_medium_quality_threshold
         else:
             min_score = max(self._settings.detector_min_score, self._settings.detector_high_quality_threshold)
+        
         if score < min_score:
             return DetectionFilterDecision(False, "weak_detector_score")
+            
         min_width, min_height, min_area = self._adaptive_thresholds(width, height)
+        
+        if emergency_mode:
+            min_width = 16 # Absolute minimum
+            min_height = 16
+            min_area = 256
+        
         dynamic_min_area = max(min_area, int(frame_area * self._settings.detector_min_face_area_ratio))
+        if emergency_mode:
+            dynamic_min_area = min_area
         if geometry.width < min_width or geometry.height < min_height:
             return DetectionFilterDecision(False, "detector_face_too_small")
         if area < dynamic_min_area:
@@ -167,6 +243,16 @@ class DetectionOptimizer:
         return DetectionFilterDecision(True)
 
     def _select_detector_size(self, frame_shape: tuple[int, ...]) -> tuple[int, int]:
+        # Phase 2E: On CPU, never upgrade to medium/large resolution.
+        # 416px or 512px at 4+/8+ tracks costs 1200–2000ms on CPU per cycle.
+        # Fixed 320px ceiling keeps each cycle at 400–800ms.
+        is_gpu = self._settings.insightface_ctx_id >= 0
+        if not is_gpu:
+            cpu_res = self._settings.cpu_detector_resolution
+            metrics.observe("track_count", self.active_track_count())
+            return (cpu_res, cpu_res)
+
+        # GPU: existing adaptive logic — upgrade resolution for crowd/density
         active_tracks = self.active_track_count()
         occupancy = self._occupancy_ratio(frame_shape)
         metrics.observe("track_count", active_tracks)
@@ -177,7 +263,8 @@ class DetectionOptimizer:
             size = (self._settings.detector_medium_width, self._settings.detector_medium_height)
         else:
             size = (self._settings.detector_input_width, self._settings.detector_input_height)
-        return size
+        gpu_res = self._settings.gpu_detector_resolution
+        return (min(size[0], gpu_res), min(size[1], gpu_res))
 
     def _occupancy_ratio(self, frame_shape: tuple[int, ...]) -> float:
         frame_area = max(1, int(frame_shape[0]) * int(frame_shape[1]))

@@ -78,8 +78,8 @@ class TrackManager:
         self._legacy: dict[int, TrackState] = {}
 
     def update(self, face: DetectedFace, frame_index: int, person_id: int, confidence: float) -> TrackState:
-        tracks = self._inner.update_from_detections([face], frame_index)
-        track = tracks[0] if tracks else self._inner._spawn_track(face, frame_index)
+        results = self._inner.update_from_detections([face], frame_index)
+        track = results[0][1] if results else self._inner._spawn_track(face, frame_index)
         track.record_identity_match(person_id, confidence, self._settings.tracking_ema_alpha)
         legacy = self._to_legacy(track, frame_index, person_id, confidence)
         self._legacy[legacy.track_id] = legacy

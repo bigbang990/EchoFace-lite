@@ -40,7 +40,11 @@ class FaceCropValidator:
         if upper.size and lower.size:
             upper_mean = float(np.mean(upper))
             lower_mean = float(np.mean(lower))
-            if upper_mean > lower_mean * 1.35 and upper_mean - lower_mean > 18:
+            # Phase 2E: brightness-based forehead check only applies to faces
+            # large enough for reliable pixel-band measurement.  Below the size
+            # gate, head tilt / CCTV angle / motion blur makes this unreliable.
+            forehead_min_px = self._settings.oversized_forehead_min_face_px
+            if h >= forehead_min_px and upper_mean > lower_mean * 1.35 and upper_mean - lower_mean > 18:
                 return CropValidationResult(False, "oversized_forehead")
             if lower_mean < upper_mean * 0.55:
                 return CropValidationResult(False, "missing_chin")
@@ -68,7 +72,10 @@ class FaceCropValidator:
 
         if eye_band < self._settings.face_crop_min_eye_band_ratio:
             return CropValidationResult(False, "missing_eyes")
-        if forehead_band > self._settings.face_crop_max_forehead_ratio:
+        # Phase 2E: landmark forehead check is only reliable for faces ≥ min_face_px.
+        # Tilted heads, overhead cameras, and tiny faces produce noisy geometry.
+        if (forehead_band > self._settings.face_crop_max_forehead_ratio
+                and box_height >= self._settings.oversized_forehead_min_face_px):
             return CropValidationResult(False, "oversized_forehead")
         if chin_band < self._settings.face_crop_min_chin_ratio:
             return CropValidationResult(False, "missing_chin")

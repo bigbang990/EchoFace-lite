@@ -37,10 +37,15 @@ class RecognitionSession:
     def observe(self, face: Any, frame_index: int, person_id: int, confidence: float) -> StableRecognition:
         track = self._track_manager.candidate_track(face, frame_index)
         if track is None:
-            tracks = self._track_manager.update_from_detections([face], frame_index)
-            track = tracks[0] if tracks else None
+            # Fallback 1: Try associating with existing tracks or spawning new
+            results = self._track_manager.update_from_detections([face], frame_index)
+            track = results[0][1] if results else None
+            
         if track is None:
-            raise RuntimeError("Failed to assign track for recognition observation")
+            # Fallback 2: Direct spawn if association failed (preventing pipeline crash)
+            # This ensures we always have a track to attach recognition data to.
+            track = self._track_manager._spawn_track(face, frame_index)
+            
         return self.observe_track(track, person_id, confidence)
 
     def stable_from_track(self, track: TrackedFace) -> StableRecognition:

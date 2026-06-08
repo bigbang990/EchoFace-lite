@@ -1,0 +1,6 @@
+{
+  "category": "crowds",
+  "description": "Videos with 5+ persons in frame simultaneously — tests tile detection and load balancing.",
+  "videos": [],
+  "notes": "expected_faces_visible = peak count in densest frame. Add crowd/dance/public space videos here."
+}

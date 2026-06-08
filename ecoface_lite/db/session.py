@@ -74,6 +74,8 @@ async def _sqlite_apply_schema_patches() -> None:
             "ALTER TABLE processing_status ADD COLUMN blur_rejections INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE processing_status ADD COLUMN duplicate_suppressions INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE processing_status ADD COLUMN processing_duration_seconds FLOAT",
+            "ALTER TABLE processing_status ADD COLUMN camera_id VARCHAR(128)",
+            "ALTER TABLE detection_events ADD COLUMN camera_id VARCHAR(128)",
         ):
             try:
                 await conn.execute(text(stmt))

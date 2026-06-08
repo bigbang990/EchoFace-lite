@@ -20,6 +20,8 @@ class TrackingConfig:
     max_lost_frames: int = 18
     overlay_interval: int = 5
     ema_alpha: float = 0.35
+    bbox_ema_alpha: float = 0.5
+    soft_recovery_frames: int = 5
     confirm_frames: int = 2
     min_quality_score: float = 0.35
     recognition_cache_min_iou: float = 0.35
@@ -28,12 +30,60 @@ class TrackingConfig:
     vote_window: int = 10
     stable_frames: int = 15
     quality_decay: float = 0.92
+    decay_new_alpha: float = 0.97
+    decay_stable_alpha: float = 0.99
+    decay_aggressive_alpha: float = 0.85
+    decay_new_frames: int = 15
+    fast_confirm_min_consistency: float = 0.65
+    fast_confirm_max_jitter: float = 15.0
     min_motion_stability: float = 0.25
     min_recognition_quality: float = 0.40
     embedding_cooldown_frames: int = 12
+    embedding_quality_jump: float = 0.18
     identity_lock_frames: int = 8
     fused_embedding_alpha: float = 0.25
     match_shortlist_k: int = 5
+    
+    # ── Adaptive Load Governance (Phase 3) ────────────────────────────────────
+    enable_adaptive_load_governance: bool = True
+    governance_low_pressure_interval: int = 8
+    governance_medium_pressure_interval: int = 12
+    governance_high_pressure_interval: int = 16
+    governance_critical_cooldown_frames: int = 30
+    governance_max_detector_runtime_ms: float = 150.0
+    governance_max_candidate_queue_size: int = 25
+    governance_mature_track_age: int = 50
+    enable_priority_ingestion: bool = True
+    enable_track_survival_protection: bool = True
+    governance_min_survival_tracks: int = 3
+    governance_min_survival_candidates: int = 5
+    governance_candidate_grace_frames: int = 15
+    governance_candidate_immunity_frames: int = 20
+    enable_emergency_recall_mode: bool = True
+    
+    # ── Adaptive Recall & Degradation (Phase 4) ──────────────────────────────
+    enable_adaptive_degradation: bool = True
+    governance_pressure_hysteresis_frames: int = 15
+    relaxation_low_confidence: float = 0.45
+    relaxation_medium_confidence: float = 0.38
+    relaxation_high_confidence: float = 0.30
+    relaxation_low_cutoff: float = 0.70
+    relaxation_medium_cutoff: float = 0.58
+    relaxation_high_cutoff: float = 0.45
+    governance_embedding_refresh_cooldown_ms: int = 2000
+    governance_stable_identity_freeze_enabled: bool = True
+    enable_coarse_tracking: bool = True
+    coarse_track_survival_ms: int = 8000
+    coarse_track_min_hits: int = 2
+    
+    # --- Phase 2: Time-Aware Lifecycle Parameters ---
+    confirm_duration_ms: int = 500
+    decay_duration_ms: int = 2000
+    recovery_buffer_ms: int = 1000
+    ghost_persistence_ms: int = 1500
+    track_expiration_ms: int = 5000
+    aggressive_decay_ms: int = 500
+    stable_duration_ms: int = 1500
 
 
 def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
@@ -46,6 +96,8 @@ def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
         max_lost_frames=s.tracking_max_lost_frames,
         overlay_interval=s.tracking_overlay_interval,
         ema_alpha=s.tracking_ema_alpha,
+        bbox_ema_alpha=s.tracking_bbox_ema_alpha,
+        soft_recovery_frames=s.tracking_soft_recovery_frames,
         confirm_frames=s.tracking_confirm_frames,
         min_quality_score=s.tracking_min_quality_score,
         recognition_cache_min_iou=s.recognition_cache_min_iou,
@@ -54,12 +106,54 @@ def get_tracking_config(settings: Settings | None = None) -> TrackingConfig:
         vote_window=s.tracking_vote_window,
         stable_frames=s.tracking_stable_frames,
         quality_decay=s.tracking_quality_decay,
+        decay_new_alpha=s.tracking_decay_new_alpha,
+        decay_stable_alpha=s.tracking_decay_stable_alpha,
+        decay_aggressive_alpha=s.tracking_decay_aggressive_alpha,
+        decay_new_frames=s.tracking_decay_new_frames,
+        fast_confirm_min_consistency=s.tracking_fast_confirm_min_consistency,
+        fast_confirm_max_jitter=s.tracking_fast_confirm_max_jitter,
         min_motion_stability=s.tracking_min_motion_stability,
         min_recognition_quality=s.tracking_min_recognition_quality,
         embedding_cooldown_frames=s.tracking_embedding_cooldown_frames,
+        embedding_quality_jump=s.tracking_embedding_quality_jump,
         identity_lock_frames=s.tracking_identity_lock_frames,
         fused_embedding_alpha=s.tracking_fused_embedding_alpha,
         match_shortlist_k=s.tracking_match_shortlist_k,
+        enable_adaptive_load_governance=s.enable_adaptive_load_governance,
+        governance_low_pressure_interval=s.governance_low_pressure_interval,
+        governance_medium_pressure_interval=s.governance_medium_pressure_interval,
+        governance_high_pressure_interval=s.governance_high_pressure_interval,
+        governance_critical_cooldown_frames=s.governance_critical_cooldown_frames,
+        governance_max_detector_runtime_ms=s.governance_max_detector_runtime_ms,
+        governance_max_candidate_queue_size=s.governance_max_candidate_queue_size,
+        governance_mature_track_age=s.governance_mature_track_age,
+        enable_priority_ingestion=s.enable_priority_ingestion,
+        enable_track_survival_protection=s.enable_track_survival_protection,
+        governance_min_survival_tracks=s.governance_min_survival_tracks,
+        governance_min_survival_candidates=s.governance_min_survival_candidates,
+        governance_candidate_grace_frames=s.governance_candidate_grace_frames,
+        governance_candidate_immunity_frames=s.governance_candidate_immunity_frames,
+        enable_emergency_recall_mode=s.enable_emergency_recall_mode,
+        enable_adaptive_degradation=s.enable_adaptive_degradation,
+        governance_pressure_hysteresis_frames=s.governance_pressure_hysteresis_frames,
+        relaxation_low_confidence=s.relaxation_low_confidence,
+        relaxation_medium_confidence=s.relaxation_medium_confidence,
+        relaxation_high_confidence=s.relaxation_high_confidence,
+        relaxation_low_cutoff=s.relaxation_low_cutoff,
+        relaxation_medium_cutoff=s.relaxation_medium_cutoff,
+        relaxation_high_cutoff=s.relaxation_high_cutoff,
+        governance_embedding_refresh_cooldown_ms=s.governance_embedding_refresh_cooldown_ms,
+        governance_stable_identity_freeze_enabled=s.governance_stable_identity_freeze_enabled,
+        enable_coarse_tracking=s.enable_coarse_tracking,
+        coarse_track_survival_ms=s.coarse_track_survival_ms,
+        coarse_track_min_hits=s.coarse_track_min_hits,
+        confirm_duration_ms=s.tracking_confirm_duration_ms,
+        decay_duration_ms=s.tracking_decay_duration_ms,
+        recovery_buffer_ms=s.tracking_recovery_buffer_ms,
+        ghost_persistence_ms=s.tracking_ghost_persistence_ms,
+        track_expiration_ms=s.tracking_expiration_ms,
+        aggressive_decay_ms=s.tracking_aggressive_decay_ms,
+        stable_duration_ms=s.tracking_stable_duration_ms,
     )
 
 

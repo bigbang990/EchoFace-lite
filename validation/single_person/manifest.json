@@ -1,0 +1,6 @@
+{
+  "category": "single_person",
+  "description": "Videos with exactly one person, clear frontal or near-frontal, well-lit. Baseline recall scenario.",
+  "videos": [],
+  "notes": "Add videos here. expected_faces_visible is the count a human sees in a representative frame."
+}

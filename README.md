@@ -6,6 +6,37 @@ This repository is structured for a **solo, weekend cadence**: clear layers, sma
 
 ---
 
+## Stack
+
+| Component | Technology |
+|---|---|
+| Detector | YOLOv8-face (GPU) / SCRFD InsightFace (CPU) |
+| Embedder | ArcFace (InsightFace buffalo_l) |
+| Tracker | SORT |
+| Backend | FastAPI + uvicorn |
+| Tunnel | ngrok |
+| Runtime | Google Colab T4 / CUDA 12.8 / PyTorch 2.11 |
+
+---
+
+## Detector providers
+
+EchoFace uses a detector abstraction layer.
+The active detector is selected via environment variable:
+
+| Provider | DETECTOR_PROVIDER | Use case |
+|---|---|---|
+| YOLOv8-face (derronqi) | `yolo` | Colab T4 GPU — 117 FPS |
+| SCRFD (InsightFace) | `scrfd` | Local CPU dev / future GPU servers with CUDA ≤12.4 |
+
+Default: `scrfd` (both CPU and GPU branches).
+Colab setup sets `DETECTOR_PROVIDER=yolo` automatically.
+
+> **Note:** `onnxruntime-gpu` has no stable wheel for CUDA 12.8.
+> YOLOv8-face uses PyTorch CUDA directly — no `onnxruntime` dependency on the GPU path.
+
+---
+
 ## 1. Recommended folder structure (what is in this repo)
 
 ```text
@@ -106,6 +137,32 @@ copy .env.example .env
 ```
 
 **InsightFace models** download on first use (ensure disk + network available once).
+
+---
+
+## Colab setup
+
+1. Open a new Colab notebook with T4 GPU runtime
+2. Add your ngrok token to Colab Secrets (key icon, left sidebar)
+   Name: `NGROK_TOKEN`
+3. Paste and run the single setup cell from:
+   `scripts/colab_setup.py` (or copy from CLAUDE.md)
+4. The cell clones the repo, downloads YOLOv8-face weights,
+   writes GPU config, starts the server, and opens a tunnel.
+
+---
+
+## Model weights
+
+YOLOv8-face weights are not in git (file size).
+Download automatically via:
+
+```bash
+python scripts/download_yolov8_face.py
+```
+
+Source: derronqi/yolov8-face (Google Drive)
+Confirmed: 5-point facial landmarks, 117.9 FPS on T4 GPU.
 
 ---
 

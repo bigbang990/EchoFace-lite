@@ -1,0 +1,69 @@
+name: Accuracy Gate
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  accuracy-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true  # Pull eval dataset images if stored in Git LFS
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Dataset integrity check
+        run: |
+          if [ -f data/eval/MANIFEST.sha256 ]; then
+            python -c "
+          from ecoface_lite.scripts.run_eval import verify_manifest
+          verify_manifest()
+          print('Manifest OK')
+            "
+          else
+            echo 'No MANIFEST.sha256 found — skipping integrity check'
+          fi
+
+      - name: Run unit tests
+        run: pytest tests/ -q --tb=short
+
+      - name: Run eval against ground-truth dataset
+        run: |
+          if [ -d data/eval/persons ] && [ "$(ls -A data/eval/persons)" ]; then
+            python -m ecoface_lite.scripts.run_eval --output ci_metrics.json --skip-manifest
+          else
+            echo 'Eval dataset not populated — skipping accuracy eval'
+            echo '{}' > ci_metrics.json
+          fi
+
+      - name: Check for metric regressions
+        run: |
+          if [ -f data/eval/baseline_metrics.json ] && [ -s ci_metrics.json ] && [ "$(cat ci_metrics.json)" != "{}" ]; then
+            python -m ecoface_lite.scripts.check_regression \
+              --baseline data/eval/baseline_metrics.json \
+              --current  ci_metrics.json \
+              --tolerance 0.02
+          else
+            echo 'No baseline or empty eval — skipping regression check'
+          fi
+
+      - name: Upload eval metrics artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-metrics-${{ github.sha }}
+          path: ci_metrics.json
+          retention-days: 90

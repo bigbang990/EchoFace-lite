@@ -1,0 +1,6 @@
+{
+  "category": "low_light",
+  "description": "Videos shot in dim conditions — nighttime corridors, poorly-lit rooms. Mean frame brightness <60.",
+  "videos": [],
+  "notes": "Tests CLAHE enhancement and brightness gates. expected_faces_visible = human count in a typical frame."
+}
