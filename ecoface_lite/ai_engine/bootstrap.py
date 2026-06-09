@@ -112,7 +112,7 @@ def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionP
         PLATFORM.get("detector_provider", "scrfd")
     ).lower()
 
-    face_app = _create_face_analysis(settings)
+    face_app = None
 
     if _provider == "yolo":
         from ecoface_lite.ai_engine.detection.detectors\
@@ -128,6 +128,7 @@ def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionP
         )
         logger.info("Detector: YOLOv8-face (PyTorch GPU)")
     else:
+        face_app = _create_face_analysis(settings)
         detector: FaceDetector = InsightFaceDetector(
             model_name=settings.insightface_model_name,
             ctx_id=settings.insightface_ctx_id,
