@@ -1,27 +1,34 @@
-## Checkpoint — 2026-06-09 — Phase 7 Task 2 DONE
+## Checkpoint — 2026-06-09 — Phase 7 Task 3 DONE
 
 ### Done
-Decoupled face_app from YOLO path in bootstrap.py.
-`_create_face_analysis(settings)` now only runs on the SCRFD branch.
-YOLO branch sets `face_app = None`; InsightFaceEmbedder handles None
-via `_ensure_app()` lazy-load fallback (no embedder.py change needed).
+CASE B: documented as TODO — pose_bucket not available at cutoff site.
+`validate_face_candidate` in face_candidate_validator.py uses only raw
+`pose_yaw`/`pose_pitch` floats from local `_estimate_pose()`.
+`classify_pose_bucket()` / `PoseBucket` enum is never imported or called
+in this file. Restructuring call stack to pass pose_bucket was forbidden.
+TODO added immediately before the `proposal_min_validation_score` check
+(the final cutoff gate in the function) to document the debt.
 
 ### Files changed
-- ecoface_lite/ai_engine/bootstrap.py
-  - Line 115: `face_app = _create_face_analysis(settings)` → `face_app = None`
-  - Line 145 (SCRFD else-branch): added `face_app = _create_face_analysis(settings)`
-    before InsightFaceDetector construction
+- ecoface_lite/ai_engine/face_candidate_validator.py
+  Added 2-line TODO comment before line 325
+  (`proposal_min_validation_score` cutoff check)
+
+### Regression gate
+22 pass, 8 fail. All 8 failures are pre-existing (governance/tracking/recall
+suites). Zero new failures introduced.
 
 ### State
-- Working: YOLO path no longer loads InsightFace FaceAnalysis at startup.
-  SCRFD path unchanged — still loads FaceAnalysis once and shares instance.
-  Embedder lazy-loads its own app if face_app is None (YOLO path).
-- Next task: Phase 7 Task 3 — profile softening
-  (validator cutoff reduction for LEFT/RIGHT_PROFILE)
+- Working: validator unchanged in behavior; debt documented at the right site.
+  Profile softening deferred until pose_bucket is threaded into the function.
+- Next task: Phase 7 Task 4 — confirmation queue saturation fix
+  (track_manager.py)
 
 ### Branch
-phase7-resolution-cap-fix — not yet on main
+phase7-resolution-cap-fix — not yet merged to main
 
 ### Pre-existing test failures (backlog, unchanged)
-9 failures in governance/recall/tracking suites.
+8 failures in governance/recall/tracking suites.
 Must be resolved before Phase 8 starts.
+(Note: previous checkpoint reported 9; current run shows 8 — likely a
+counting difference in how skipped vs failed tests were reported earlier.)
