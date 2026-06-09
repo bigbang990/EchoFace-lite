@@ -1,31 +1,27 @@
-## Checkpoint — 2026-06-09 — Phase 7 Task 1 DONE
+## Checkpoint — 2026-06-09 — Phase 7 Task 2 DONE
 
 ### Done
-Fixed DETECTOR_RESOLUTION_CAP_ENABLED in
-detection_optimizer.py._select_detector_size.
-Cap was unconditional (line 267 had no flag check).
-Now respects settings.detector_resolution_cap_enabled.
-When False: returns original size unchanged.
-When True: applies gpu_detector_resolution ceiling as before.
+Decoupled face_app from YOLO path in bootstrap.py.
+`_create_face_analysis(settings)` now only runs on the SCRFD branch.
+YOLO branch sets `face_app = None`; InsightFaceEmbedder handles None
+via `_ensure_app()` lazy-load fallback (no embedder.py change needed).
 
 ### Files changed
-- ecoface_lite/ai_engine/detection_optimizer.py
-  _select_detector_size: added flag check before min() cap
-
-### Regression gate result
-15 tests pass. 9 pre-existing failures (Phase 6 merge debt,
-unchanged before/after). Zero new failures introduced.
-
-### Pre-existing test failures to fix in Phase 7 (backlog)
-9 failures in governance/recall/tracking suites.
-Must be resolved before Phase 8 starts.
+- ecoface_lite/ai_engine/bootstrap.py
+  - Line 115: `face_app = _create_face_analysis(settings)` → `face_app = None`
+  - Line 145 (SCRFD else-branch): added `face_app = _create_face_analysis(settings)`
+    before InsightFaceDetector construction
 
 ### State
-- Working: resolution cap now controllable via env var
-  DETECTOR_RESOLUTION_CAP_ENABLED=0 → full resolution
-  DETECTOR_RESOLUTION_CAP_ENABLED=1 → gpu_res ceiling
-- Next task: Phase 7 Task 2 — decouple face_app
-  from YOLO path in bootstrap.py
+- Working: YOLO path no longer loads InsightFace FaceAnalysis at startup.
+  SCRFD path unchanged — still loads FaceAnalysis once and shares instance.
+  Embedder lazy-loads its own app if face_app is None (YOLO path).
+- Next task: Phase 7 Task 3 — profile softening
+  (validator cutoff reduction for LEFT/RIGHT_PROFILE)
 
 ### Branch
 phase7-resolution-cap-fix — not yet on main
+
+### Pre-existing test failures (backlog, unchanged)
+9 failures in governance/recall/tracking suites.
+Must be resolved before Phase 8 starts.
