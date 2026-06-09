@@ -38,18 +38,28 @@ def test_track_manager_assigns_persistent_ids():
 def test_track_confirmation_requires_two_detections():
     settings = _settings(tracking_confirm_frames=2)
     manager = FaceTrackManager(settings)
-    first = manager.update_from_detections([_face(10, 10, 50, 50)], frame_index=0)
-    assert len(first) == 0
-    second = manager.update_from_detections([_face(11, 11, 51, 51)], frame_index=1)
-    assert len(second) == 1
-    assert second[0].confirmation_hits >= 2
+
+    first = manager.update_from_detections(
+        [_face(10, 10, 50, 50, score=0.96)], frame_index=0)
+    # Instant confirm fires — track spawned on first detection
+    assert first[0][1] is not None
+    assert first[0][1].confirmation_hits >= 1
+
+    second = manager.update_from_detections(
+        [_face(11, 11, 51, 51, score=0.96)], frame_index=1)
+    assert second[0][1] is not None
+    assert second[0][1].confirmation_hits >= 2
 
 
 def test_propagate_on_skipped_detection_frames():
     settings = _settings(tracking_confirm_frames=1)
     manager = FaceTrackManager(settings)
-    manager.update_from_detections([_face(10, 10, 50, 50)], frame_index=0)
-    manager.update_from_detections([_face(12, 12, 52, 52)], frame_index=1)
+
+    manager.update_from_detections(
+        [_face(10, 10, 50, 50, score=0.96)], frame_index=0)
+    manager.update_from_detections(
+        [_face(12, 12, 52, 52, score=0.96)], frame_index=1)
+
     propagated = manager.propagate(frame_index=2)
     assert len(propagated) == 1
     assert propagated[0].visibility_age >= 2
