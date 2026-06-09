@@ -344,6 +344,8 @@ class Settings(BaseSettings):
     weak_memory_cluster_iou: float = Field(default=0.4, ge=0.0, le=1.0, alias="WEAK_MEMORY_CLUSTER_IOU")
     weak_memory_min_recurrence: int = Field(default=3, ge=1, alias="WEAK_MEMORY_MIN_RECURRENCE")
     weak_memory_promotion_boost: float = Field(default=0.15, ge=0.0, le=1.0, alias="WEAK_MEMORY_PROMOTION_BOOST")
+    weak_memory_max_boost: float = Field(default=0.4, ge=0.0, le=1.0, alias="WEAK_MEMORY_MAX_BOOST")
+    weak_memory_motion_threshold: float = Field(default=2.0, ge=0.0, alias="WEAK_MEMORY_MOTION_THRESHOLD")
 
     # ── Phase 2A.3: Tile-Based Crowd Recovery ───────────────────────────────────
     enable_tile_detection: bool = Field(default=False, alias="ENABLE_TILE_DETECTION")
@@ -353,6 +355,16 @@ class Settings(BaseSettings):
     tile_max_tiles: int = Field(default=9, ge=1, alias="TILE_MAX_TILES")
     tile_edge_padding: int = Field(default=32, ge=0, alias="TILE_EDGE_PADDING")
     tile_priority_center: bool = Field(default=True, alias="TILE_PRIORITY_CENTER")
+
+    # ── Experiment Export System ─────────────────────────────────────────────────
+    export_enabled: bool = Field(default=True, alias="EXPORT_ENABLED")
+    export_format: str = Field(default="zip", alias="EXPORT_FORMAT")
+    export_dir: Path = Field(default=Path("exports"), alias="EXPORT_DIR")
+    export_include_screenshots: bool = Field(default=True, alias="EXPORT_INCLUDE_SCREENSHOTS")
+    export_include_false_positives: bool = Field(default=True, alias="EXPORT_INCLUDE_FALSE_POSITIVES")
+    export_include_graph_data: bool = Field(default=True, alias="EXPORT_INCLUDE_GRAPH_DATA")
+    export_include_event_timeline: bool = Field(default=True, alias="EXPORT_INCLUDE_EVENT_TIMELINE")
+    export_compress_images: bool = Field(default=True, alias="EXPORT_COMPRESS_IMAGES")
 
     video_frame_skip: int = Field(default=1, ge=1, alias="VIDEO_FRAME_SKIP")
     video_inference_width: int = Field(default=640, ge=160, alias="VIDEO_INFERENCE_WIDTH")
@@ -419,6 +431,12 @@ class Settings(BaseSettings):
         if self.false_positive_dataset_dir.is_absolute():
             return self.false_positive_dataset_dir
         return self.workspace_dir / self.false_positive_dataset_dir
+
+    def resolved_export_dir(self) -> Path:
+        """Resolve export directory relative to workspace."""
+        if self.export_dir.is_absolute():
+            return self.export_dir
+        return self.workspace_dir / self.export_dir
 
 
 @lru_cache

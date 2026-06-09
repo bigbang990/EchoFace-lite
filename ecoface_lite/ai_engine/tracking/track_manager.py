@@ -578,6 +578,8 @@ class FaceTrackManager:
                 return None
         
         # Phase 2: Budget-aware candidate queueing
+        # Crowd scenes: reduce via
+        # GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE env var
         if self._cfg.enable_priority_ingestion and len(self._pending) >= self._cfg.governance_max_candidate_queue_size:
             # Drop lowest priority candidate if new one is better
             candidate_scores = [(self._calculate_candidate_priority(p), i) for i, p in enumerate(self._pending)]

@@ -10,14 +10,16 @@
   validator confidence floors, timing telemetry fix,
   detector abstraction layer (SCRFD + YOLOv8 providers)
 - Phase 2A detection upgrade: multiscale fusion and observability
-- Phase 6: detector abstraction layer — SCRFD + YOLOv8 providers,
-  DETECTOR_PROVIDER env var, detect() implemented, Colab verified.
-  117.9 FPS on T4. Merged to phase6-detector-abstraction 2026-06-08.
+- Phase 6: YOLOv8-face detector abstraction — MERGED to main v0.6.0
+  17ms GPU inference, 183 stable matches, 2 alerts, 0 identity switches
+  torch.load patch for PyTorch 2.6 weights_only. Production verified on T4.
 
 ## Active
 (nothing — awaiting next task)
 
 ## Pending
+- Phase 7: resolve capped_detector_resolution in detection_optimizer.py
+  (separate from settings flag, hard-coded in optimizer logic)
 - Phase 7: decouple face_app from YOLO path in bootstrap
   (InsightFace loads unnecessarily on YOLO provider)
 - Phase 2D Part 2: Detection Truthfulness Validation Framework
@@ -35,8 +37,8 @@
 - Dashboard redesign (until core model stable)
 
 ## Branch index
-- main — stable
-- phase6-detector-abstraction — Phase 6 complete, pending merge to main
+- main — stable, v0.6.0 tagged
+- phase6-detector-abstraction — merged to main
 - phase6-colab-gate-test — source branch for Phase 6 work (same commits)
 - phase5-colab-ready — remote only, merged work
 - phase3-async-stabilization, phase4-gpu-ready — remote, prior phases

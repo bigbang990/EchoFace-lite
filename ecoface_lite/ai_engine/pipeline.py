@@ -88,7 +88,7 @@ class RecognitionPipeline:
         self.camera_id = camera_id
         self._effective_config = effective_config
         self._tracking_cfg: TrackingConfig = get_tracking_config(settings)
-        
+
         # Log configuration integrity if available
         if self._effective_config:
             self._effective_config.log_integrity()
@@ -168,7 +168,7 @@ class RecognitionPipeline:
         self._band_persistence_frames = 0
         self._adaptive_det_confidence = settings.detection_confidence_threshold
         self._adaptive_validator_cutoff = settings.validator_strict_cutoff
-        
+
         # ── Phase 2 & 3 State Flags ──────────────────────────────────────────
         self._governance_lockout_active = False
         self._emergency_rebuild_active = False
@@ -188,6 +188,100 @@ class RecognitionPipeline:
     @property
     def _track_manager(self):
         return self._recognition_session.track_manager
+
+    def flush_metrics(self) -> None:
+        """Flush detection metrics to disk (call before shutdown)."""
+        if self._detection_metrics:
+            self._detection_metrics.flush()
+        if self._false_positive_logger:
+            export_path = self._settings.resolved_false_positive_dataset_dir() / "metadata.json"
+            self._false_positive_logger.export_metadata(export_path)
+
+    def export_experiment_session(
+        self,
+        video_name: str,
+        video_duration: float = 0.0,
+        frame_count: int = 0,
+        test_operator: str = "",
+        notes: str = "",
+    ) -> Path:
+        """Export complete experiment session.
+
+        Args:
+            video_name: Name of the video file
+            video_duration: Duration in seconds
+            frame_count: Total number of frames
+            test_operator: Name of the test operator
+            notes: Experimental notes
+
+        Returns:
+            Path to exported file or directory
+        """
+        if not self._experiment_exporter:
+            raise RuntimeError("Experiment export system is not enabled")
+
+        # Set metadata
+        self._experiment_exporter.set_metadata(
+            video_name=video_name,
+            video_duration=video_duration,
+            frame_count=frame_count,
+            test_operator=test_operator,
+            notes=notes,
+        )
+
+        # Collect metrics data
+        metrics_data = {}
+        if self._detection_metrics:
+            metrics_data["per_frame_metrics"] = self._detection_metrics.get_all_metrics()
+
+        # Export
+        export_dir = self._settings.resolved_export_dir()
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        return self._experiment_exporter.export_session(export_dir, metrics_data)
+
+    def record_experiment_adjustment(
+        self,
+        adjustment: str,
+        old_value: Any,
+        new_value: Any,
+        reason: str,
+    ) -> None:
+        """Record an experimental adjustment.
+
+        Args:
+            adjustment: Description of the adjustment
+            old_value: Previous value
+            new_value: New value
+            reason: Reason for the adjustment
+        """
+        if self._notes_tracker:
+            self._notes_tracker.record_adjustment(
+                adjustment=adjustment,
+                old_value=old_value,
+                new_value=new_value,
+                reason=reason,
+            )
+
+    def get_experiment_notes(self) -> str:
+        """Get experiment notes summary.
+
+        Returns:
+            Formatted summary of all adjustments
+        """
+        if self._notes_tracker:
+            return self._notes_tracker.get_summary()
+        return "No experiment notes available."
+
+    def get_event_timeline_statistics(self) -> dict[str, Any]:
+        """Get event timeline statistics.
+
+        Returns:
+            Dictionary with event statistics
+        """
+        if self._event_timeline:
+            return self._event_timeline.get_statistics()
+        return {}
 
     def enroll_reference_embedding(self, frame_bgr: np.ndarray) -> np.ndarray:
         prepared = self._preprocessor.process(frame_bgr)
@@ -603,6 +697,11 @@ class RecognitionPipeline:
             self._detection_metrics.record_frame_start(frame_index)
 
         matches: list[FrameMatch] = []
+
+        # ── Phase 2A.1: Record frame start for metrics ─────────────────────────
+        if self._detection_metrics:
+            frame_start_time = self._detection_metrics.record_frame_start(frame_index)
+
         detection_frame, scale = self._detection_optimizer.prepare_for_detection(prepared.bgr)
         with metrics.timer("face_detection_duration"):
             if self._multiscale_detector and self._settings.enable_multiscale_detection:
@@ -610,10 +709,10 @@ class RecognitionPipeline:
                 raw_faces = self._multiscale_detector.detect(detection_frame, det_config)
             else:
                 raw_faces = self._detector.detect(detection_frame)
-
+        detection_latency_ms = metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
         metrics.observe(
             "detector_runtime_ms",
-            metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0,
+            detection_latency_ms,
         )
         
         det_runtime_ms = metrics.snapshot().recent_values.get("face_detection_duration", [0.0])[-1] * 1000.0
@@ -626,8 +725,8 @@ class RecognitionPipeline:
         # -- Phase 2A.4: Proposal Fusion Engine -------------------------------
         if self._proposal_fusion and len(raw_faces) > 1:
             raw_faces = self._proposal_fusion.fuse(
-                raw_faces, 
-                prepared.bgr.shape[:2], 
+                raw_faces,
+                prepared.bgr.shape[:2],
                 is_crowd_scene=len(raw_faces) > self._settings.tile_crowd_threshold
             )
             if len(raw_faces) > self._settings.fusion_max_proposals_per_frame:
@@ -803,6 +902,31 @@ class RecognitionPipeline:
             )
             if match is not None:
                 matches.append(match)
+
+        # ── Phase 2A.1: Record detection metrics ─────────────────────────────────
+        if self._detection_metrics:
+            # Calculate tracker survival time (average visibility_age of active tracks)
+            active_tracks = self._track_manager.active_tracks()
+            avg_survival_time = 0.0
+            if active_tracks:
+                avg_survival_time = sum(t.visibility_age for t in active_tracks) / len(active_tracks)
+
+            # Count weak detection promotions (from weak_pass to strict_pass via temporal)
+            weak_promotions = 0
+            for track in active_tracks:
+                if hasattr(track, 'confirmation_hits') and track.confirmation_hits >= 3:
+                    weak_promotions += 1
+
+            # Record metrics
+            self._detection_metrics.record_detection(
+                faces=faces,
+                frame_shape=prepared.bgr.shape,
+                detection_latency_ms=detection_latency_ms,
+                validator_rejections=total_rejected,
+                weak_promotions=weak_promotions,
+                false_positives=len([m for m in matches if m.reason in ["below_adaptive_threshold", "no_match_above_threshold"]]),
+                tracker_survival_time=avg_survival_time,
+            )
 
         self._finalize_frame(frame_index)
         self._export_tracking_metrics()

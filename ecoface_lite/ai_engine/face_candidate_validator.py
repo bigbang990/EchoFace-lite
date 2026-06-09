@@ -322,6 +322,8 @@ def validate_face_candidate(
 
 
 
+    # TODO Phase 7B: add profile softening here once
+    # pose_bucket is passed into this function
     if validation_score < settings.proposal_min_validation_score and len(rejection_reasons) >= 2:
 
         metrics.increment("rejected_low_validation_score")

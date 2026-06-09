@@ -65,7 +65,7 @@ def test_threshold_hysteresis():
     # 5th frame should trigger transition
     pipeline._apply_load_governance(frame_index=5)
     assert pipeline._current_pressure_band == 2
-    assert pipeline._adaptive_det_confidence == 0.30
+    assert pipeline._adaptive_det_confidence == 0.50
 
 def test_coarse_tracking_downgrade():
     settings = _settings(coarse_track_survival_ms=5000, tracking_expiration_ms=1000, coarse_track_min_hits=2)
