@@ -25,14 +25,14 @@ def _settings(**overrides) -> Settings:
 def test_track_manager_assigns_persistent_ids():
     settings = _settings(tracking_confirm_frames=1)
     manager = FaceTrackManager(settings)
-    f1 = _face(10, 10, 50, 50)
+    f1 = _face(10, 10, 50, 50, score=0.96)
     t1 = manager.update_from_detections([f1], frame_index=0)
     assert len(t1) == 1
-    assert t1[0].track_id.startswith("track_")
+    assert t1[0][1].track_id.startswith("track_")
 
     f1_moved = _face(12, 12, 52, 52)
     t2 = manager.update_from_detections([f1_moved], frame_index=1)
-    assert t2[0].track_id == t1[0].track_id
+    assert t2[0][1].track_id == t1[0][1].track_id
 
 
 def test_track_confirmation_requires_two_detections():
@@ -56,11 +56,12 @@ def test_propagate_on_skipped_detection_frames():
 
 
 def test_should_compute_embedding_respects_interval():
-    settings = _settings(detector_interval_frames=8, recognition_interval_frames=20, tracking_confirm_frames=1)
+    settings = _settings(detector_interval_frames=8, recognition_interval_frames=20, tracking_confirm_frames=1, governance_embedding_refresh_cooldown_ms=0)
     cfg = get_tracking_config(settings)
     manager = FaceTrackManager(settings, cfg)
-    tracks = manager.update_from_detections([_face(0, 0, 40, 40)], frame_index=0)
-    track = tracks[0]
+    tracks = manager.update_from_detections([_face(0, 0, 40, 40, score=0.96)], frame_index=0)
+    track = tracks[0][1]
+    track.state = "confirmed"
     track.touch_embedding(np.zeros(512, dtype=np.float32), frame_index=0)
     assert manager.should_compute_embedding(track, frame_index=5, face=_face(0, 0, 40, 40)) is False
     assert manager.should_compute_embedding(track, frame_index=25, face=_face(0, 0, 40, 40)) is True
@@ -119,9 +120,9 @@ def test_event_validator_requires_track_age_and_stable_matches():
 def test_recognition_session_ema_smoothing():
     settings = _settings(tracking_confirm_frames=1)
     session = RecognitionSession(settings)
-    face = _face(10, 10, 60, 60)
+    face = _face(10, 10, 60, 60, score=0.96)
     tracks = session.track_manager.update_from_detections([face], frame_index=0)
-    track = tracks[0]
+    _, track = tracks[0]
     r1 = session.observe_track(track, person_id=1, confidence=0.5)
     r2 = session.observe_track(track, person_id=1, confidence=0.9)
     assert r2.smoothed_confidence > r1.smoothed_confidence
