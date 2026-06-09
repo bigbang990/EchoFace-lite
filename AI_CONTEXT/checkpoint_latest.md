@@ -1,23 +1,31 @@
-## Checkpoint — 2026-06-09 — Phase 7 resolution cap fix
+## Checkpoint — 2026-06-09 — Phase 7 Task 1 DONE
 
 ### Done
-Fixed DETECTOR_RESOLUTION_CAP_ENABLED flag not respected in _select_detector_size.
-The GPU ceiling (min(size, gpu_res)) was unconditional — applied regardless of the flag.
-Added guard: when flag=False, return raw adaptive size without the gpu_res ceiling.
-Fix: detection_optimizer.py _select_detector_size, 3-line insertion.
+Fixed DETECTOR_RESOLUTION_CAP_ENABLED in
+detection_optimizer.py._select_detector_size.
+Cap was unconditional (line 267 had no flag check).
+Now respects settings.detector_resolution_cap_enabled.
+When False: returns original size unchanged.
+When True: applies gpu_detector_resolution ceiling as before.
 
-Pre-existing test failures (not introduced by this change):
-  test_adaptive_governance::test_adaptive_detector_interval
-  test_recall_preservation::test_threshold_hysteresis
-  test_tracking (4 failures)
-  — all fail identically with and without the change, from phase6 merge debt.
+### Files changed
+- ecoface_lite/ai_engine/detection_optimizer.py
+  _select_detector_size: added flag check before min() cap
+
+### Regression gate result
+15 tests pass. 9 pre-existing failures (Phase 6 merge debt,
+unchanged before/after). Zero new failures introduced.
+
+### Pre-existing test failures to fix in Phase 7 (backlog)
+9 failures in governance/recall/tracking suites.
+Must be resolved before Phase 8 starts.
 
 ### State
-- Working: phase7-resolution-cap-fix branch, fix committed
-- Next: decouple face_app from YOLO path in bootstrap.py
-  then Phase 2D Part 2 Detection Truthfulness Validation Framework
-- Pre-existing test debt: 9 failures across governance/recall/tracking suites
-  (separate task — do not conflate with this fix)
+- Working: resolution cap now controllable via env var
+  DETECTOR_RESOLUTION_CAP_ENABLED=0 → full resolution
+  DETECTOR_RESOLUTION_CAP_ENABLED=1 → gpu_res ceiling
+- Next task: Phase 7 Task 2 — decouple face_app
+  from YOLO path in bootstrap.py
 
 ### Branch
 phase7-resolution-cap-fix — not yet on main
