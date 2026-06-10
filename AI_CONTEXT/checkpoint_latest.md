@@ -1,34 +1,29 @@
-## Checkpoint — 2026-06-10 — Phase 7 MERGED
+## Checkpoint — 2026-06-10 — Phase 7B profile softening DONE
 
 ### Done
-All Phase 7 tasks complete and merged to
-phase6-detector-abstraction.
+Phase 7B profile softening complete.
+Commit: 8ade34f on phase6-detector-abstraction.
 Tests: 30 pass, 0 fail.
 
-### What was fixed
-- detection_optimizer.py: resolution cap now respects
-  DETECTOR_RESOLUTION_CAP_ENABLED flag
-- bootstrap.py: face_app only loads on SCRFD path
-- track_manager.py: crowd queue saturation documented
-- All 8 pre-existing test failures resolved
-- Profile softening: TODO at validator line 325,
-  Phase 7B 3-line fix pending
+### What was implemented
+- face_candidate_validator.py: classify_pose_bucket() called after
+  _estimate_pose(); effective_cutoff lowered by
+  validator_profile_cutoff_reduction (0.08) when pose_bucket is
+  LEFT_PROFILE or RIGHT_PROFILE
+- config.py: validator_profile_cutoff_reduction field added
+  (default=0.08, alias=VALIDATOR_PROFILE_CUTOFF_REDUCTION, ge=0.0,
+  le=0.3)
 
 ### Phase 7B remaining (before Phase 8)
-1. Profile softening — call classify_pose_bucket()
-   using existing pose_yaw/pose_pitch in
-   validate_face_candidate(). 3-line change.
-2. Multi-photo enrollment
-3. Session isolation (/sessions/begin + /sessions/end)
-4. Database schema design (AI_CONTEXT/schema.md)
+1. Multi-photo enrollment
+2. Session isolation (/sessions/begin + /sessions/end)
+3. Database schema design (AI_CONTEXT/schema.md)
 
 ### Colab SERVER_ENV additions needed
 "GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE": "15"
 "DETECTOR_RESOLUTION_CAP_ENABLED": "0"
 
 ### State
-- Working: phase6-detector-abstraction is stable,
-  all tests green
-- Next: Phase 7B profile softening (3-line fix),
-  then database schema design, then Phase 8
+- Working: phase6-detector-abstraction is stable, all tests green
+- Next: multi-photo enrollment OR session isolation (user to choose)
 - Branch: phase6-detector-abstraction
