@@ -78,6 +78,33 @@ class DetectionOptimizer:
         requested_pixels = target_width * initial_height
         metrics.observe("adaptive_resolution_requested", requested_pixels)
         
+        # Respect cap flag — skip all clamping when disabled
+        if not self._settings.detector_resolution_cap_enabled:
+            final_width, final_height = target_width, initial_height
+            final_pixels = final_width * final_height
+            metrics.observe("adaptive_resolution_requested", final_pixels)
+            metrics.observe("adaptive_resolution_final", final_pixels)
+            metrics.observe("detector_input_resolution", final_pixels)
+            metrics.observe("detector_resolution", final_pixels)
+            metrics.observe("capped_detector_resolution", final_pixels)
+            metrics.observe("original_detector_resolution", final_pixels)
+            
+            # Categorize resolution band
+            if final_pixels <= self._settings.detector_min_input_pixels:
+                metrics.observe("detector_resolution_band", 0.0) # LOW
+            elif final_pixels >= self._settings.detector_max_input_pixels:
+                metrics.observe("detector_resolution_band", 2.0) # HIGH
+            else:
+                metrics.observe("detector_resolution_band", 1.0) # MID
+
+            if final_width <= 0 or enhanced.shape[1] <= final_width:
+                return enhanced, 1.0
+                
+            scale = final_width / enhanced.shape[1]
+            resized = cv2.resize(enhanced, (final_width, final_height), interpolation=cv2.INTER_AREA)
+            metrics.observe("coordinate_scale_factor", scale)
+            return resized, scale
+
         # Apply experiment cap with safe bounds if enabled
         final_width, final_height = target_width, initial_height
         if self._settings.detector_resolution_cap_enabled:
