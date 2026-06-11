@@ -104,3 +104,69 @@ async def create_person_from_image(
     await session.refresh(person)
     logger.info("Enrolled person id=%s name=%s", person.id, display_name)
     return person, False
+
+
+async def add_photos_to_person(
+    db: AsyncSession,
+    pipeline: RecognitionPipeline,
+    settings: Settings,
+    person_id: int,
+    files: list[bytes],
+    filenames: list[str],
+) -> tuple[int, int, list[str]]:
+    """Enroll additional reference photos for an existing person.
+
+    Returns (accepted_count, rejected_count, rejection_reasons).
+    Raises HTTPException 400 if more than 5 photos are submitted.
+    """
+    import cv2
+    import numpy as np
+    from fastapi import HTTPException
+
+    if len(files) > 5:
+        raise HTTPException(status_code=400, detail="Max 5 photos per call")
+
+    accepted = 0
+    rejected = 0
+    reasons: list[str] = []
+
+    for file_bytes, filename in zip(files, filenames):
+        digest = sha256_hex(file_bytes)
+
+        dup = await db.execute(
+            select(FaceEmbedding)
+            .where(FaceEmbedding.person_id == person_id, FaceEmbedding.ingest_sha256 == digest)
+            .limit(1)
+        )
+        if dup.scalar_one_or_none() is not None:
+            rejected += 1
+            reasons.append(f"{filename}: duplicate (already enrolled for this person)")
+            continue
+
+        buf = np.frombuffer(file_bytes, dtype=np.uint8)
+        image = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if image is None:
+            rejected += 1
+            reasons.append(f"{filename}: could not decode image")
+            continue
+
+        try:
+            embedding = pipeline.enroll_reference_embedding(image)
+        except ValueError as exc:
+            rejected += 1
+            reasons.append(f"{filename}: {exc}")
+            continue
+
+        face = FaceEmbedding(
+            person_id=person_id,
+            ingest_sha256=digest,
+            embedding=embedding.astype(np.float32).tobytes(),
+            embedding_dim=int(embedding.shape[0]),
+            model_name=settings.insightface_model_name,
+        )
+        db.add(face)
+        await db.flush()
+        accepted += 1
+        logger.info("Added photo for person id=%s hash=%s", person_id, digest[:12])
+
+    return accepted, rejected, reasons
