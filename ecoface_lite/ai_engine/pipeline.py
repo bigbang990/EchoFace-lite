@@ -34,6 +34,7 @@ from ecoface_lite.ai_engine.temporal_identity_state import get_temporal_identity
 from ecoface_lite.ai_engine.track_reassociator import TrackReassociator
 from ecoface_lite.ai_engine.pipeline_types import FaceDebugTrace, FrameMatch
 from ecoface_lite.ai_engine.preprocessing import FramePreprocessor
+from ecoface_lite.ai_engine.experiment_coordinator import ExperimentCoordinator
 from ecoface_lite.ai_engine.recognition_session import RecognitionSession
 from ecoface_lite.ai_engine.tracking.track_state import ACTIVE_RECOGNITION_STATES, TrackLifecycleState
 from ecoface_lite.ai_engine.tracking.tracked_face import TrackedFace
@@ -185,6 +186,14 @@ class RecognitionPipeline:
             _backend, _interval_ceil, _budget_ms, _budget_ms,
         )
 
+        self._experiment_coordinator = ExperimentCoordinator(
+            experiment_exporter=None,
+            detection_metrics=self._detection_metrics,
+            settings=self._settings,
+            notes_tracker=None,
+            event_timeline=None,
+        )
+
     @property
     def _track_manager(self):
         return self._recognition_session.track_manager
@@ -205,40 +214,14 @@ class RecognitionPipeline:
         test_operator: str = "",
         notes: str = "",
     ) -> Path:
-        """Export complete experiment session.
-
-        Args:
-            video_name: Name of the video file
-            video_duration: Duration in seconds
-            frame_count: Total number of frames
-            test_operator: Name of the test operator
-            notes: Experimental notes
-
-        Returns:
-            Path to exported file or directory
-        """
-        if not self._experiment_exporter:
-            raise RuntimeError("Experiment export system is not enabled")
-
-        # Set metadata
-        self._experiment_exporter.set_metadata(
+        """Export complete experiment session."""
+        return self._experiment_coordinator.export_experiment_session(
             video_name=video_name,
             video_duration=video_duration,
             frame_count=frame_count,
             test_operator=test_operator,
             notes=notes,
         )
-
-        # Collect metrics data
-        metrics_data = {}
-        if self._detection_metrics:
-            metrics_data["per_frame_metrics"] = self._detection_metrics.get_all_metrics()
-
-        # Export
-        export_dir = self._settings.resolved_export_dir()
-        export_dir.mkdir(parents=True, exist_ok=True)
-
-        return self._experiment_exporter.export_session(export_dir, metrics_data)
 
     def record_experiment_adjustment(
         self,
@@ -247,41 +230,21 @@ class RecognitionPipeline:
         new_value: Any,
         reason: str,
     ) -> None:
-        """Record an experimental adjustment.
-
-        Args:
-            adjustment: Description of the adjustment
-            old_value: Previous value
-            new_value: New value
-            reason: Reason for the adjustment
-        """
-        if self._notes_tracker:
-            self._notes_tracker.record_adjustment(
-                adjustment=adjustment,
-                old_value=old_value,
-                new_value=new_value,
-                reason=reason,
-            )
+        """Record an experimental adjustment."""
+        self._experiment_coordinator.record_experiment_adjustment(
+            adjustment=adjustment,
+            old_value=old_value,
+            new_value=new_value,
+            reason=reason,
+        )
 
     def get_experiment_notes(self) -> str:
-        """Get experiment notes summary.
-
-        Returns:
-            Formatted summary of all adjustments
-        """
-        if self._notes_tracker:
-            return self._notes_tracker.get_summary()
-        return "No experiment notes available."
+        """Get experiment notes summary."""
+        return self._experiment_coordinator.get_experiment_notes()
 
     def get_event_timeline_statistics(self) -> dict[str, Any]:
-        """Get event timeline statistics.
-
-        Returns:
-            Dictionary with event statistics
-        """
-        if self._event_timeline:
-            return self._event_timeline.get_statistics()
-        return {}
+        """Get event timeline statistics."""
+        return self._experiment_coordinator.get_event_timeline_statistics()
 
     def enroll_reference_embedding(self, frame_bgr: np.ndarray) -> np.ndarray:
         prepared = self._preprocessor.process(frame_bgr)

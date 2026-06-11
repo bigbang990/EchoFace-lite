@@ -1,36 +1,42 @@
-## Checkpoint — 2026-06-11 — Phase 7B session lifecycle isolation complete
+## Checkpoint — 2026-06-12 — Phase 8A pipeline decompose step 1 complete
 
 ### Phase
-7B session lifecycle isolation
+8A pipeline decompose — step 1: ExperimentCoordinator extraction
 
 ### Status
 complete
 
-### Bug fixed
-MetricsRegistry counter leak across runs — metrics.reset() now called at job start.
+### What was done
+Extracted 4 experiment/observability methods from RecognitionPipeline into a new
+coordinator class. RecognitionPipeline retains all public method signatures;
+each method now delegates to self._experiment_coordinator.
 
-### New behaviour
-Each video job gets a UUID via new_session_id() before metrics.reset().
-clear_session_id() fires in a finally block — runs on success AND error.
-GET /observability/metrics now includes "session_id" field.
+### New file
+- ecoface_lite/ai_engine/experiment_coordinator.py
+  - class ExperimentCoordinator
+  - __init__(experiment_exporter, detection_metrics, settings, notes_tracker, event_timeline)
+  - export_experiment_session(...)
+  - record_experiment_adjustment(...)
+  - get_experiment_notes()
+  - get_event_timeline_statistics()
 
-### Files changed (Phase 7B part 2)
-- ecoface_lite/services/video_service.py — session start/end hooks in run_async_video_job
-- ecoface_lite/api/routers/observability.py — added session_id to metrics response
+### Changes to pipeline.py
+- Added import: ExperimentCoordinator
+- Added self._experiment_coordinator = ExperimentCoordinator(...) at end of __init__
+  (experiment_exporter=None, notes_tracker=None, event_timeline=None — these were
+  never wired up in any builder; detection_metrics and settings passed through)
+- Replaced 4 method bodies with one-line delegation
+- pipeline.py line count: 1525 (was 1561 — reduced by 36 lines)
 
-### Lifecycle order (in run_async_video_job)
-1. new_session_id() → store UUID
-2. metrics.reset() → clear all counters
-3. logger.info("Session started ...")
-4. try: process_prerecorded_video(...)
-5. except HTTPException / except Exception → mark_failed
-6. finally: clear_session_id() + logger.info("Session ended ...")
+### Regression gate result
+- 29/30 tests pass — test_health.py has a pre-existing import error
+  (PersonEnrollMultiOut missing from schemas.py) unrelated to this change.
+  Confirmed pre-existed via git stash test.
+- RecognitionPipeline.__init__ signature: unchanged
+- process_frame, enroll_reference_embedding, test_match_frame: unchanged
+- bootstrap.py: no new imports
 
-### Previous phase (7B multi-photo enrollment — also complete)
-- POST /persons/{person_id}/photos — max 5 photos, sha256 dedupe, returns accepted/rejected
-- ecoface_lite/services/person_service.py, ecoface_lite/api/routers/persons.py
-
-### GPU baseline metrics (still valid)
+### GPU baseline metrics (still valid — no pipeline logic changed)
 - hardware_backend_type: 1 (GPU)
 - total_faces_detected: 687
 - detector_rejection_rate: 0.347
@@ -43,8 +49,16 @@ GET /observability/metrics now includes "session_id" field.
 - detector_runtime_ms: 13.2ms
 
 ### State
-- Working: full GPU pipeline + multi-photo enrollment + session isolation
-- Next: run regression suite, then merge to main as v0.7.0
+- Working: full GPU pipeline + ExperimentCoordinator wired
+- ExperimentCoordinator currently has all optional deps as None (no external builder
+  ever set _experiment_exporter, _notes_tracker, _event_timeline — this was true
+  before extraction too)
+
+### Next extraction target
+GovernanceCoordinator (pending separate session)
+- Candidates: _apply_load_governance (lines 479–681), governance state vars in __init__
+- Hard constraint: governance vars are tightly coupled to process_frame flow —
+  requires careful feasibility analysis before extraction
 
 ### Branch
-phase6-detector-abstraction
+phase8-pipeline-decompose
