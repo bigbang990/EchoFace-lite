@@ -136,7 +136,10 @@ class Settings(BaseSettings):
     # tracks → lockout activates → force detect every frame → still slow →
     # validator rejects → stay locked. Disable until GPU testing validates it.
     disable_governance_lockout_on_cpu: bool = Field(default=True, alias="DISABLE_GOVERNANCE_LOCKOUT_ON_CPU")
-    governance_max_candidate_queue_size: int = Field(default=25, ge=1, alias="GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE")
+    governance_max_candidate_queue_size: int = Field(default=32, ge=1, alias="GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE")
+    governance_max_unconfirmed_tracks: int = Field(default=32, ge=1, alias="GOVERNANCE_MAX_UNCONFIRMED_TRACKS")
+    crowd_load_confidence_floor: float = Field(default=0.55, ge=0.0, le=1.0, alias="CROWD_LOAD_CONFIDENCE_FLOOR")
+    crowd_load_occupancy_trigger: float = Field(default=0.6, ge=0.0, le=1.0, alias="CROWD_LOAD_OCCUPANCY_TRIGGER")
     governance_mature_track_age: int = Field(default=50, ge=1, alias="GOVERNANCE_MATURE_TRACK_AGE")
     enable_priority_ingestion: bool = Field(default=True, alias="ENABLE_PRIORITY_INGESTION")
     enable_track_survival_protection: bool = Field(default=True, alias="ENABLE_TRACK_SURVIVAL_PROTECTION")

@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Optional
-import uuid
+import uuid as _uuid
 
 from ecoface_lite.core.experimental_config import (
     validate_and_clamp_config,
@@ -19,6 +19,26 @@ from ecoface_lite.core.experimental_config import (
 # Singleton instance for dependency injection
 _runtime_override_state_instance: Optional["RuntimeOverrideState"] = None
 _state_lock = threading.Lock()
+
+_current_session_id: str | None = None
+
+
+def new_session_id() -> str:
+    """Generate and store a fresh UUID for a new processing run."""
+    global _current_session_id
+    _current_session_id = str(_uuid.uuid4())
+    return _current_session_id
+
+
+def get_session_id() -> str | None:
+    """Return the current session UUID, or None if no run is active."""
+    return _current_session_id
+
+
+def clear_session_id() -> None:
+    """Clear session UUID on pipeline termination."""
+    global _current_session_id
+    _current_session_id = None
 
 
 def get_runtime_state() -> "RuntimeOverrideState":

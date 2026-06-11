@@ -580,7 +580,20 @@ class FaceTrackManager:
         # Phase 2: Budget-aware candidate queueing
         # Crowd scenes: reduce via
         # GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE env var
-        if self._cfg.enable_priority_ingestion and len(self._pending) >= self._cfg.governance_max_candidate_queue_size:
+        # Hard cap using governance_max_unconfirmed_tracks
+        if len(self._pending) >= self._settings.governance_max_unconfirmed_tracks:
+            # Drop lowest priority candidate if new one is better
+            candidate_scores = [(self._calculate_candidate_priority(p), i) for i, p in enumerate(self._pending)]
+            new_candidate_score = self._calculate_candidate_priority(_PendingCandidate(face=face))
+            
+            lowest_score, lowest_idx = min(candidate_scores)
+            if new_candidate_score > lowest_score:
+                self._pending.pop(lowest_idx)
+                metrics.increment("candidate_queue_drops")
+            else:
+                metrics.increment("candidate_ingestion_rejections")
+                return None
+        elif self._cfg.enable_priority_ingestion and len(self._pending) >= self._cfg.governance_max_candidate_queue_size:
             # Drop lowest priority candidate if new one is better
             candidate_scores = [(self._calculate_candidate_priority(p), i) for i, p in enumerate(self._pending)]
             new_candidate_score = self._calculate_candidate_priority(_PendingCandidate(face=face))

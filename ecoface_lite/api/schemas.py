@@ -85,3 +85,15 @@ class LiveTestMatchResponse(BaseModel):
     threshold: float
     detail: str
     snapshot_path: str | None = None
+
+
+class PersonEnrollMultiOut(BaseModel):
+    """POST /persons/{person_id}/photos — add extra photos to existing person."""
+    person: PersonOut
+    photos_accepted: int
+    photos_rejected: int
+    rejection_reasons: list[str] = []
+
+
+class PersonPhotoAddRequest(BaseModel):
+    person_id: int
