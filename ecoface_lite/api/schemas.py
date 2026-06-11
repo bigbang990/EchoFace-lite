@@ -97,3 +97,60 @@ class PersonEnrollMultiOut(BaseModel):
 
 class PersonPhotoAddRequest(BaseModel):
     person_id: int
+
+
+class CameraOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    label: str
+    stream_url: str | None
+    location: str | None
+    is_active: bool
+    created_at: datetime
+
+
+class CameraCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=255)
+    stream_url: str | None = Field(default=None, max_length=1024)
+    location: str | None = Field(default=None, max_length=512)
+
+
+class IncidentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    description: str | None
+    status: str
+    operator_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IncidentCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=512)
+    description: str | None = Field(default=None, max_length=4000)
+    operator_id: str | None = Field(default=None, max_length=128)
+
+
+class IncidentStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(open|active|closed)$")
+
+
+class SightingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    incident_id: int
+    detection_id: int | None
+    camera_id: int | None
+    notes: str | None
+    created_at: datetime
+
+
+class SightingCreate(BaseModel):
+    incident_id: int
+    detection_id: int | None = None
+    camera_id: int | None = None
+    notes: str | None = Field(default=None, max_length=4000)

@@ -1,64 +1,63 @@
-## Checkpoint — 2026-06-12 — Phase 8A pipeline decompose step 1 complete
+## Checkpoint — 2026-06-12 — Phase 8C case management API complete
 
 ### Phase
-8A pipeline decompose — step 1: ExperimentCoordinator extraction
+8C case management API — cameras, incidents, sightings
 
 ### Status
 complete
 
-### What was done
-Extracted 4 experiment/observability methods from RecognitionPipeline into a new
-coordinator class. RecognitionPipeline retains all public method signatures;
-each method now delegates to self._experiment_coordinator.
+### New routers
+- ecoface_lite/api/routers/cameras.py
+  - POST   /api/v1/cameras          → create camera, 201
+  - GET    /api/v1/cameras          → list all
+  - GET    /api/v1/cameras/{id}     → get one, 404 if missing
+  - PATCH  /api/v1/cameras/{id}     → update is_active only
+  - DELETE /api/v1/cameras/{id}     → hard delete, 204
 
-### New file
-- ecoface_lite/ai_engine/experiment_coordinator.py
-  - class ExperimentCoordinator
-  - __init__(experiment_exporter, detection_metrics, settings, notes_tracker, event_timeline)
-  - export_experiment_session(...)
-  - record_experiment_adjustment(...)
-  - get_experiment_notes()
-  - get_event_timeline_statistics()
+- ecoface_lite/api/routers/incidents.py
+  - POST   /api/v1/incidents                    → create, status="open", 201
+  - GET    /api/v1/incidents                    → list, optional ?status= filter
+  - GET    /api/v1/incidents/{id}               → get one + sightings (IncidentDetailOut)
+  - PATCH  /api/v1/incidents/{id}/status        → update status (open/active/closed)
+  - POST   /api/v1/incidents/{id}/sightings     → add sighting, 201
+  - GET    /api/v1/incidents/{id}/sightings     → list sightings
 
-### Changes to pipeline.py
-- Added import: ExperimentCoordinator
-- Added self._experiment_coordinator = ExperimentCoordinator(...) at end of __init__
-  (experiment_exporter=None, notes_tracker=None, event_timeline=None — these were
-  never wired up in any builder; detection_metrics and settings passed through)
-- Replaced 4 method bodies with one-line delegation
-- pipeline.py line count: 1525 (was 1561 — reduced by 36 lines)
+### New schemas (ecoface_lite/api/schemas.py)
+CameraOut, CameraCreate,
+IncidentOut, IncidentCreate, IncidentStatusUpdate,
+SightingOut, SightingCreate
+
+### Files changed
+- ecoface_lite/api/schemas.py — 7 new schemas appended
+- ecoface_lite/api/main.py — cameras + incidents routers registered
+- ecoface_lite/api/routers/cameras.py — new file
+- ecoface_lite/api/routers/incidents.py — new file (includes IncidentDetailOut)
 
 ### Regression gate result
-- 29/30 tests pass — test_health.py has a pre-existing import error
-  (PersonEnrollMultiOut missing from schemas.py) unrelated to this change.
-  Confirmed pre-existed via git stash test.
-- RecognitionPipeline.__init__ signature: unchanged
-- process_frame, enroll_reference_embedding, test_match_frame: unchanged
-- bootstrap.py: no new imports
+- 29/29 pass (test_health.py pre-broken — PersonEnrollMultiOut import error,
+  pre-existing before Phase 8A)
+- All 11 new routes verified via app.routes introspection
+- Existing router prefixes unchanged
+- pipeline.py, bootstrap.py, video_service.py untouched
 
-### GPU baseline metrics (still valid — no pipeline logic changed)
+### GPU baseline metrics (still valid)
 - hardware_backend_type: 1 (GPU)
 - total_faces_detected: 687
 - detector_rejection_rate: 0.347
-- recall_per_resolution: 0.65
-- face_visibility_ratio: 0.95
-- alerts_per_video: 3
 - stable_matches: 50
 - identity_switch_rate: 0
 - average_processing_fps: 81
 - detector_runtime_ms: 13.2ms
 
-### State
-- Working: full GPU pipeline + ExperimentCoordinator wired
-- ExperimentCoordinator currently has all optional deps as None (no external builder
-  ever set _experiment_exporter, _notes_tracker, _event_timeline — this was true
-  before extraction too)
+### Previous phase
+Phase 8A pipeline decompose step 1:
+- ecoface_lite/ai_engine/experiment_coordinator.py (ExperimentCoordinator, 4 methods)
+- pipeline.py: 1561 → 1525 lines
 
 ### Next extraction target
 GovernanceCoordinator (pending separate session)
 - Candidates: _apply_load_governance (lines 479–681), governance state vars in __init__
-- Hard constraint: governance vars are tightly coupled to process_frame flow —
-  requires careful feasibility analysis before extraction
+- Hard constraint: governance vars tightly coupled to process_frame — careful analysis required
 
 ### Branch
 phase8-pipeline-decompose

@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from ecoface_lite import __version__
-from ecoface_lite.api.routers import detections, experimental, health, live_test, observability, persons, processing
+from ecoface_lite.api.routers import cameras, detections, experimental, health, incidents, live_test, observability, persons, processing
 from ecoface_lite.core.config import get_settings
 from ecoface_lite.core.logging import get_logger, setup_logging
 from ecoface_lite.db.session import init_db
@@ -54,6 +54,8 @@ def create_app() -> FastAPI:
     app.include_router(live_test.router, prefix="/api/v1")
     app.include_router(observability.router, prefix="/api/v1")
     app.include_router(experimental.router, prefix="/api/v1")
+    app.include_router(cameras.router, prefix="/api/v1")
+    app.include_router(incidents.router, prefix="/api/v1")
     app.mount("/data/previews", StaticFiles(directory=settings.resolved_previews_dir()), name="previews")
     app.mount("/data/debug/rejected_faces", StaticFiles(directory=settings.resolved_rejected_faces_dir()), name="rejected_faces")
     return app
