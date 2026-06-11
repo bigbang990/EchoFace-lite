@@ -1,37 +1,32 @@
-## Checkpoint — 2026-06-11 — bootstrap ctx_id fix
+## Checkpoint — 2026-06-11 — GPU pipeline fully verified
 
 ### Done
-Added settings.insightface_ctx_id = PLATFORM["ctx_id"]
-to build_recognition_pipeline() in bootstrap.py.
-This propagates GPU ctx_id=0 to pipeline governance,
-fixing GOVERNANCE [CPU] being used despite T4 GPU.
-Commit: aa75f4b on phase6-detector-abstraction.
-Tests: 30 pass, 0 fail.
+Platform bootstrap now uses torch.cuda for GPU detection.
+bootstrap.py overrides insightface_ctx_id from PLATFORM.
+GPU governance path confirmed: interval_ceiling=12,
+detector_budget=150ms, hardware_backend_type=1.
 
-### Root cause chain (now fully resolved)
-1. platform_bootstrap checked onnxruntime providers
-   → always returned CPU on CUDA 12.8 → FIXED (af13e77)
-2. prepare_for_detection had second cap enforcement
-   → FIXED (aad4fda)
-3. insightface_ctx_id not overridden from PLATFORM
-   → THIS FIX (aa75f4b)
+### Key metrics (GPU path confirmed)
+- hardware_backend_type: 1 (GPU) — first time correct
+- total_faces_detected: 687 (was 285 on CPU path)
+- detector_rejection_rate: 0.347 (was 0.672)
+- recall_per_resolution: 0.65 (was 0.33)
+- face_visibility_ratio: 0.95 (was 0.81)
+- alerts_per_video: 3
+- stable_matches: 50
+- identity_switch_rate: 0
+- average_processing_fps: 81
+- detector_runtime_ms: 13.2ms
 
-### Expected outcome after this fix
-Startup log: "GOVERNANCE [GPU]: interval_ceiling=12"
-_select_detector_size: GPU path → 640×640
-capped_detector_resolution: ~409,600
-
-### Phase 7B remaining (before Phase 8)
-1. Multi-photo enrollment
-2. Session isolation (/sessions/begin + /sessions/end)
-3. Database schema design (AI_CONTEXT/schema.md)
-
-### Colab SERVER_ENV additions needed
-"GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE": "15"
-"DETECTOR_RESOLUTION_CAP_ENABLED": "0"
+### Root cause chain — fully resolved
+1. platform_bootstrap checked onnxruntime → FIXED (torch.cuda)
+2. prepare_for_detection had second cap → FIXED (flag check)
+3. insightface_ctx_id not overridden → FIXED (bootstrap.py)
 
 ### State
-- Next: re-run Colab, verify GOVERNANCE [GPU] in log,
-  submit video, confirm capped_detector_resolution
-  ~409,600 and stable_matches recovery
-- Branch: phase6-detector-abstraction
+- Working: full GPU pipeline, all governance paths correct
+- Next: create AI_CONTEXT/schema.md, then multi-photo
+  enrollment, then merge to main as v0.7.0
+
+### Branch
+phase6-detector-abstraction
