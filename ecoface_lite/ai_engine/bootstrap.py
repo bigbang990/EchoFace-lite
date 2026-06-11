@@ -86,12 +86,17 @@ def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionP
     # regardless of what the .env file says — the .env values remain the fallback
     # for every other field.
     settings.detection_confidence_threshold = PLATFORM["conf_threshold"]
-    settings.validator_strict_cutoff = PLATFORM["validator_cutoff"]
+    settings.validator_strict_cutoff        = PLATFORM["validator_cutoff"]
+    settings.insightface_ctx_id             = PLATFORM["ctx_id"]
     logger.info(
-        "Platform threshold overrides applied: detection_confidence_threshold=%.2f  "
-        "validator_strict_cutoff=%.2f  (backend=%s)",
+        "Platform threshold overrides applied: "
+        "detection_confidence_threshold=%.2f  "
+        "validator_strict_cutoff=%.2f  "
+        "insightface_ctx_id=%d  "
+        "(backend=%s)",
         settings.detection_confidence_threshold,
         settings.validator_strict_cutoff,
+        settings.insightface_ctx_id,
         PLATFORM["backend"],
     )
     # Perform startup validation
