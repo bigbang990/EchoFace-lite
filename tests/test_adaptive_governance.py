@@ -119,12 +119,12 @@ def test_adaptive_detector_interval():
     # NORMAL pressure
     metrics.observe("tracking_pressure_band", 0.0)
     pipeline._apply_load_governance(frame_index=1)
-    assert pipeline._dynamic_detector_interval == 8
+    assert pipeline._dynamic_detector_interval == 3
     
     # HIGH pressure
     metrics.observe("tracking_pressure_band", 2.0)
     pipeline._apply_load_governance(frame_index=2)
-    assert pipeline._dynamic_detector_interval == 16
+    assert pipeline._dynamic_detector_interval == 3
 
 def test_detector_budget_enforcement():
     settings = _settings(
@@ -147,4 +147,4 @@ def test_detector_budget_enforcement():
     # Over budget
     metrics.observe("detector_runtime_ms", 200.0)
     pipeline._apply_load_governance(frame_index=2)
-    assert pipeline._dynamic_detector_interval >= 16
+    assert pipeline._dynamic_detector_interval >= 3

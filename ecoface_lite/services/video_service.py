@@ -370,6 +370,11 @@ async def run_async_video_job(job_id: str, video_relative_path: str) -> None:
         )
         await meta_session.commit()
 
+    from ecoface_lite.core.runtime_state import clear_session_id, new_session_id
+
+    session_id = new_session_id()
+    metrics.reset()
+    logger.info("Session started session_id=%s", session_id)
     try:
         async with factory() as proc_session:
             await process_prerecorded_video(
@@ -389,6 +394,9 @@ async def run_async_video_job(job_id: str, video_relative_path: str) -> None:
         async with factory() as fail_session:
             await processing_status_service.mark_failed(fail_session, job_id, str(exc))
             await fail_session.commit()
+    finally:
+        clear_session_id()
+        logger.info("Session ended session_id=%s", session_id)
 
 
 async def get_processing_status_row(session: AsyncSession, job_id: str):

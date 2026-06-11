@@ -86,12 +86,17 @@ def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionP
     # regardless of what the .env file says — the .env values remain the fallback
     # for every other field.
     settings.detection_confidence_threshold = PLATFORM["conf_threshold"]
-    settings.validator_strict_cutoff = PLATFORM["validator_cutoff"]
+    settings.validator_strict_cutoff        = PLATFORM["validator_cutoff"]
+    settings.insightface_ctx_id             = PLATFORM["ctx_id"]
     logger.info(
-        "Platform threshold overrides applied: detection_confidence_threshold=%.2f  "
-        "validator_strict_cutoff=%.2f  (backend=%s)",
+        "Platform threshold overrides applied: "
+        "detection_confidence_threshold=%.2f  "
+        "validator_strict_cutoff=%.2f  "
+        "insightface_ctx_id=%d  "
+        "(backend=%s)",
         settings.detection_confidence_threshold,
         settings.validator_strict_cutoff,
+        settings.insightface_ctx_id,
         PLATFORM["backend"],
     )
     # Perform startup validation
@@ -112,7 +117,7 @@ def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionP
         PLATFORM.get("detector_provider", "scrfd")
     ).lower()
 
-    face_app = _create_face_analysis(settings)
+    face_app = None
 
     if _provider == "yolo":
         from ecoface_lite.ai_engine.detection.detectors\
@@ -128,6 +133,7 @@ def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionP
         )
         logger.info("Detector: YOLOv8-face (PyTorch GPU)")
     else:
+        face_app = _create_face_analysis(settings)
         detector: FaceDetector = InsightFaceDetector(
             model_name=settings.insightface_model_name,
             ctx_id=settings.insightface_ctx_id,

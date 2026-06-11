@@ -26,6 +26,10 @@ import numpy as np
 
 from ecoface_lite.ai_engine.detector import BoundingBox, DetectedFace, FaceLandmarks
 
+from ecoface_lite.ai_engine.pose_estimator import (
+    classify_pose_bucket, PoseBucket
+)
+
 from ecoface_lite.core.config import Settings
 
 from ecoface_lite.core.metrics import metrics
@@ -242,6 +246,8 @@ def validate_face_candidate(
 
         pose_yaw, pose_pitch = _estimate_pose(landmarks, face_bbox)
 
+        pose_bucket = classify_pose_bucket(landmarks, face_bbox)
+
         metadata["pose_yaw_ratio"] = pose_yaw
 
         metadata["pose_pitch_ratio"] = pose_pitch
@@ -322,7 +328,18 @@ def validate_face_candidate(
 
 
 
-    if validation_score < settings.proposal_min_validation_score and len(rejection_reasons) >= 2:
+    _profile_buckets = {
+        PoseBucket.LEFT_PROFILE,
+        PoseBucket.RIGHT_PROFILE,
+    }
+    effective_cutoff = (
+        settings.proposal_min_validation_score
+        - settings.validator_profile_cutoff_reduction
+        if pose_bucket in _profile_buckets
+        else settings.proposal_min_validation_score
+    )
+    if validation_score < effective_cutoff \
+            and len(rejection_reasons) >= 2:
 
         metrics.increment("rejected_low_validation_score")
 

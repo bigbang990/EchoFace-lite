@@ -305,6 +305,12 @@ class Settings(BaseSettings):
     validator_adaptive_brightness: bool = Field(default=False, alias="VALIDATOR_ADAPTIVE_BRIGHTNESS")
     validator_min_quality_for_embedding: float = Field(default=0.55, ge=0, le=1, alias="VALIDATOR_MIN_QUALITY_FOR_EMBEDDING")
     validator_max_faces_per_frame: int = Field(default=25, ge=1, alias="VALIDATOR_MAX_FACES_PER_FRAME")
+    validator_profile_cutoff_reduction: float = Field(
+        default=0.08,
+        ge=0.0,
+        le=0.3,
+        alias="VALIDATOR_PROFILE_CUTOFF_REDUCTION"
+    )
 
     # ── Phase 2A rollout flags (default True = legacy validators still active) ─
     enable_legacy_face_validation: bool = Field(default=True, alias="ENABLE_LEGACY_FACE_VALIDATION")

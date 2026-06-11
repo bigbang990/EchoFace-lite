@@ -36,18 +36,13 @@ _PLATFORM_CACHE: dict | None = None
 def detect_platform() -> dict:
     """Return hardware-appropriate detector parameters.
 
-    Detection order:
-    1. torch.cuda.is_available() — confirms CUDA device is present.
-    2. onnxruntime available providers — confirms the ONNX Runtime GPU
-       provider is installed (requires onnxruntime-gpu, not onnxruntime).
-
-    Both checks must pass for GPU path to be taken.  Either failure falls
-    back to CPU silently (with a warning log on onnxruntime mismatch).
+    Detection:
+    torch.cuda.is_available() — confirms CUDA device is present.
 
     Returns
     -------
     dict
-        Plain dict with the 10 keys documented in the module docstring.
+        Plain dict with the keys documented in the module docstring.
         Same object is returned on every call after the first.
     """
     global _PLATFORM_CACHE
@@ -55,12 +50,12 @@ def detect_platform() -> dict:
         return _PLATFORM_CACHE
 
     # ── Step 1: CUDA device present? ─────────────────────────────────────────
-    cuda_device_available = False
+    cuda_available = False
     gpu_name = "unknown GPU"
     try:
         import torch  # type: ignore[import]
         if torch.cuda.is_available():
-            cuda_device_available = True
+            cuda_available = True
             try:
                 gpu_name = torch.cuda.get_device_name(0)
             except Exception:
@@ -68,33 +63,8 @@ def detect_platform() -> dict:
     except ImportError:
         logger.debug("torch not installed — skipping CUDA device check, assuming CPU")
 
-    # ── Step 2: ONNX Runtime CUDA provider present? ───────────────────────────
-    cuda_provider_available = False
-    if cuda_device_available:
-        try:
-            import onnxruntime as ort  # type: ignore[import]
-            available_providers = ort.get_available_providers()
-            if "CUDAExecutionProvider" in available_providers:
-                cuda_provider_available = True
-            else:
-                logger.warning(
-                    "CUDA device found (%s) but CUDAExecutionProvider is NOT in "
-                    "onnxruntime providers %s. "
-                    "Fix: pip uninstall onnxruntime && pip install onnxruntime-gpu",
-                    gpu_name,
-                    available_providers,
-                )
-        except ImportError:
-            logger.warning(
-                "onnxruntime not importable — cannot verify GPU provider, falling back to CPU"
-            )
-        except Exception as exc:
-            logger.warning("onnxruntime provider check failed (%s) — falling back to CPU", exc)
-
     # ── Build platform dict ───────────────────────────────────────────────────
-    use_gpu = cuda_device_available and cuda_provider_available
-
-    if use_gpu:
+    if cuda_available:
         _PLATFORM_CACHE = {
             "backend":            "GPU",
             "ctx_id":             0,
