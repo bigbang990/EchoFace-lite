@@ -175,3 +175,33 @@ def get_recognition_pipeline() -> RecognitionPipeline:
     if _pipeline_singleton is None:
         _pipeline_singleton = build_recognition_pipeline()
     return _pipeline_singleton
+
+
+def get_embedder():
+    """
+    Return the shared FaceEmbedder instance.
+    Stateless — safe to call from any request context.
+    Do NOT use for operations that require tracker state.
+    """
+    pipeline = get_recognition_pipeline()
+    return pipeline._embedder
+
+
+def get_detector():
+    """
+    Return the shared BaseDetector instance.
+    Stateless — safe for per-request detection.
+    Do NOT use for operations that require tracker state.
+    """
+    pipeline = get_recognition_pipeline()
+    return pipeline._detector
+
+
+def get_matcher():
+    """
+    Return the shared FaceMatcher instance.
+    Stateless — safe for per-request matching.
+    Do NOT use for operations that require tracker state.
+    """
+    pipeline = get_recognition_pipeline()
+    return pipeline._matcher
