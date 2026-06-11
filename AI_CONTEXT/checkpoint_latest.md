@@ -1,18 +1,25 @@
-## Checkpoint — 2026-06-10 — Phase 7B profile softening DONE
+## Checkpoint — 2026-06-11 — bootstrap ctx_id fix
 
 ### Done
-Phase 7B profile softening complete.
-Commit: 8ade34f on phase6-detector-abstraction.
+Added settings.insightface_ctx_id = PLATFORM["ctx_id"]
+to build_recognition_pipeline() in bootstrap.py.
+This propagates GPU ctx_id=0 to pipeline governance,
+fixing GOVERNANCE [CPU] being used despite T4 GPU.
+Commit: aa75f4b on phase6-detector-abstraction.
 Tests: 30 pass, 0 fail.
 
-### What was implemented
-- face_candidate_validator.py: classify_pose_bucket() called after
-  _estimate_pose(); effective_cutoff lowered by
-  validator_profile_cutoff_reduction (0.08) when pose_bucket is
-  LEFT_PROFILE or RIGHT_PROFILE
-- config.py: validator_profile_cutoff_reduction field added
-  (default=0.08, alias=VALIDATOR_PROFILE_CUTOFF_REDUCTION, ge=0.0,
-  le=0.3)
+### Root cause chain (now fully resolved)
+1. platform_bootstrap checked onnxruntime providers
+   → always returned CPU on CUDA 12.8 → FIXED (af13e77)
+2. prepare_for_detection had second cap enforcement
+   → FIXED (aad4fda)
+3. insightface_ctx_id not overridden from PLATFORM
+   → THIS FIX (aa75f4b)
+
+### Expected outcome after this fix
+Startup log: "GOVERNANCE [GPU]: interval_ceiling=12"
+_select_detector_size: GPU path → 640×640
+capped_detector_resolution: ~409,600
 
 ### Phase 7B remaining (before Phase 8)
 1. Multi-photo enrollment
@@ -24,6 +31,7 @@ Tests: 30 pass, 0 fail.
 "DETECTOR_RESOLUTION_CAP_ENABLED": "0"
 
 ### State
-- Working: phase6-detector-abstraction is stable, all tests green
-- Next: multi-photo enrollment OR session isolation (user to choose)
+- Next: re-run Colab, verify GOVERNANCE [GPU] in log,
+  submit video, confirm capped_detector_resolution
+  ~409,600 and stable_matches recovery
 - Branch: phase6-detector-abstraction
