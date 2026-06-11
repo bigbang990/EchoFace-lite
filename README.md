@@ -1,231 +1,89 @@
-# EcoFace Lite (Engineering scaffold)
+# EchoFace Lite
 
-Real-time–style **missing-person alert** platform: prerecorded video first, same code paths extend later to webcam/RTSP. AI is **integrated** (InsightFace + ONNXRuntime), not custom-trained.
+Real-time missing person re-identification from surveillance footage.
+Multi-face tracking · ArcFace embeddings · YOLOv8 detection · FastAPI backend
 
-This repository is structured for a **solo, weekend cadence**: clear layers, small files, configuration over code, and an API-first core with Streamlit as an optional UI shell.
-
----
-
-## Stack
-
-| Component | Technology |
-|---|---|
-| Detector | YOLOv8-face (GPU) / SCRFD InsightFace (CPU) |
-| Embedder | ArcFace (InsightFace buffalo_l) |
-| Tracker | SORT |
-| Backend | FastAPI + uvicorn |
-| Tunnel | ngrok |
-| Runtime | Google Colab T4 / CUDA 12.8 / PyTorch 2.11 |
+**Version:** v0.7.0 | **Runtime:** Google Colab T4 | **Status:** Dissertation complete
 
 ---
 
-## Detector providers
+## Quick Start (Colab)
 
-EchoFace uses a detector abstraction layer.
-The active detector is selected via environment variable:
+1. Open `notebooks/colab_setup.ipynb` or paste the setup cell
+2. Set branch: `phase6-detector-abstraction` (or `main` for v0.7.0)
+3. Run setup cell — installs deps, downloads YOLOv8 weights, starts server
+4. Copy ngrok URL from output
 
-| Provider | DETECTOR_PROVIDER | Use case |
+### Environment (SERVER_ENV)
+
+```python
+SERVER_ENV = {
+    "DETECTOR_PROVIDER":               "yolo",
+    "DETECTOR_INPUT_WIDTH":            "640",
+    "DETECTOR_INPUT_HEIGHT":           "640",
+    "DETECTOR_MAX_INPUT_PIXELS":       "409600",
+    "DETECTOR_RESOLUTION_CAP_ENABLED": "0",
+    "GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE": "15",
+    "INSIGHTFACE_CTX_ID":              "0",
+}
+```
+
+---
+
+## API Endpoints
+
+### Persons
+| Method | Path | Description |
 |---|---|---|
-| YOLOv8-face (derronqi) | `yolo` | Colab T4 GPU — 117 FPS |
-| SCRFD (InsightFace) | `scrfd` | Local CPU dev / future GPU servers with CUDA ≤12.4 |
+| GET | /api/v1/persons | List all enrolled persons |
+| POST | /api/v1/persons | Enroll person (single photo) |
+| POST | /api/v1/persons/{id}/photos | Add reference photos (max 5) |
 
-Default: `scrfd` (both CPU and GPU branches).
-Colab setup sets `DETECTOR_PROVIDER=yolo` automatically.
+### Processing
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/v1/processing | Submit video job (async) |
+| GET | /api/v1/processing/{job_id} | Poll job status + metrics |
 
-> **Note:** `onnxruntime-gpu` has no stable wheel for CUDA 12.8.
-> YOLOv8-face uses PyTorch CUDA directly — no `onnxruntime` dependency on the GPU path.
+### Detections
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/v1/detections | List all detection alerts |
+
+### Observability
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/v1/observability/metrics | Live telemetry + session_id |
+| GET | /api/v1/health | Health check |
 
 ---
 
-## 1. Recommended folder structure (what is in this repo)
+## Architecture
 
-```text
-ecoface_lite/                 # Installable Python package (importable from anywhere)
-  core/                       # Cross-cutting: settings + logging
-  ai_engine/                  # Detection, embeddings, matching, pipeline orchestration
-  api/                        # FastAPI routers + app factory
-  db/                         # SQLAlchemy models + async engine/session
-  services/                   # Use-cases orchestrating DB + AI + IO (keep routers thin)
-  input_sources/              # Video file today; webcam/RTSP implement same contracts later
-dashboard/                    # Streamlit UI (HTTP client to API — not a second business core)
-data/                         # Local data dirs (uploads, snapshots, videos, sqlite file)
-logs/                         # Rotatable file logs + stdout
-tests/                        # Pytest smoke tests (expand per phase)
-Dockerfile
-docker-compose.yml
-requirements.txt
-.env.example
+```
+Video frame → Detector (YOLOv8 GPU / SCRFD CPU) → Validator (landmarks · pose · quality) → Tracker (SORT) → Embedder (ArcFace ONNX) → Pipeline (governance · matching · alerts) → FastAPI → SQLite
 ```
 
-**Why package layout (`ecoface_lite/` as a package, not a monolithic `main.py`):** imports stay explicit, testability improves, and Docker/CI can install the same tree you use locally.
+Detector selected via `DETECTOR_PROVIDER` env var — no code change required.
 
 ---
 
-## 2. Modular architecture blueprint
+## Regression Gate
 
-| Layer | Responsibility | Depends on |
-|------|----------------|------------|
-| **AI Engine** | Detect faces, produce embeddings, score similarity | NumPy, OpenCV, InsightFace/ONNX only inside this layer |
-| **Services** | Enrollment, gallery loading, video job orchestration, persistence rules | AI engine interfaces, DB session, filesystem paths from settings |
-| **API** | HTTP, validation (Pydantic), auth hooks later, status codes | Services |
-| **DB** | Schema, migrations later (Alembic), async session | SQLAlchemy |
-| **Input sources** | Iterate frames from file/webcam/RTSP | OpenCV capture (isolated) |
-| **Dashboard** | UX only; calls API over HTTP | `requests` |
-
-**Separation principles used here**
-
-- **FastAPI routers stay thin** so you can add a CLI worker later without duplicating rules.
-- **Heavy imports are lazy** (`deps.get_recognition_pipeline`, CV2 inside service methods) so health checks and tests do not require InsightFace on disk.
-- **Embeddings are bytes in SQLite** today; swap to `pgvector` later without changing service method signatures if you keep “embedding = `np.ndarray` at the boundary” inside the AI layer.
-
----
-
-## 3. Configuration system
-
-- `ecoface_lite/core/config.py` — `pydantic-settings` loads `.env` + environment variables.
-- `.env.example` lists keys; **copy to `.env`** for local overrides.
-
-**Why:** twelve-factor style configuration is what makes EC2/ECS migration mostly “set env vars + mount volumes”, not rewrites.
-
----
-
-## 4. Logging system
-
-- `ecoface_lite/core/logging.py` — `setup_logging()` configures stdout + `logs/ecoface_lite.log`.
-
-**Why:** centralized setup means you can later add JSON logs, rotation, or shipping to CloudWatch without touching business modules.
-
----
-
-## 5. Database schema (SQLite now, PostgreSQL-ready)
-
-Tables (`ecoface_lite/db/models.py`):
-
-- **`persons`** — who is missing (display metadata + stored upload path).
-- **`face_embeddings`** — float32 embedding bytes + `embedding_dim` + `model_name` (supports multiple embeddings per person later).
-- **`detection_events`** — alert rows with confidence, threshold snapshot, source metadata, optional `snapshot_path`.
-
-**Why SQLAlchemy async:** identical service code can target `postgresql+asyncpg://...` by changing `DATABASE_URL`.
-
----
-
-## 6. Suggested API endpoints (implemented baseline)
-
-Base prefix: `/api/v1`
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/health` | Liveness for Docker/ALB |
-| GET | `/persons` | List enrolled persons |
-| POST | `/persons` | Multipart enroll (`display_name`, `notes`, `image`) |
-| GET | `/detections` | Recent detection events (`limit` query) |
-| POST | `/videos/process` | JSON `{ "video_relative_path": "..." }` under `VIDEOS_DIR` |
-
-**Future-friendly additions (not implemented yet to avoid scope creep):** `POST /jobs` + `GET /jobs/{id}` for long videos, `WebSocket`/`SSE` for live alerts, `POST /auth/token` when you add users/roles.
-
----
-
-## 7. Environment setup (Python 3.10.11)
-
-```powershell
-cd f:\Joydeb-Data\EchoFace_Eng1.0.1
-py -3.10 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-copy .env.example .env
-```
-
-**InsightFace models** download on first use (ensure disk + network available once).
-
----
-
-## Colab setup
-
-1. Open a new Colab notebook with T4 GPU runtime
-2. Add your ngrok token to Colab Secrets (key icon, left sidebar)
-   Name: `NGROK_TOKEN`
-3. Paste and run the single setup cell from:
-   `scripts/colab_setup.py` (or copy from CLAUDE.md)
-4. The cell clones the repo, downloads YOLOv8-face weights,
-   writes GPU config, starts the server, and opens a tunnel.
-
----
-
-## Model weights
-
-YOLOv8-face weights are not in git (file size).
-Download automatically via:
-
+Run before every merge to main:
 ```bash
-python scripts/download_yolov8_face.py
+python -m pytest tests/ -v --tb=short
 ```
-
-Source: derronqi/yolov8-face (Google Drive)
-Confirmed: 5-point facial landmarks, 117.9 FPS on T4 GPU.
+Expected: 30 passed.
 
 ---
 
-## 8. Local development workflow
-
-**API**
-
-```powershell
-uvicorn ecoface_lite.api.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Open `http://127.0.0.1:8000/docs` for Swagger.
-
-**Dashboard (separate terminal)**
-
-```powershell
-$env:ECOFACE_API_BASE = "http://127.0.0.1:8000/api/v1"
-streamlit run dashboard/app.py
-```
-
-**Typical demo flow**
-
-1. Put a prerecorded clip under `data/videos/`.
-2. Enroll a missing person via Swagger `POST /persons` or Streamlit tab.
-3. Call `POST /videos/process` with `{ "video_relative_path": "yourclip.mp4" }`.
-4. Inspect `GET /detections` and snapshot files under `data/snapshots/`.
-
-**Tests**
-
-```powershell
-pytest -q
-```
+## Known Constraints
+- onnxruntime-gpu: no stable CUDA 12.8 wheel — ONNX runs CPU only
+- .env files unreliable on Colab — use SERVER_ENV dict injection
+- Multi-CCTV: Phase 9 (not in current release)
 
 ---
 
-## 9. Docker preparation strategy
-
-- **`Dockerfile`**: single image with runtime deps for OpenCV headless + API default CMD.
-- **`docker-compose.yml`**: `api` on `8000`, `dashboard` on `8501` with `ECOFACE_API_BASE` pointing at the internal service name.
-
-**Next hardening steps (when you enter Phase 5/6):** non-root user, pinned base image digest, healthcheck on `/api/v1/health`, volume mounts for `data/` and `logs/`, `.env` managed via SSM/Secrets Manager on EC2.
-
----
-
-## 10. Future scalability (intentionally incremental)
-
-- **Job queue for long videos:** keep service functions pure; add a worker process that imports the same services (no architecture break).
-- **PostgreSQL + Alembic:** add migrations; consider `pgvector` for similarity search at scale.
-- **AuthN/Z:** FastAPI dependencies for `get_current_user` + route groups; DB tables for org/camera RBAC.
-- **Multi-camera / RTSP:** implement `VideoSource` subclasses; reuse the same `RecognitionPipeline.process_frame` contract.
-- **Anti-spoofing:** add a `LivenessChecker` interface in `ai_engine/` called from the pipeline behind a feature flag.
-
----
-
-## 11. Architectural decisions (short “why” list)
-
-- **API-first + Streamlit as a client:** avoids duplicating business rules in the UI while staying within your “no SPA yet” constraint.
-- **Service layer:** keeps FastAPI thin and gives you a stable place to add transactions, idempotency keys, and job orchestration later.
-- **SQLite first:** fastest solo velocity; SQLAlchemy keeps the door open to Postgres.
-- **Lazy imports for CV/AI:** keeps developer feedback loops fast and CI cheap until you add optional “full stack” jobs.
-
----
-
-## 12. License / academic use
-
-Add your university-required license/academic notice here when you publish the report or public repo.
+## Roadmap
+See [DISSERTATION_NOTES.md](DISSERTATION_NOTES.md) for full roadmap and benchmark results.
