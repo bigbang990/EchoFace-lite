@@ -67,10 +67,11 @@ class DetectionEvent(Base):
     frame_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     snapshot_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     extra_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
-    camera_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    camera_id: Mapped[int | None] = mapped_column(ForeignKey("cameras.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     person: Mapped[Person | None] = relationship(back_populates="detection_events")
+    camera: Mapped["Camera | None"] = relationship()
 
 
 class ProcessingStatus(Base):
@@ -100,3 +101,39 @@ class ProcessingStatus(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+class Camera(Base):
+    __tablename__ = "cameras"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    stream_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sightings: Mapped[list["Sighting"]] = relationship(back_populates="camera")
+
+
+class Incident(Base):
+    __tablename__ = "incidents"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
+    operator_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    sightings: Mapped[list["Sighting"]] = relationship(back_populates="incident", cascade="all, delete-orphan")
+
+
+class Sighting(Base):
+    __tablename__ = "sightings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    incident_id: Mapped[int] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False)
+    detection_id: Mapped[int | None] = mapped_column(ForeignKey("detection_events.id", ondelete="SET NULL"), nullable=True)
+    camera_id: Mapped[int | None] = mapped_column(ForeignKey("cameras.id", ondelete="SET NULL"), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    incident: Mapped[Incident] = relationship(back_populates="sightings")
+    camera: Mapped[Camera | None] = relationship(back_populates="sightings")
+    detection: Mapped["DetectionEvent | None"] = relationship()
