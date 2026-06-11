@@ -8,10 +8,18 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, func
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Table, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ecoface_lite.db.base import Base
+
+
+incident_persons = Table(
+    "incident_persons",
+    Base.metadata,
+    Column("incident_id", Integer, ForeignKey("incidents.id", ondelete="CASCADE"), primary_key=True),
+    Column("person_id", Integer, ForeignKey("persons.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class Person(Base):
@@ -124,6 +132,11 @@ class Incident(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     sightings: Mapped[list["Sighting"]] = relationship(back_populates="incident", cascade="all, delete-orphan")
+    persons: Mapped[list["Person"]] = relationship(
+        "Person",
+        secondary=incident_persons,
+        backref="incidents",
+    )
 
 
 class Sighting(Base):

@@ -66,12 +66,42 @@ def count_emitted_frames(video_path: Path, frame_skip: int) -> int:
 
 
 async def load_gallery(session: AsyncSession) -> list[tuple[int, "np.ndarray"]]:
+    """
+    Load embeddings for persons attached to at least one OPEN incident.
+    Falls back to ALL enrolled persons if no incidents exist yet
+    (preserves backward compatibility for tests and simple demos).
+    """
     import numpy as np
     from sqlalchemy import select
 
-    from ecoface_lite.db.models import FaceEmbedding
+    from ecoface_lite.db.models import FaceEmbedding, Incident, incident_persons
 
-    stmt = select(FaceEmbedding.person_id, FaceEmbedding.embedding).order_by(FaceEmbedding.id.asc())
+    # Check if any incidents exist at all
+    has_incidents = (await session.execute(
+        select(Incident.id).limit(1)
+    )).first() is not None
+
+    if has_incidents:
+        # Only load persons attached to at least one OPEN incident
+        open_person_ids = (await session.execute(
+            select(incident_persons.c.person_id)
+            .join(Incident, Incident.id == incident_persons.c.incident_id)
+            .where(Incident.status == "open")
+            .distinct()
+        )).scalars().all()
+
+        if not open_person_ids:
+            return []  # All incidents closed — nothing to search
+
+        stmt = (
+            select(FaceEmbedding.person_id, FaceEmbedding.embedding)
+            .where(FaceEmbedding.person_id.in_(open_person_ids))
+            .order_by(FaceEmbedding.id.asc())
+        )
+    else:
+        # No incident system in use — load everything (backward compat)
+        stmt = select(FaceEmbedding.person_id, FaceEmbedding.embedding).order_by(FaceEmbedding.id.asc())
+
     rows = (await session.execute(stmt)).all()
     gallery: list[tuple[int, np.ndarray]] = []
     for person_id, blob in rows:
