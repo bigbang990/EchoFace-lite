@@ -76,6 +76,10 @@ async def _sqlite_apply_schema_patches() -> None:
             "ALTER TABLE processing_status ADD COLUMN processing_duration_seconds FLOAT",
             "ALTER TABLE processing_status ADD COLUMN camera_id VARCHAR(128)",
             "ALTER TABLE detection_events ADD COLUMN camera_id VARCHAR(128)",
+            "ALTER TABLE detection_events ADD COLUMN camera_id_int INTEGER REFERENCES cameras(id)",
+            "CREATE TABLE IF NOT EXISTS cameras (id INTEGER PRIMARY KEY AUTOINCREMENT, label VARCHAR(255) NOT NULL, stream_url VARCHAR(1024), location VARCHAR(512), is_active BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))",
+            "CREATE TABLE IF NOT EXISTS incidents (id INTEGER PRIMARY KEY AUTOINCREMENT, title VARCHAR(512) NOT NULL, description TEXT, status VARCHAR(32) NOT NULL DEFAULT 'open', operator_id VARCHAR(128), created_at DATETIME DEFAULT (CURRENT_TIMESTAMP), updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP))",
+            "CREATE TABLE IF NOT EXISTS sightings (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, detection_id INTEGER REFERENCES detection_events(id) ON DELETE SET NULL, camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL, notes TEXT, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))",
         ):
             try:
                 await conn.execute(text(stmt))

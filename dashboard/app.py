@@ -112,13 +112,15 @@ with st.sidebar:
 
 _render_connection_status()
 
-health_tab, enroll_tab, live_test_tab, video_tab, detections_tab, observability_tab, experimental_tab = st.tabs(
+health_tab, enroll_tab, live_test_tab, video_tab, detections_tab, cameras_tab, incidents_tab, observability_tab, experimental_tab = st.tabs(
     [
         "Health",
         "Enroll missing person",
         "Live Recognition Test",
         "Video processing",
         "Detections",
+        "Cameras",
+        "Incidents",
         "Observability",
         "Experimental Console",
     ]
@@ -384,6 +386,275 @@ with detections_tab:
         if auto_refresh:
             time.sleep(3)
             st.rerun()
+
+with cameras_tab:
+    st.subheader("Camera Registry")
+    
+    # Add camera form
+    with st.form(key="add_camera_form"):
+        label = st.text_input("Label", placeholder="e.g., Front Entrance")
+        stream_url = st.text_input("Stream URL (optional)", placeholder="e.g., rtsp://camera1.local:554/stream")
+        location = st.text_input("Location (optional)", placeholder="e.g., Building A, Floor 2")
+        submitted = st.form_submit_button("Add Camera")
+        
+        if submitted:
+            if not label:
+                st.warning("Label is required.")
+            else:
+                client = _get_api_client()
+                payload = {
+                    "label": label,
+                    "stream_url": stream_url or None,
+                    "location": location or None,
+                }
+                try:
+                    response = client._session.post(
+                        f"{client.base_url}/cameras",
+                        json=payload,
+                        timeout=10,
+                    )
+                    response.raise_for_status()
+                    st.success("Camera added successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to add camera: {str(e)}")
+    
+    st.divider()
+    
+    # List cameras
+    refresh_cameras = st.button("Refresh Cameras")
+    if refresh_cameras or "cameras_refreshed" not in st.session_state:
+        st.session_state.cameras_refreshed = True
+        client = _get_api_client()
+        try:
+            response = client._session.get(
+                f"{client.base_url}/cameras",
+                timeout=10,
+            )
+            response.raise_for_status()
+            cameras = response.json()
+            st.session_state.cameras = cameras
+        except Exception as e:
+            st.error(f"Failed to load cameras: {str(e)}")
+            cameras = []
+    
+    if "cameras" in st.session_state and st.session_state.cameras:
+        for camera in st.session_state.cameras:
+            with st.expander(f"Camera {camera['id']}: {camera['label']}"):
+                st.write(f"**Location:** {camera.get('location') or 'N/A'}")
+                st.write(f"**Stream URL:** {camera.get('stream_url') or 'N/A'}")
+                st.write(f"**Active:** {'Yes' if camera.get('is_active') else 'No'}")
+                st.write(f"**Created At:** {camera.get('created_at')}")
+                
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    if st.button(f"Toggle Active", key=f"toggle_camera_{camera['id']}"):
+                        client = _get_api_client()
+                        try:
+                            response = client._session.patch(
+                                f"{client.base_url}/cameras/{camera['id']}",
+                                json={"is_active": not camera.get('is_active')},
+                                timeout=10,
+                            )
+                            response.raise_for_status()
+                            st.success("Camera status updated!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to update camera: {str(e)}")
+                with c2:
+                    if st.button(f"Delete Camera", key=f"delete_camera_{camera['id']}"):
+                        client = _get_api_client()
+                        try:
+                            response = client._session.delete(
+                                f"{client.base_url}/cameras/{camera['id']}",
+                                timeout=10,
+                            )
+                            response.raise_for_status()
+                            st.success("Camera deleted!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to delete camera: {str(e)}")
+    else:
+        st.info("No cameras registered yet.")
+
+with incidents_tab:
+    st.subheader("Incident Management")
+    
+    # Create incident form
+    with st.form(key="create_incident_form"):
+        title = st.text_input("Title", placeholder="e.g., Unauthorized Person Detected")
+        description = st.text_area("Description (optional)", placeholder="Additional details about the incident...")
+        operator_id = st.text_input("Operator ID (optional)", placeholder="e.g., operator_123")
+        submitted = st.form_submit_button("Create Incident")
+        
+        if submitted:
+            if not title:
+                st.warning("Title is required.")
+            else:
+                client = _get_api_client()
+                payload = {
+                    "title": title,
+                    "description": description or None,
+                    "operator_id": operator_id or None,
+                }
+                try:
+                    response = client._session.post(
+                        f"{client.base_url}/incidents",
+                        json=payload,
+                        timeout=10,
+                    )
+                    response.raise_for_status()
+                    st.success("Incident created successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to create incident: {str(e)}")
+    
+    st.divider()
+    
+    # Filter by status
+    status_filter = st.selectbox("Filter by Status", ["all", "open", "active", "closed"], index=0)
+    
+    # List incidents
+    refresh_incidents = st.button("Refresh Incidents")
+    if refresh_incidents or "incidents_refreshed" not in st.session_state:
+        st.session_state.incidents_refreshed = True
+        client = _get_api_client()
+        try:
+            response = client._session.get(
+                f"{client.base_url}/incidents",
+                timeout=10,
+            )
+            response.raise_for_status()
+            incidents = response.json()
+            st.session_state.incidents = incidents
+        except Exception as e:
+            st.error(f"Failed to load incidents: {str(e)}")
+            incidents = []
+    
+    if "incidents" in st.session_state and st.session_state.incidents:
+        # Filter incidents
+        filtered_incidents = [
+            inc for inc in st.session_state.incidents 
+            if status_filter == "all" or inc.get("status") == status_filter
+        ]
+        
+        for incident in filtered_incidents:
+            # Status badge color
+            status_color = "blue" if incident.get("status") == "open" else "orange" if incident.get("status") == "active" else "gray"
+            
+            with st.expander(f"Incident {incident['id']}: {incident['title']} ({incident['status']})"):
+                st.write(f"**Description:** {incident.get('description') or 'N/A'}")
+                st.write(f"**Status:** {incident.get('status')}")
+                st.write(f"**Operator ID:** {incident.get('operator_id') or 'N/A'}")
+                st.write(f"**Created At:** {incident.get('created_at')}")
+                st.write(f"**Updated At:** {incident.get('updated_at') or 'N/A'}")
+                
+                # Update status buttons
+                st.write("**Update Status:**")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    if st.button("Open", key=f"open_incident_{incident['id']}"):
+                        client = _get_api_client()
+                        try:
+                            response = client._session.patch(
+                                f"{client.base_url}/incidents/{incident['id']}/status",
+                                json={"status": "open"},
+                                timeout=10,
+                            )
+                            response.raise_for_status()
+                            st.success("Incident status updated!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to update status: {str(e)}")
+                with c2:
+                    if st.button("Active", key=f"active_incident_{incident['id']}"):
+                        client = _get_api_client()
+                        try:
+                            response = client._session.patch(
+                                f"{client.base_url}/incidents/{incident['id']}/status",
+                                json={"status": "active"},
+                                timeout=10,
+                            )
+                            response.raise_for_status()
+                            st.success("Incident status updated!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to update status: {str(e)}")
+                with c3:
+                    if st.button("Closed", key=f"closed_incident_{incident['id']}"):
+                        client = _get_api_client()
+                        try:
+                            response = client._session.patch(
+                                f"{client.base_url}/incidents/{incident['id']}/status",
+                                json={"status": "closed"},
+                                timeout=10,
+                            )
+                            response.raise_for_status()
+                            st.success("Incident status updated!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to update status: {str(e)}")
+                
+                st.divider()
+                
+                # Add sighting form
+                st.write("**Add Sighting:**")
+                with st.form(key=f"add_sighting_{incident['id']}"):
+                    detection_id = st.number_input("Detection ID (optional)", min_value=1, step=1, value=None)
+                    camera_id = st.number_input("Camera ID (optional)", min_value=1, step=1, value=None)
+                    notes = st.text_input("Notes (optional)", placeholder="Additional details about this sighting...")
+                    add_sighting_submitted = st.form_submit_button("Add Sighting")
+                    
+                    if add_sighting_submitted:
+                        client = _get_api_client()
+                        payload = {
+                            "detection_id": int(detection_id) if detection_id else None,
+                            "camera_id": int(camera_id) if camera_id else None,
+                            "notes": notes or None,
+                        }
+                        try:
+                            response = client._session.post(
+                                f"{client.base_url}/incidents/{incident['id']}/sightings",
+                                json=payload,
+                                timeout=10,
+                            )
+                            response.raise_for_status()
+                            st.success("Sighting added successfully!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to add sighting: {str(e)}")
+                
+                st.divider()
+                
+                # View sightings
+                if st.button("View Sightings", key=f"view_sightings_{incident['id']}"):
+                    client = _get_api_client()
+                    try:
+                        response = client._session.get(
+                            f"{client.base_url}/incidents/{incident['id']}/sightings",
+                            timeout=10,
+                        )
+                        response.raise_for_status()
+                        sightings = response.json()
+                        st.session_state[f"sightings_{incident['id']}"] = sightings
+                    except Exception as e:
+                        st.error(f"Failed to load sightings: {str(e)}")
+                        sightings = []
+                
+                if f"sightings_{incident['id']}" in st.session_state:
+                    st.write("**Sightings:**")
+                    sightings = st.session_state[f"sightings_{incident['id']}"]
+                    if sightings:
+                        for sighting in sightings:
+                            st.write(f"- Sighting {sighting['id']}:")
+                            st.write(f"  - Detection ID: {sighting.get('detection_id') or 'N/A'}")
+                            st.write(f"  - Camera ID: {sighting.get('camera_id') or 'N/A'}")
+                            st.write(f"  - Notes: {sighting.get('notes') or 'N/A'}")
+                            st.write(f"  - Created At: {sighting.get('created_at')}")
+                    else:
+                        st.info("No sightings for this incident.")
+    else:
+        st.info("No incidents created yet.")
 
 with observability_tab:
     st.subheader("System Metrics")
