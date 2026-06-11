@@ -1,63 +1,50 @@
-## Checkpoint — 2026-06-12 — Phase 8C case management API complete
+## Checkpoint — 2026-06-12 — Phase 8B incident-person link endpoint complete
 
 ### Phase
-8C case management API — cameras, incidents, sightings
+8B incident-person link endpoint
 
 ### Status
 complete
 
-### New routers
-- ecoface_lite/api/routers/cameras.py
-  - POST   /api/v1/cameras          → create camera, 201
-  - GET    /api/v1/cameras          → list all
-  - GET    /api/v1/cameras/{id}     → get one, 404 if missing
-  - PATCH  /api/v1/cameras/{id}     → update is_active only
-  - DELETE /api/v1/cameras/{id}     → hard delete, 204
+### New routes (ecoface_lite/api/routers/incidents.py)
+- POST   /api/v1/incidents/{id}/persons/{person_id}
+    Load incident + persons (selectinload), load person, 404/409 guards,
+    append to incident.persons, return IncidentPersonOut (201)
+- DELETE /api/v1/incidents/{id}/persons/{person_id}
+    Load incident + persons (selectinload), filter out person, commit, 204
+- GET    /api/v1/incidents/{id}/persons
+    Load incident + persons (selectinload), 404 if missing,
+    return list[PersonOut]
 
-- ecoface_lite/api/routers/incidents.py
-  - POST   /api/v1/incidents                    → create, status="open", 201
-  - GET    /api/v1/incidents                    → list, optional ?status= filter
-  - GET    /api/v1/incidents/{id}               → get one + sightings (IncidentDetailOut)
-  - PATCH  /api/v1/incidents/{id}/status        → update status (open/active/closed)
-  - POST   /api/v1/incidents/{id}/sightings     → add sighting, 201
-  - GET    /api/v1/incidents/{id}/sightings     → list sightings
-
-### New schemas (ecoface_lite/api/schemas.py)
-CameraOut, CameraCreate,
-IncidentOut, IncidentCreate, IncidentStatusUpdate,
-SightingOut, SightingCreate
+### New schema (ecoface_lite/api/schemas.py)
+- IncidentPersonOut: incident_id, person_id, person_name
 
 ### Files changed
-- ecoface_lite/api/schemas.py — 7 new schemas appended
-- ecoface_lite/api/main.py — cameras + incidents routers registered
-- ecoface_lite/api/routers/cameras.py — new file
-- ecoface_lite/api/routers/incidents.py — new file (includes IncidentDetailOut)
+- ecoface_lite/api/schemas.py — IncidentPersonOut appended
+- ecoface_lite/api/routers/incidents.py — selectinload import, Person import,
+  IncidentPersonOut/PersonOut schema imports, 3 new route handlers
 
-### Regression gate result
-- 29/29 pass (test_health.py pre-broken — PersonEnrollMultiOut import error,
-  pre-existing before Phase 8A)
-- All 11 new routes verified via app.routes introspection
-- Existing router prefixes unchanged
-- pipeline.py, bootstrap.py, video_service.py untouched
+### Regression gate
+- 29/29 pass (test_health.py pre-broken — PersonEnrollMultiOut import, pre-existing)
+- All incident routes verified via app.routes introspection:
+  /incidents, /incidents/{id}, /incidents/{id}/persons,
+  /incidents/{id}/persons/{person_id}, /incidents/{id}/sightings,
+  /incidents/{id}/sightings, /incidents/{id}/status
+
+### Previous phases on this branch
+- Phase 8C: cameras.py + incidents.py routers, 7 new schemas
+- Phase 8A: ExperimentCoordinator extracted from pipeline.py (1561→1525 lines)
+- Phase 7B: session lifecycle isolation, multi-photo enrollment
 
 ### GPU baseline metrics (still valid)
 - hardware_backend_type: 1 (GPU)
-- total_faces_detected: 687
-- detector_rejection_rate: 0.347
 - stable_matches: 50
 - identity_switch_rate: 0
 - average_processing_fps: 81
 - detector_runtime_ms: 13.2ms
 
-### Previous phase
-Phase 8A pipeline decompose step 1:
-- ecoface_lite/ai_engine/experiment_coordinator.py (ExperimentCoordinator, 4 methods)
-- pipeline.py: 1561 → 1525 lines
-
-### Next extraction target
-GovernanceCoordinator (pending separate session)
-- Candidates: _apply_load_governance (lines 479–681), governance state vars in __init__
-- Hard constraint: governance vars tightly coupled to process_frame — careful analysis required
+### Next target
+GovernanceCoordinator extraction (pending separate session)
 
 ### Branch
 phase8-pipeline-decompose

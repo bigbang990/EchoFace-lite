@@ -154,3 +154,9 @@ class SightingCreate(BaseModel):
     detection_id: int | None = None
     camera_id: int | None = None
     notes: str | None = Field(default=None, max_length=4000)
+
+
+class IncidentPersonOut(BaseModel):
+    incident_id: int
+    person_id: int
+    person_name: str

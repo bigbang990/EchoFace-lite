@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from ecoface_lite.api.deps import DbSession
 from ecoface_lite.api.schemas import (
     IncidentCreate,
     IncidentOut,
+    IncidentPersonOut,
     IncidentStatusUpdate,
+    PersonOut,
     SightingCreate,
     SightingOut,
 )
-from ecoface_lite.db.models import Incident, Sighting
+from ecoface_lite.db.models import Incident, Person, Sighting
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -107,3 +110,53 @@ async def list_sightings(incident_id: int, db: DbSession) -> list[SightingOut]:
         select(Sighting).where(Sighting.incident_id == incident_id)
     )
     return [SightingOut.model_validate(s) for s in sighting_result.scalars().all()]
+
+
+@router.post("/{incident_id}/persons/{person_id}", response_model=IncidentPersonOut, status_code=201)
+async def link_person_to_incident(
+    incident_id: int,
+    person_id: int,
+    db: DbSession,
+) -> IncidentPersonOut:
+    result = await db.execute(
+        select(Incident).where(Incident.id == incident_id).options(selectinload(Incident.persons))
+    )
+    incident = result.scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    person_result = await db.execute(select(Person).where(Person.id == person_id))
+    person = person_result.scalar_one_or_none()
+    if person is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    if any(p.id == person_id for p in incident.persons):
+        raise HTTPException(status_code=409, detail="Person already linked to this incident")
+    incident.persons.append(person)
+    await db.commit()
+    return IncidentPersonOut(incident_id=incident_id, person_id=person_id, person_name=person.display_name)
+
+
+@router.delete("/{incident_id}/persons/{person_id}", status_code=204)
+async def unlink_person_from_incident(
+    incident_id: int,
+    person_id: int,
+    db: DbSession,
+) -> None:
+    result = await db.execute(
+        select(Incident).where(Incident.id == incident_id).options(selectinload(Incident.persons))
+    )
+    incident = result.scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    incident.persons = [p for p in incident.persons if p.id != person_id]
+    await db.commit()
+
+
+@router.get("/{incident_id}/persons", response_model=list[PersonOut])
+async def list_incident_persons(incident_id: int, db: DbSession) -> list[PersonOut]:
+    result = await db.execute(
+        select(Incident).where(Incident.id == incident_id).options(selectinload(Incident.persons))
+    )
+    incident = result.scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return [PersonOut.model_validate(p) for p in incident.persons]
