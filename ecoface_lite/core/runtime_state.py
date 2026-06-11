@@ -82,7 +82,7 @@ class RuntimeOverrideState:
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _cpu_protection: CpuProtectionState = field(default_factory=CpuProtectionState)
     _backend_type: BackendType = BackendType.LOCAL_CPU
-    _experiment_session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    _experiment_session_id: str = field(default_factory=lambda: str(_uuid.uuid4()))
     _last_override_timestamp: Optional[datetime] = None
     
     def apply_overrides(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -110,7 +110,7 @@ class RuntimeOverrideState:
         with self._lock:
             self._overrides.clear()
             self._cpu_protection = CpuProtectionState()
-            self._experiment_session_id = str(uuid.uuid4())
+            self._experiment_session_id = str(_uuid.uuid4())
             self._last_override_timestamp = None
     
     def set_backend_type(self, backend_type: BackendType) -> None:
