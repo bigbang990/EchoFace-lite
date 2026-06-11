@@ -1,27 +1,36 @@
-## Checkpoint — 2026-06-11 — Phase 7B multi-photo enrollment complete
+## Checkpoint — 2026-06-11 — Phase 7B session lifecycle isolation complete
 
 ### Phase
-7B multi-photo enrollment
+7B session lifecycle isolation
 
 ### Status
 complete
 
-### New endpoint
-POST /persons/{person_id}/photos
+### Bug fixed
+MetricsRegistry counter leak across runs — metrics.reset() now called at job start.
 
-### Files changed (Phase 7B)
-- ecoface_lite/services/person_service.py — add_photos_to_person stub replaced with real impl
-- ecoface_lite/api/routers/persons.py — new route added (imports: select, Person, PersonEnrollMultiOut)
+### New behaviour
+Each video job gets a UUID via new_session_id() before metrics.reset().
+clear_session_id() fires in a finally block — runs on success AND error.
+GET /observability/metrics now includes "session_id" field.
 
-### Implementation notes
-- Max 5 photos per call enforced in service (HTTPException 400)
-- Per-photo dedupe via sha256 against FaceEmbedding.ingest_sha256 for this person
-- cv2.imdecode → pipeline.enroll_reference_embedding() → FaceEmbedding stored as float32 bytes
-- ValueError from enroll (no face / quality rejected) → rejected counter + reason string
-- 404 guard in router before service call; 413 per-file size check matches existing POST /persons pattern
-- Existing POST /persons route signature unchanged; pipeline.py not touched
+### Files changed (Phase 7B part 2)
+- ecoface_lite/services/video_service.py — session start/end hooks in run_async_video_job
+- ecoface_lite/api/routers/observability.py — added session_id to metrics response
 
-### Previous metrics (GPU path — still baseline)
+### Lifecycle order (in run_async_video_job)
+1. new_session_id() → store UUID
+2. metrics.reset() → clear all counters
+3. logger.info("Session started ...")
+4. try: process_prerecorded_video(...)
+5. except HTTPException / except Exception → mark_failed
+6. finally: clear_session_id() + logger.info("Session ended ...")
+
+### Previous phase (7B multi-photo enrollment — also complete)
+- POST /persons/{person_id}/photos — max 5 photos, sha256 dedupe, returns accepted/rejected
+- ecoface_lite/services/person_service.py, ecoface_lite/api/routers/persons.py
+
+### GPU baseline metrics (still valid)
 - hardware_backend_type: 1 (GPU)
 - total_faces_detected: 687
 - detector_rejection_rate: 0.347
@@ -33,13 +42,8 @@ POST /persons/{person_id}/photos
 - average_processing_fps: 81
 - detector_runtime_ms: 13.2ms
 
-### Root cause chain — fully resolved (carried from prior checkpoint)
-1. platform_bootstrap checked onnxruntime → FIXED (torch.cuda)
-2. prepare_for_detection had second cap → FIXED (flag check)
-3. insightface_ctx_id not overridden → FIXED (bootstrap.py)
-
 ### State
-- Working: full GPU pipeline + multi-photo enrollment API
+- Working: full GPU pipeline + multi-photo enrollment + session isolation
 - Next: run regression suite, then merge to main as v0.7.0
 
 ### Branch

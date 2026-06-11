@@ -7,7 +7,7 @@ from fastapi import APIRouter, Query
 from ecoface_lite.ai_engine.diagnostics import diagnostics
 from ecoface_lite.core.config import get_settings
 from ecoface_lite.core.metrics import metrics
-from ecoface_lite.core.runtime_state import get_runtime_state
+from ecoface_lite.core.runtime_state import get_runtime_state, get_session_id
 from ecoface_lite.core.runtime_config import EffectiveRuntimeConfig
 
 router = APIRouter(prefix="/observability", tags=["observability"])
@@ -31,7 +31,8 @@ async def get_metrics() -> dict[str, object]:
     
     # Phase 2: Integrity Validation Flag
     data["api_integrity_ok"] = True
-    
+    data["session_id"] = get_session_id()
+
     return data
 
 
