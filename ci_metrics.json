@@ -1,0 +1,15 @@
+{
+  "recall_at_1": 1.0,
+  "precision": 1.0,
+  "false_positive_rate": 0.0,
+  "small_face_recall": 0.0,
+  "avg_embedding_match_time_ms": 0.1406,
+  "identity_switch_rate": 0.0,
+  "p95_fps": 0.0,
+  "total_queries": 15,
+  "small_face_total": 0,
+  "negative_total": 6,
+  "gallery_size": 5,
+  "threshold_used": 0.5,
+  "model_name": "buffalo_l"
+}
