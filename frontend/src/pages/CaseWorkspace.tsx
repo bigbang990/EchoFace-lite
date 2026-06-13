@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft, MapPin, Calendar, User, MessageSquare,
   PauseCircle, CheckCircle2, Send, Loader2, RefreshCw,
+  Images, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import Timeline from '../components/Timeline'
+import ImageZoomModal from '../components/ImageZoomModal'
 import { useIncidentDetail } from '../api/hooks'
 import { useAppStore } from '../store/appStore'
 import type { IncidentStatus, TimelineEntry } from '../types'
@@ -28,20 +30,32 @@ function Initials({ name }: { name: string }) {
   )
 }
 
-function PersonAvatar({ name, photoUrl }: { name: string; photoUrl: string | null }) {
+function PersonAvatar({
+  name,
+  photoUrl,
+  onZoom,
+}: {
+  name: string
+  photoUrl: string | null
+  onZoom?: () => void
+}) {
   const [imgError, setImgError] = useState(false)
   if (photoUrl && !imgError) {
     return (
-      <img
+      <motion.img
         src={photoUrl}
         alt={name}
         onError={() => setImgError(true)}
-        className="w-24 h-24 rounded-full object-cover border border-gray-700"
+        onClick={onZoom}
+        className="w-24 h-24 rounded-full object-cover border border-gray-700 cursor-pointer hover:opacity-90 transition-opacity"
+        whileHover={{ scale: 1.02 }}
       />
     )
   }
   return <Initials name={name || '?'} />
 }
+
+const NOTES_PREFIX = 'echoface_notes_'
 
 export default function CaseWorkspace() {
   const { id } = useParams<{ id: string }>()
@@ -52,8 +66,22 @@ export default function CaseWorkspace() {
   const [extraEntries, setExtraEntries] = useState<TimelineEntry[]>([])
   const [localStatus, setLocalStatus] = useState<IncidentStatus | null>(null)
   const [comment, setComment] = useState('')
+  const [photosOpen, setPhotosOpen] = useState(false)
+  const [zoomedImage, setZoomedImage] = useState<{ src: string; alt: string } | null>(null)
 
   const backendBase = incUrl.replace(/\/api\/v1\/?$/, '')
+
+  // Load persisted comments from localStorage when incident loads
+  useEffect(() => {
+    if (!id) return
+    const stored = localStorage.getItem(`${NOTES_PREFIX}${id}`)
+    if (stored) {
+      try {
+        const notes: TimelineEntry[] = JSON.parse(stored)
+        setExtraEntries(notes)
+      } catch { /* ignore corrupt data */ }
+    }
+  }, [id])
 
   const entries = [
     ...baseTimeline.map((e) => {
@@ -67,24 +95,32 @@ export default function CaseWorkspace() {
   const cfg = statusCfg[currentStatus]
   const person = persons[0]
   const photoUrl = person?.source_image_path
-    ? `${backendBase}/${person.source_image_path}`
+    ? `${backendBase}/${person.source_image_path.replace(/^\//, '')}`
     : null
+
+  const persistNotes = (notes: TimelineEntry[]) => {
+    if (!id) return
+    // Only persist comment entries — sighting overrides are re-derived from API on reload
+    const toStore = notes.filter((e) => e.type === 'COMMENT_ADDED')
+    localStorage.setItem(`${NOTES_PREFIX}${id}`, JSON.stringify(toStore))
+  }
 
   const addComment = () => {
     if (!comment.trim()) return
-    setExtraEntries((prev) => [
-      ...prev,
-      {
-        id: `comment-${Date.now()}`,
-        type: 'COMMENT_ADDED' as const,
-        timestamp: new Date().toISOString(),
-        message: `Operator note: "${comment.trim()}"`,
-      },
-    ])
+    const entry: TimelineEntry = {
+      id: `comment-${Date.now()}`,
+      type: 'COMMENT_ADDED',
+      timestamp: new Date().toISOString(),
+      message: `Operator note: "${comment.trim()}"`,
+    }
+    const next = [...extraEntries, entry]
+    setExtraEntries(next)
+    persistNotes(next)
     setComment('')
   }
 
-  const confirmSighting = (sightingId: string) => {
+  const confirmSighting = async (sightingId: string) => {
+    // Optimistic update
     setExtraEntries((prev) => {
       const fromBase = baseTimeline.find((e) => e.sighting?.id === sightingId)
       const verifiedEntry: TimelineEntry = {
@@ -93,29 +129,34 @@ export default function CaseWorkspace() {
         timestamp: new Date().toISOString(),
         message: 'Alert confirmed — identity match verified by operator',
       }
-      // If an override for this sighting already exists in extraEntries, update it
-      const existingOverride = prev.find((e) => e.id === fromBase?.id)
-      if (existingOverride) {
+      if (!fromBase) return [...prev, verifiedEntry]
+      const already = prev.find((e) => e.id === fromBase.id)
+      if (already) {
         return [
           ...prev.map((e) =>
-            e.id === fromBase!.id ? { ...e, sighting: { ...e.sighting!, status: 'CONFIRMED' as const } } : e
+            e.id === fromBase.id ? { ...e, sighting: { ...e.sighting!, status: 'CONFIRMED' as const } } : e
           ),
           verifiedEntry,
         ]
       }
-      // Otherwise create an override from the base entry
-      if (fromBase) {
-        return [
-          ...prev,
-          { ...fromBase, sighting: { ...fromBase.sighting!, status: 'CONFIRMED' as const } },
-          verifiedEntry,
-        ]
-      }
-      return [...prev, verifiedEntry]
+      return [
+        ...prev,
+        { ...fromBase, sighting: { ...fromBase.sighting!, status: 'CONFIRMED' as const } },
+        verifiedEntry,
+      ]
     })
+    // Persist to API
+    if (accessMode !== 'MOCK' && incident) {
+      await fetch(`${incUrl}/incidents/${incident.id}/sightings/${sightingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'confirmed' }),
+      }).catch(console.error)
+      refetch()
+    }
   }
 
-  const rejectSighting = (sightingId: string) => {
+  const rejectSighting = async (sightingId: string) => {
     setExtraEntries((prev) => {
       const fromBase = baseTimeline.find((e) => e.sighting?.id === sightingId)
       if (!fromBase) return prev
@@ -127,6 +168,14 @@ export default function CaseWorkspace() {
       }
       return [...prev, { ...fromBase, sighting: { ...fromBase.sighting!, status: 'REJECTED' as const } }]
     })
+    if (accessMode !== 'MOCK' && incident) {
+      await fetch(`${incUrl}/incidents/${incident.id}/sightings/${sightingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'rejected' }),
+      }).catch(console.error)
+      refetch()
+    }
   }
 
   const patchStatus = async (backendStatus: 'open' | 'active' | 'closed') => {
@@ -142,29 +191,48 @@ export default function CaseWorkspace() {
   const pauseTracking = () => {
     setLocalStatus('OPEN')
     void patchStatus('open')
-    setExtraEntries((prev) => [
-      ...prev,
-      {
-        id: `pause-${Date.now()}`,
-        type: 'TRACKING_PAUSED' as const,
-        timestamp: new Date().toISOString(),
-        message: 'Tracking paused — pipeline suspended, embeddings still registered',
-      },
-    ])
+    setExtraEntries((prev) => {
+      const next = [
+        ...prev,
+        {
+          id: `pause-${Date.now()}`,
+          type: 'TRACKING_PAUSED' as const,
+          timestamp: new Date().toISOString(),
+          message: 'Tracking paused — pipeline suspended, embeddings still registered',
+        },
+      ]
+      persistNotes(next)
+      return next
+    })
+  }
+
+  const togglePause = async () => {
+    if (!incident) return
+    const newIsPaused = !incident.is_paused
+    await fetch(`${incUrl}/incidents/${incident.id}/pause`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_paused: newIsPaused }),
+    }).catch(console.error)
+    await refetch()
   }
 
   const closeCase = () => {
     setLocalStatus('CLOSED')
     void patchStatus('closed')
-    setExtraEntries((prev) => [
-      ...prev,
-      {
-        id: `close-${Date.now()}`,
-        type: 'CASE_CLOSED' as const,
-        timestamp: new Date().toISOString(),
-        message: `Case ${incident?.ref ?? ''} closed — embedding search disabled`,
-      },
-    ])
+    setExtraEntries((prev) => {
+      const next = [
+        ...prev,
+        {
+          id: `close-${Date.now()}`,
+          type: 'CASE_CLOSED' as const,
+          timestamp: new Date().toISOString(),
+          message: `Case ${incident?.ref ?? ''} closed — embedding search disabled`,
+        },
+      ]
+      persistNotes(next)
+      return next
+    })
   }
 
   if (loading) {
@@ -210,7 +278,13 @@ export default function CaseWorkspace() {
         {/* Left: Profile */}
         <aside className="w-64 flex-shrink-0 border-r border-gray-800 bg-gray-950 overflow-y-auto p-5">
           <div className="flex flex-col items-center text-center mb-5">
-            <PersonAvatar name={person?.name ?? '??'} photoUrl={accessMode === 'MOCK' ? null : photoUrl} />
+            <PersonAvatar
+              name={person?.name ?? '??'}
+              photoUrl={accessMode === 'MOCK' ? null : photoUrl}
+              onZoom={
+                photoUrl ? () => setZoomedImage({ src: photoUrl, alt: person?.name ?? 'Profile photo' }) : undefined
+              }
+            />
             <h2 className="text-base font-semibold text-gray-100 mt-3">{person?.name ?? 'Unknown'}</h2>
             <div className="text-xs font-mono text-gray-600 mt-0.5">
               {person?.age ? `${person.age} yrs` : ''}{person?.age && person?.gender ? ' · ' : ''}{person?.gender ?? ''}
@@ -223,11 +297,53 @@ export default function CaseWorkspace() {
                 <p className="text-gray-400 leading-relaxed">{person.description}</p>
               </div>
             )}
+
+            {/* Enrollment photos */}
+            {persons.length > 0 && accessMode !== 'MOCK' && (
+              <div className="border-t border-gray-800 pt-3">
+                <button
+                  onClick={() => setPhotosOpen((v) => !v)}
+                  className="flex items-center gap-2 text-[10px] font-mono text-gray-600 tracking-widest mb-2 hover:text-gray-400 transition-colors w-full"
+                >
+                  <Images size={10} />
+                  ENROLLED PHOTOS
+                  {photosOpen ? <ChevronDown size={10} className="ml-auto" /> : <ChevronRight size={10} className="ml-auto" />}
+                </button>
+                {photosOpen && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {persons.map((p) =>
+                      p.source_image_path ? (
+                        <div key={p.id} className="relative">
+                          <motion.img
+                            src={`${backendBase}/${p.source_image_path.replace(/^\//, '')}`}
+                            alt={p.name}
+                            className="w-full aspect-square object-cover rounded border border-gray-700 cursor-pointer hover:opacity-90 transition-opacity"
+                            whileHover={{ scale: 1.02 }}
+                            onClick={() =>
+                              setZoomedImage({
+                                src: `${backendBase}/${p.source_image_path.replace(/^\//, '')}`,
+                                alt: p.name,
+                              })
+                            }
+                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                          />
+                          <div className="text-[9px] font-mono text-gray-600 truncate mt-0.5">{p.name}</div>
+                        </div>
+                      ) : null
+                    )}
+                    {persons.every((p) => !p.source_image_path) && (
+                      <div className="col-span-2 text-[10px] font-mono text-gray-700 text-center py-2">No photos stored</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="border-t border-gray-800 pt-3">
               <div className="text-[10px] font-mono text-gray-600 tracking-widest mb-2">LAST SEEN</div>
               <div className="flex items-start gap-2 text-gray-400 mb-1.5">
                 <MapPin size={11} className="text-gray-600 mt-0.5 flex-shrink-0" />
-                <span>{incident.last_seen_location}</span>
+                <span>{incident.last_seen_location || '—'}</span>
               </div>
               <div className="flex items-center gap-2 text-gray-500 font-mono">
                 <Calendar size={11} className="text-gray-600 flex-shrink-0" />
@@ -243,7 +359,8 @@ export default function CaseWorkspace() {
                 {[
                   ['Opened', new Date(incident.created_at).toLocaleDateString('en-GB')],
                   ['Ref', incident.ref],
-                  ['Enrolled', `${incident.person_count} person`],
+                  ['Enrolled', `${incident.person_count} person${incident.person_count !== 1 ? 's' : ''}`],
+                  ['Alerts', String(incident.alert_count)],
                 ].map(([k, v]) => (
                   <div key={k} className="flex justify-between">
                     <span className="text-gray-600">{k}</span>
@@ -261,7 +378,12 @@ export default function CaseWorkspace() {
             <h3 className="text-[10px] font-mono text-gray-600 tracking-widest">CASE TIMELINE</h3>
             <span className="text-[10px] font-mono text-gray-700">{entries.length} events</span>
           </div>
-          <Timeline entries={entries} onConfirmSighting={confirmSighting} onRejectSighting={rejectSighting} />
+          <Timeline
+            entries={entries}
+            backendBase={backendBase}
+            onConfirmSighting={confirmSighting}
+            onRejectSighting={rejectSighting}
+          />
         </div>
 
         {/* Right: Actions */}
@@ -294,8 +416,16 @@ export default function CaseWorkspace() {
                 <User size={9} /> CASE ACTIONS
               </div>
               <div className="space-y-2">
-                {currentStatus === 'TRACKING' && (
-                  <ActionBtn icon={PauseCircle} label="Pause Tracking" onClick={pauseTracking} variant="warn" />
+                {currentStatus !== 'CLOSED' && currentStatus !== 'RESOLVED' && (
+                  <ActionBtn 
+                    icon={PauseCircle} 
+                    label={incident?.is_paused ? "Resume Tracking" : "Pause Tracking"} 
+                    onClick={togglePause} 
+                    variant="warn" 
+                  />
+                )}
+                {currentStatus === 'TRACKING' && !incident?.is_paused && (
+                  <ActionBtn icon={PauseCircle} label="Stop Tracking" onClick={pauseTracking} variant="warn" />
                 )}
                 {(currentStatus === 'OPEN' || currentStatus === 'TRACKING') && (
                   <ActionBtn icon={CheckCircle2} label="Resolve & Close" onClick={closeCase} variant="success" />
@@ -323,6 +453,12 @@ export default function CaseWorkspace() {
           </div>
         </aside>
       </div>
+      <ImageZoomModal
+        src={zoomedImage?.src ?? ''}
+        alt={zoomedImage?.alt ?? ''}
+        isOpen={!!zoomedImage}
+        onClose={() => setZoomedImage(null)}
+      />
     </div>
   )
 }

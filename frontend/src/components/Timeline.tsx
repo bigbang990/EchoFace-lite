@@ -11,6 +11,7 @@ import {
   PauseCircle,
   Cpu,
 } from 'lucide-react'
+import ImageZoomModal from './ImageZoomModal'
 import type { TimelineEntry, Sighting } from '../types'
 
 const typeCfg = {
@@ -27,23 +28,46 @@ const typeCfg = {
 
 interface AlertCardProps {
   sighting: Sighting
+  backendBase: string
   onConfirm: (id: string) => void
   onReject: (id: string) => void
 }
 
-function AlertCard({ sighting, onConfirm, onReject }: AlertCardProps) {
+function AlertCard({ sighting, backendBase, onConfirm, onReject }: AlertCardProps) {
   const pct = Math.round(sighting.confidence * 100)
   const barColor = pct >= 85 ? 'bg-emerald-500' : pct >= 65 ? 'bg-amber-500' : 'bg-red-500'
   const pctColor = pct >= 85 ? 'text-emerald-400' : pct >= 65 ? 'text-amber-400' : 'text-red-400'
+  const [imgError, setImgError] = useState(false)
+  const [zoomedSnapshot, setZoomedSnapshot] = useState<{ src: string; alt: string } | null>(null)
+
+  const snapshotUrl = sighting.snapshot_path && !imgError
+    ? (sighting.snapshot_path.startsWith('http')
+        ? sighting.snapshot_path
+        : `${backendBase}/${sighting.snapshot_path.replace(/^\//, '')}`)
+    : null
 
   return (
     <div className="mt-3 border border-amber-500/25 bg-amber-500/5 rounded-lg p-4">
       <div className="flex gap-4">
-        <div className="w-[72px] h-[72px] flex-shrink-0 bg-gray-900 border border-gray-700 rounded flex flex-col items-center justify-center gap-1">
-          <div className="text-[8px] font-mono text-gray-600">FRAME</div>
-          <div className="text-[10px] font-mono text-gray-500">
-            #{String(sighting.frame_index).padStart(5, '0')}
-          </div>
+        {/* Face crop thumbnail */}
+        <div className="w-[72px] h-[72px] flex-shrink-0 bg-gray-900 border border-gray-700 rounded overflow-hidden flex items-center justify-center">
+          {snapshotUrl ? (
+            <motion.img
+              src={snapshotUrl}
+              alt="face crop"
+              onError={() => setImgError(true)}
+              onClick={() => setZoomedSnapshot({ src: snapshotUrl, alt: 'Face crop' })}
+              className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+              whileHover={{ scale: 1.05 }}
+            />
+          ) : (
+            <div className="flex flex-col items-center gap-1">
+              <div className="text-[8px] font-mono text-gray-600">FRAME</div>
+              <div className="text-[10px] font-mono text-gray-500">
+                #{String(sighting.frame_index).padStart(5, '0')}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 min-w-0">
@@ -68,14 +92,8 @@ function AlertCard({ sighting, onConfirm, onReject }: AlertCardProps) {
               <div className="text-gray-400 truncate">{sighting.source_name}</div>
             </div>
             <div>
-              <div className="text-gray-600">DETECTED</div>
-              <div className="text-gray-400">
-                {new Date(sighting.timestamp).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                })}
-              </div>
+              <div className="text-gray-600">FRAME</div>
+              <div className="text-gray-400">#{String(sighting.frame_index).padStart(5, '0')}</div>
             </div>
           </div>
         </div>
@@ -111,17 +129,24 @@ function AlertCard({ sighting, onConfirm, onReject }: AlertCardProps) {
           REJECTED
         </div>
       )}
+      <ImageZoomModal
+        src={zoomedSnapshot?.src ?? ''}
+        alt={zoomedSnapshot?.alt ?? ''}
+        isOpen={!!zoomedSnapshot}
+        onClose={() => setZoomedSnapshot(null)}
+      />
     </div>
   )
 }
 
 interface Props {
   entries: TimelineEntry[]
+  backendBase?: string
   onConfirmSighting?: (id: string) => void
   onRejectSighting?: (id: string) => void
 }
 
-export default function Timeline({ entries, onConfirmSighting, onRejectSighting }: Props) {
+export default function Timeline({ entries, backendBase = '', onConfirmSighting, onRejectSighting }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(
     new Set(
       entries
@@ -193,6 +218,7 @@ export default function Timeline({ entries, onConfirmSighting, onRejectSighting 
                   >
                     <AlertCard
                       sighting={entry.sighting}
+                      backendBase={backendBase}
                       onConfirm={onConfirmSighting ?? (() => {})}
                       onReject={onRejectSighting ?? (() => {})}
                     />

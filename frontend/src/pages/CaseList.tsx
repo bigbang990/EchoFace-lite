@@ -38,13 +38,13 @@ export default function CaseList() {
     switch (activeFilter) {
       case 'tracking': return incidents.filter((i) => i.status === 'TRACKING')
       case 'open':     return incidents.filter((i) => i.status === 'OPEN')
-      case 'alerts':   return incidents.filter((i) => i.alert_count > 0)
+      case 'alerts':   return incidents.filter((i) => i.pending_alert_count > 0)
       case 'resolved': return incidents.filter((i) => i.status === 'RESOLVED' || i.status === 'CLOSED')
       default:         return incidents
     }
   }, [incidents, activeFilter])
 
-  const alertCount  = incidents.filter((i) => i.alert_count > 0).length
+  const alertCount  = incidents.filter((i) => i.pending_alert_count > 0).length
   const activeCount = incidents.filter((i) => i.status !== 'CLOSED').length
 
   return (
@@ -136,44 +136,49 @@ export default function CaseList() {
             )}
 
             {filtered.map((inc, i) => {
-              const cfg = statusCfg[inc.status]
-              const hasAlerts = inc.alert_count > 0
+      const cfg = statusCfg[inc.status]
+      const hasAlerts = inc.pending_alert_count > 0
 
-              return (
-                <motion.div
-                  key={inc.id}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.04 }}
-                >
-                  <button
-                    onClick={() => navigate(`/cases/${inc.id}`)}
-                    className={`w-full text-left bg-gray-900 border rounded-lg p-5 transition-all duration-150 group ${
-                      hasAlerts
-                        ? 'border-amber-500/30 hover:border-amber-500/50'
-                        : cfg.card
-                    }`}
-                  >
-                    <div className="flex items-start gap-4">
-                      {/* alert stripe */}
-                      {hasAlerts && (
-                        <div className="w-0.5 self-stretch bg-amber-500/60 rounded-full flex-shrink-0" />
-                      )}
+      return (
+        <motion.div
+          key={inc.id}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: i * 0.04 }}
+        >
+          <button
+            onClick={() => navigate(`/cases/${inc.id}`)}
+            className={`w-full text-left bg-gray-900 border rounded-lg p-5 transition-all duration-150 group ${
+              hasAlerts
+                ? 'border-amber-500/30 hover:border-amber-500/50'
+                : cfg.card
+            }`}
+          >
+            <div className="flex items-start gap-4">
+              {/* alert stripe */}
+              {hasAlerts && (
+                <div className="w-0.5 self-stretch bg-amber-500/60 rounded-full flex-shrink-0" />
+              )}
 
-                      <div className="flex-1 min-w-0">
-                        {/* badges row */}
-                        <div className="flex items-center gap-2 mb-2 flex-wrap">
-                          <span className="text-[10px] font-mono text-gray-600">{inc.ref || `INC-${String(inc.id).padStart(3, '0')}`}</span>
-                          <div className={`inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded border ${cfg.color} ${cfg.border}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                            {cfg.label}
-                          </div>
-                          {hasAlerts && (
-                            <div className="inline-flex items-center gap-1 text-[10px] font-mono text-amber-400 bg-amber-500/12 border border-amber-500/30 px-2 py-0.5 rounded">
-                              <AlertTriangle size={9} />
-                              {inc.alert_count} alert{inc.alert_count !== 1 ? 's' : ''}
-                            </div>
-                          )}
+              <div className="flex-1 min-w-0">
+                {/* badges row */}
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <span className="text-[10px] font-mono text-gray-600">{inc.ref || `INC-${String(inc.id).padStart(3, '0')}`}</span>
+                  <div className={`inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded border ${cfg.color} ${cfg.border}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                    {cfg.label}
+                  </div>
+                  {inc.is_paused && (
+                    <div className="inline-flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded border border-gray-600 text-gray-500 bg-gray-800">
+                      PAUSED
+                    </div>
+                  )}
+                  {hasAlerts && (
+                    <div className="inline-flex items-center gap-1 text-[10px] font-mono text-amber-400 bg-amber-500/12 border border-amber-500/30 px-2 py-0.5 rounded">
+                      <AlertTriangle size={9} />
+                      {inc.pending_alert_count} alert{inc.pending_alert_count !== 1 ? 's' : ''}
+                    </div>
+                  )}
                           {inc.person_count > 0 && (
                             <span className="text-[10px] font-mono text-gray-600">
                               {inc.person_count} person{inc.person_count !== 1 ? 's' : ''}

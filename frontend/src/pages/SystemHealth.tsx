@@ -97,8 +97,14 @@ export default function SystemHealth() {
       )}
 
       <div className="grid grid-cols-3 gap-4 mb-5">
-        <StatusBlock label="GPU Backend" value={m.gpu_status}             sub={`hardware_backend_type=${m.hardware_backend_type}`} ok={m.gpu_status === 'OK'} Icon={Cpu} />
-        <StatusBlock label="CPU Load"    value={`${m.cpu_percent.toFixed(1)}%`} sub="system process"  ok={m.cpu_percent < 70}  Icon={Activity} />
+        {(() => {
+          const isCpu = m.hardware_backend_type !== 1
+          const hwLabel = isCpu ? 'CPU BACKEND' : 'GPU BACKEND'
+          const hwValue = isCpu ? 'ACTIVE' : (m.gpu_status === 'OK' ? 'ACTIVE' : m.gpu_status)
+          const hwOk = isCpu ? true : m.gpu_status === 'OK'
+          return <StatusBlock label={hwLabel} value={hwValue} sub={`type=${m.hardware_backend_type}`} ok={hwOk} Icon={Cpu} />
+        })()}
+        <StatusBlock label="CPU Load"    value={m.cpu_percent > 0 ? `${m.cpu_percent.toFixed(1)}%` : 'idle'} sub="system process"  ok={m.cpu_percent < 70}  Icon={Activity} />
         <StatusBlock label="Memory"      value={`${(m.memory_mb / 1024).toFixed(1)} GB`} sub={`${m.memory_mb} MB`} ok={m.memory_mb < 6000} Icon={Layers} />
       </div>
 

@@ -82,11 +82,12 @@ async def load_gallery(session: AsyncSession) -> list[tuple[int, "np.ndarray"]]:
     )).first() is not None
 
     if has_incidents:
-        # Only load persons attached to at least one OPEN incident
+        # Only load persons attached to at least one OPEN and NOT PAUSED incident
         open_person_ids = (await session.execute(
             select(incident_persons.c.person_id)
             .join(Incident, Incident.id == incident_persons.c.incident_id)
             .where(Incident.status == "open")
+            .where(Incident.is_paused == False)
             .distinct()
         )).scalars().all()
 

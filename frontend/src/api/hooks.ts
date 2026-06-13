@@ -85,6 +85,7 @@ function normalizeSighting(raw: Raw): Sighting {
     timestamp: String(raw.timestamp ?? raw.detected_at ?? raw.created_at ?? new Date().toISOString()),
     status: normalizeSightingStatus(raw.status),
     frame_index: Number(raw.frame_index ?? 0),
+    snapshot_path: raw.snapshot_path ? String(raw.snapshot_path) : undefined,
   }
 }
 

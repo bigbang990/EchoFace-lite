@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from ecoface_lite.api.deps import DbSession
@@ -10,11 +10,13 @@ from ecoface_lite.api.schemas import (
     IncidentOut,
     IncidentPersonOut,
     IncidentStatusUpdate,
+    IncidentPauseUpdate,
     PersonOut,
     SightingCreate,
     SightingOut,
+    SightingStatusUpdate,
 )
-from ecoface_lite.db.models import DetectionEvent, Incident, Person, Sighting
+from ecoface_lite.db.models import DetectionEvent, Incident, Person, Sighting, incident_persons
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -23,8 +25,8 @@ class IncidentDetailOut(IncidentOut):
     sightings: list[SightingOut] = []
 
 
-def _incident_out(inc: Incident) -> IncidentOut:
-    """Build IncidentOut with computed ref/counts from loaded relationships."""
+def _incident_out(inc: Incident, person_count: int = 0, alert_count: int = 0, pending_alert_count: int = 0) -> IncidentOut:
+    """Build IncidentOut with explicit counts (avoids selectinload on many-to-many)."""
     return IncidentOut(
         id=inc.id,
         ref=f"INC-{inc.id:03d}",
@@ -32,11 +34,47 @@ def _incident_out(inc: Incident) -> IncidentOut:
         description=inc.description,
         status=inc.status,
         operator_id=inc.operator_id,
+        is_paused=inc.is_paused,
         created_at=inc.created_at,
         updated_at=inc.updated_at,
-        person_count=len(inc.persons) if inc.persons is not None else 0,
-        alert_count=len(inc.sightings) if inc.sightings is not None else 0,
+        person_count=person_count,
+        alert_count=alert_count,
+        pending_alert_count=pending_alert_count,
     )
+
+
+async def _count_persons(db: DbSession, incident_ids: list[int]) -> dict[int, int]:
+    if not incident_ids:
+        return {}
+    rows = (await db.execute(
+        select(incident_persons.c.incident_id, func.count(incident_persons.c.person_id))
+        .where(incident_persons.c.incident_id.in_(incident_ids))
+        .group_by(incident_persons.c.incident_id)
+    )).all()
+    return dict(rows)
+
+
+async def _count_sightings(db: DbSession, incident_ids: list[int]) -> dict[int, int]:
+    if not incident_ids:
+        return {}
+    rows = (await db.execute(
+        select(Sighting.incident_id, func.count(Sighting.id))
+        .where(Sighting.incident_id.in_(incident_ids))
+        .group_by(Sighting.incident_id)
+    )).all()
+    return dict(rows)
+
+
+async def _count_pending_sightings(db: DbSession, incident_ids: list[int]) -> dict[int, int]:
+    if not incident_ids:
+        return {}
+    rows = (await db.execute(
+        select(Sighting.incident_id, func.count(Sighting.id))
+        .where(Sighting.incident_id.in_(incident_ids))
+        .where(Sighting.status == "pending")
+        .group_by(Sighting.incident_id)
+    )).all()
+    return dict(rows)
 
 
 @router.post("", response_model=IncidentOut, status_code=201)
@@ -50,13 +88,7 @@ async def create_incident(body: IncidentCreate, db: DbSession) -> IncidentOut:
     db.add(incident)
     await db.commit()
     await db.refresh(incident)
-    # eager-load relationships so _incident_out can count them
-    result = await db.execute(
-        select(Incident)
-        .options(selectinload(Incident.persons), selectinload(Incident.sightings))
-        .where(Incident.id == incident.id)
-    )
-    return _incident_out(result.scalar_one())
+    return _incident_out(incident, person_count=0, alert_count=0, pending_alert_count=0)
 
 
 @router.get("", response_model=list[IncidentOut])
@@ -64,31 +96,29 @@ async def list_incidents(
     db: DbSession,
     status: str | None = Query(default=None),
 ) -> list[IncidentOut]:
-    stmt = (
-        select(Incident)
-        .options(selectinload(Incident.persons), selectinload(Incident.sightings))
-    )
+    stmt = select(Incident)
     if status is not None:
         stmt = stmt.where(Incident.status == status)
     result = await db.execute(stmt)
-    return [_incident_out(i) for i in result.scalars().all()]
+    incidents = result.scalars().all()
+    inc_ids = [i.id for i in incidents]
+    pc = await _count_persons(db, inc_ids)
+    sc = await _count_sightings(db, inc_ids)
+    psc = await _count_pending_sightings(db, inc_ids)
+    return [_incident_out(i, pc.get(i.id, 0), sc.get(i.id, 0), psc.get(i.id, 0)) for i in incidents]
 
 
 @router.get("/{incident_id}", response_model=IncidentDetailOut)
 async def get_incident(incident_id: int, db: DbSession) -> IncidentDetailOut:
-    result = await db.execute(
-        select(Incident)
-        .options(selectinload(Incident.persons), selectinload(Incident.sightings))
-        .where(Incident.id == incident_id)
-    )
+    result = await db.execute(select(Incident).where(Incident.id == incident_id))
     incident = result.scalar_one_or_none()
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
-    sighting_result = await db.execute(
-        select(Sighting).where(Sighting.incident_id == incident_id)
-    )
-    sightings_out = [SightingOut.model_validate(s) for s in sighting_result.scalars().all()]
-    inc_data = _incident_out(incident).model_dump()
+    pc = await _count_persons(db, [incident_id])
+    sc = await _count_sightings(db, [incident_id])
+    psc = await _count_pending_sightings(db, [incident_id])
+    sightings_out = await _build_sightings_out(db, incident_id)
+    inc_data = _incident_out(incident, pc.get(incident_id, 0), sc.get(incident_id, 0), psc.get(incident_id, 0)).model_dump()
     inc_data["sightings"] = sightings_out
     return IncidentDetailOut(**inc_data)
 
@@ -105,12 +135,59 @@ async def update_incident_status(
         raise HTTPException(status_code=404, detail="Incident not found")
     incident.status = body.status
     await db.commit()
-    result2 = await db.execute(
-        select(Incident)
-        .options(selectinload(Incident.persons), selectinload(Incident.sightings))
-        .where(Incident.id == incident_id)
+    await db.refresh(incident)
+    pc = await _count_persons(db, [incident_id])
+    sc = await _count_sightings(db, [incident_id])
+    psc = await _count_pending_sightings(db, [incident_id])
+    return _incident_out(incident, pc.get(incident_id, 0), sc.get(incident_id, 0), psc.get(incident_id, 0))
+
+
+@router.patch("/{incident_id}/pause", response_model=IncidentOut)
+async def update_incident_pause(
+    incident_id: int,
+    body: IncidentPauseUpdate,
+    db: DbSession,
+) -> IncidentOut:
+    result = await db.execute(select(Incident).where(Incident.id == incident_id))
+    incident = result.scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    incident.is_paused = body.is_paused
+    await db.commit()
+    await db.refresh(incident)
+    pc = await _count_persons(db, [incident_id])
+    sc = await _count_sightings(db, [incident_id])
+    psc = await _count_pending_sightings(db, [incident_id])
+    return _incident_out(incident, pc.get(incident_id, 0), sc.get(incident_id, 0), psc.get(incident_id, 0))
+
+
+async def _build_sightings_out(db: DbSession, incident_id: int) -> list[SightingOut]:
+    sighting_result = await db.execute(
+        select(Sighting)
+        .options(selectinload(Sighting.detection).selectinload(DetectionEvent.person))
+        .where(Sighting.incident_id == incident_id)
+        .order_by(Sighting.created_at)
     )
-    return _incident_out(result2.scalar_one())
+    out = []
+    for s in sighting_result.scalars().all():
+        det = s.detection
+        person = det.person if det else None
+        out.append(SightingOut(
+            id=s.id,
+            incident_id=s.incident_id,
+            detection_id=s.detection_id,
+            camera_id=s.camera_id,
+            notes=s.notes,
+            status=s.status,
+            created_at=s.created_at,
+            person_id=person.id if person else None,
+            person_name=person.display_name if person else None,
+            confidence=det.confidence if det else None,
+            source_name=det.source_label if det else None,
+            frame_index=det.frame_index if det else None,
+            snapshot_path=det.snapshot_path if det else None,
+        ))
+    return out
 
 
 @router.post("/{incident_id}/sightings", response_model=SightingOut, status_code=201)
@@ -139,33 +216,32 @@ async def list_sightings(incident_id: int, db: DbSession) -> list[SightingOut]:
     result = await db.execute(select(Incident).where(Incident.id == incident_id))
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Incident not found")
-    sighting_result = await db.execute(
+    return await _build_sightings_out(db, incident_id)
+
+
+@router.patch("/{incident_id}/sightings/{sighting_id}", response_model=SightingOut)
+async def update_sighting_status(
+    incident_id: int,
+    sighting_id: int,
+    body: SightingStatusUpdate,
+    db: DbSession,
+) -> SightingOut:
+    result = await db.execute(
         select(Sighting)
-        .options(
-            selectinload(Sighting.detection).selectinload(DetectionEvent.person)
-        )
-        .where(Sighting.incident_id == incident_id)
-        .order_by(Sighting.created_at)
+        .where(Sighting.id == sighting_id, Sighting.incident_id == incident_id)
     )
-    out = []
-    for s in sighting_result.scalars().all():
-        det = s.detection
-        person = det.person if det else None
-        out.append(SightingOut(
-            id=s.id,
-            incident_id=s.incident_id,
-            detection_id=s.detection_id,
-            camera_id=s.camera_id,
-            notes=s.notes,
-            created_at=s.created_at,
-            person_id=person.id if person else None,
-            person_name=person.display_name if person else None,
-            confidence=det.confidence if det else None,
-            source_name=det.source_label if det else None,
-            frame_index=det.frame_index if det else None,
-            snapshot_path=det.snapshot_path if det else None,
-        ))
-    return out
+    sighting = result.scalar_one_or_none()
+    if sighting is None:
+        raise HTTPException(status_code=404, detail="Sighting not found")
+    sighting.status = body.status
+    await db.commit()
+    await db.refresh(sighting)
+    # Re-fetch with enriched fields
+    sightings = await _build_sightings_out(db, incident_id)
+    for s in sightings:
+        if s.id == sighting_id:
+            return s
+    return SightingOut.model_validate(sighting)
 
 
 @router.post("/{incident_id}/persons/{person_id}", response_model=IncidentPersonOut, status_code=201)

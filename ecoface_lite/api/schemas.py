@@ -125,10 +125,12 @@ class IncidentOut(BaseModel):
     description: str | None
     status: str
     operator_id: str | None
+    is_paused: bool = False
     created_at: datetime
     updated_at: datetime
     person_count: int = 0
     alert_count: int = 0
+    pending_alert_count: int = 0
 
 
 class IncidentCreate(BaseModel):
@@ -141,6 +143,10 @@ class IncidentStatusUpdate(BaseModel):
     status: str = Field(pattern="^(open|active|closed)$")
 
 
+class IncidentPauseUpdate(BaseModel):
+    is_paused: bool
+
+
 class SightingOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -149,6 +155,7 @@ class SightingOut(BaseModel):
     detection_id: int | None
     camera_id: int | None
     notes: str | None
+    status: str = 'pending'
     created_at: datetime
     # enriched fields populated by the endpoint via detection_event + person joins
     person_id: int | None = None
@@ -157,6 +164,10 @@ class SightingOut(BaseModel):
     source_name: str | None = None
     frame_index: int | None = None
     snapshot_path: str | None = None
+
+
+class SightingStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(pending|confirmed|rejected)$")
 
 
 class SightingCreate(BaseModel):

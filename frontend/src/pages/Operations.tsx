@@ -79,6 +79,25 @@ function useMockJob() {
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
+function LivePreviewImage({ src, isLive }: { src: string; isLive: boolean }) {
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    if (!isLive) return
+    const t = setInterval(() => setTick((v) => v + 1), 2000)
+    return () => clearInterval(t)
+  }, [isLive])
+  const url = isLive ? `${src}?t=${tick}` : src
+  return (
+    <img
+      src={url}
+      alt="annotated preview"
+      className="w-full object-contain"
+      style={{ maxHeight: '60vh' }}
+      onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.3' }}
+    />
+  )
+}
+
 const fmt = (s: number) =>
   `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.round(s) % 60).padStart(2, '0')}`
 
@@ -168,7 +187,7 @@ export default function Operations() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragOver(false)
     const f = e.dataTransfer.files[0]
-    if (f?.type.startsWith('video/')) setFile(f)
+    if (f?.type.startsWith('video/')) { setFile(f); setSnapshot(null); capturedRef.current = false }
   }
 
   const startTracking = async () => {
@@ -259,7 +278,7 @@ export default function Operations() {
                 </span>
               </div>
 
-              <input ref={fileRef} type="file" accept="video/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) setFile(e.target.files[0]) }} />
+              <input ref={fileRef} type="file" accept="video/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) { setFile(e.target.files[0]); setSnapshot(null); capturedRef.current = false } }} />
 
               {!file ? (
                 <div
@@ -308,6 +327,56 @@ export default function Operations() {
                 >
                   {uploading ? <><Loader2 size={15} className="animate-spin" /> Uploading…</> : <><Play size={15} /> Activate Tracking Pipeline</>}
                 </motion.button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── annotated preview — PRIMARY FOCUS ────────────────────────────── */}
+        <AnimatePresence>
+          {(previewUrl || realRunning) && (
+            <motion.div
+              key="preview"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-5"
+            >
+              <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-800">
+                <Film size={13} className="text-cyan-400" />
+                <h2 className="text-[10px] font-mono text-gray-400 tracking-widest">ANNOTATED PREVIEW</h2>
+                {realRunning && (
+                  <span className="ml-auto flex items-center gap-1.5 text-[10px] font-mono text-cyan-500">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" /> LIVE
+                  </span>
+                )}
+                {!realRunning && <span className="ml-auto text-[10px] font-mono text-gray-700">bbox overlay · last annotated frame</span>}
+              </div>
+              <div className="bg-black min-h-[200px] flex items-center justify-center">
+                {previewUrl ? (
+                  /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(previewUrl) ? (
+                    <LivePreviewImage src={previewUrl} isLive={realRunning} />
+                  ) : (
+                    <video
+                      key={previewUrl}
+                      src={previewUrl}
+                      controls
+                      autoPlay
+                      className="w-full object-contain"
+                      style={{ maxHeight: '60vh' }}
+                      onError={(e) => console.warn('Preview failed:', previewUrl, e)}
+                    />
+                  )
+                ) : (
+                  <div className="flex flex-col items-center gap-3 py-16 text-center">
+                    <Loader2 size={20} className="text-cyan-600 animate-spin" />
+                    <div className="text-[11px] font-mono text-gray-600">Processing — preview will appear once frames are annotated</div>
+                  </div>
+                )}
+              </div>
+              {previewUrl && (
+                <div className="px-5 py-2 text-[10px] font-mono text-gray-700 truncate">
+                  {previewUrl.split('/').pop()?.split('?')[0]}
+                </div>
               )}
             </motion.div>
           )}
@@ -400,36 +469,6 @@ export default function Operations() {
               {(progress.error_message || jobError) && (
                 <div className="mt-3 text-xs font-mono text-red-400">{progress.error_message ?? jobError}</div>
               )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ── annotated preview ─────────────────────────────────────────────── */}
-        <AnimatePresence>
-          {previewUrl && (
-            <motion.div
-              key="preview"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-5"
-            >
-              <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-800">
-                <Film size={13} className="text-cyan-400" />
-                <h2 className="text-[10px] font-mono text-gray-400 tracking-widest">ANNOTATED PREVIEW</h2>
-                <span className="ml-auto text-[10px] font-mono text-gray-700">bbox overlay · processed frames</span>
-              </div>
-              <div className="bg-black">
-                <video
-                  key={previewUrl}
-                  src={previewUrl}
-                  controls
-                  className="w-full max-h-[400px] object-contain"
-                  onError={(e) => console.warn('Preview failed:', previewUrl, e)}
-                />
-              </div>
-              <div className="px-5 py-2 text-[10px] font-mono text-gray-700 truncate">
-                {previewUrl.split('/').pop()}
-              </div>
             </motion.div>
           )}
         </AnimatePresence>

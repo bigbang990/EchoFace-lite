@@ -14,6 +14,8 @@ export interface Incident {
   last_seen_at: string
   person_count: number
   alert_count: number
+  pending_alert_count: number
+  is_paused: boolean
 }
 
 export interface Person {
@@ -38,6 +40,7 @@ export interface Sighting {
   timestamp: string
   status: 'PENDING' | 'CONFIRMED' | 'REJECTED'
   frame_index: number
+  snapshot_path?: string
 }
 
 export interface Camera {
