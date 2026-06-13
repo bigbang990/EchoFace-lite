@@ -1,12 +1,13 @@
-## Checkpoint — 2026-06-13 — Phase A: INC API split + alerts fix
+## Checkpoint — 2026-06-13 — Phase A: INC API consolidated to single-server
 
 ### Phase
-Frontend v1.3 — INC API separated; alerts pipeline wired end-to-end
+Frontend v1.3 — single-server setup; alerts pipeline wired end-to-end
 
 ### Status
-complete — INC server runs on :8001; core engine stays on :8000; frontend routes
-incident/person calls to incUrl, video/metrics to backendUrl; video detections now
-create Sighting rows so they appear in the case timeline
+complete — all routes (engine + INC) served from one uvicorn process on :8000;
+inc_server.py kept intact for future Phase B standalone use;
+colab_start.py simplified to single ngrok tunnel on :8000;
+video detections create Sighting rows so they appear in the case timeline
 
 ### What was built
 A standalone React + TypeScript frontend in `frontend/` — dark, professional
@@ -134,29 +135,28 @@ Node.js 18+ must be installed (nodejs.org).
 - Phase 8A: ExperimentCoordinator extracted
 - Phase 7B: session lifecycle isolation, multi-photo enrollment
 
-### Architecture — two servers, one DB
+### Architecture — single server
 
 ```
-Core Engine  :8000   — video processing, observability, cameras, live_test
-INC Server   :8001   — incidents, persons, sightings, /data/uploads static
-Both share the same SQLite/PostgreSQL database.
-Engine writes DetectionEvent + Sighting rows; INC serves them.
+EchoFace :8000  — all routes: engine + INC (incidents, persons, sightings)
+                  /data/uploads static mount for enrolled person photos
+                  SQLite/PostgreSQL database
 ```
 
 Start commands:
 ```
-# terminal 1 — core engine (needs GPU/ML deps)
+# terminal 1 — single server (all routes)
 uvicorn ecoface_lite.api.main:app --port 8000 --reload
 
-# terminal 2 — INC server (lightweight, no ML)
-uvicorn ecoface_lite.api.inc_server:inc_app --port 8001 --reload
-
-# terminal 3 — frontend
+# terminal 2 — frontend
 cd frontend && npm run dev
 ```
 
-Frontend store: `backendUrl` (engine) + `incUrl` (INC, default :8001).
-Change `incUrl` via BackendPanel gear icon → INC SERVER section.
+Colab: `python scripts/colab_start.py` — one process, one ngrok tunnel.
+Set both `backendUrl` AND `incUrl` in BackendPanel to the same ngrok URL.
+
+Future Phase B: `inc_server.py` is ready to run standalone on :8001 with
+a second ngrok tunnel. See AI_CONTEXT/roadmap.md for Phase B plan.
 
 ### Alerts pipeline (fixed)
 `video_service.py` now: DetectionEvent → `session.flush()` → query

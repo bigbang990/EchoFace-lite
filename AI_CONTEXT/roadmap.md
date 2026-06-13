@@ -15,17 +15,18 @@
   torch.load patch for PyTorch 2.6 weights_only. Production verified on T4.
 
 ## Active
-INC API split — Phase A done; Option 1 (Colab dual-server) unblocks hybrid immediately.
+Single-server consolidation complete — all routes on :8000; inc_server.py kept for
+Phase B standalone use. Colab: one process, one ngrok tunnel.
 See AI_CONTEXT/checkpoint_latest.md for full architecture state.
 
 ## INC API phases
 
-### Phase A — ✅ DONE
-- `ecoface_lite/api/inc_server.py` — second entry point, INC routers only, same DB
+### Phase A — ✅ DONE + consolidated
+- `ecoface_lite/api/inc_server.py` — INC router definitions (NOT standalone currently)
+- All routes merged into `ecoface_lite/api/main:app` on :8000
 - Frontend: `incUrl` in store, BackendPanel INC section, all incident/person calls
-  routed to `incUrl`, video/metrics stay on `backendUrl`
-- For Colab hybrid: run both servers, expose via 2 ngrok tunnels
-  → `python scripts/colab_start.py` handles setup
+  routed to `incUrl`; for single-server point both `backendUrl` and `incUrl` at :8000
+- Colab: `python scripts/colab_start.py` — one process, one ngrok tunnel
 
 ### Phase B — engine calls INC HTTP (true separation)
 Goal: engine never writes incident/sighting data directly; INC is the DB master.

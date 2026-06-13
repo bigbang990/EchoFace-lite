@@ -1,14 +1,15 @@
-"""Lightweight incident-management API server.
+"""Incident-management router definitions — NOT currently run as a standalone server.
 
-Mounts only INC-related routers (health · incidents · persons).
-No ML, no pipeline, no GPU dependencies — runs on any host.
+All three routers (health · incidents · persons) are already mounted by
+ecoface_lite.api.main:app on port 8000.  The single-server setup is the
+default; both engine and INC routes are served from the same process.
 
-Start:
+To run standalone in the future (Phase B / public viewer):
     uvicorn ecoface_lite.api.inc_server:inc_app --port 8001 --reload
 
-Shares the same SQLite/PostgreSQL database as the core engine.
-The engine writes DetectionEvents + Sightings; this server manages
-the incident lifecycle and serves them to the frontend and future viewers.
+That configuration requires a second ngrok tunnel when hosted on Colab.
+See scripts/colab_start.py for the two-tunnel variant and
+AI_CONTEXT/roadmap.md for the Phase B plan.
 """
 
 from __future__ import annotations
