@@ -79,3 +79,33 @@ Every significant pipeline decision must emit a structured event:
 Not a log line. Not a counter increment. A queryable record.
 If the event table does not exist yet: log it and add a TODO.
 Do not skip the emit call.
+
+## Frontend
+
+Location: `frontend/` — standalone React + TypeScript app (Vite 5).
+
+**Stack:** React 18 · TypeScript · Tailwind CSS 3 · Framer Motion 11 ·
+Zustand 4 · React Router 6 · Recharts 2 · Lucide React
+
+**Dev server:**
+```
+cd frontend && npm install && npm run dev
+# http://localhost:5173  — access codes: DEMO / ADMIN
+```
+
+**Stable systems in frontend — never touch without instruction:**
+`src/mock/data.ts` shapes must match real API schemas exactly.
+`src/components/ProcessingSequence.tsx` — animation timing is demo-calibrated.
+
+**Frontend rules:**
+- All mock data lives in `src/mock/data.ts` — shapes mirror real API responses
+  so wiring is a data-source swap, not a redesign
+- Access mode logic is isolated to `src/components/AccessGate.tsx` and
+  `src/store/appStore.ts` — keep it swappable for real auth in a future phase
+- Shared components (StatusIndicator, Timeline, ProcessingSequence) must stay
+  product-agnostic — no incident-specific imports inside them
+- Backend proxy: Vite forwards `/api/*` to `http://localhost:8000`
+
+**Next phase (frontend):** Replace `src/mock/data.ts` exports with fetch/SWR
+calls to `/api/v1/incidents`, `/api/v1/incidents/:id/persons`,
+`/api/v1/incidents/:id/sightings`, `/api/v1/observability/*`.
