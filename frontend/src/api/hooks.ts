@@ -57,6 +57,8 @@ function normalizeIncident(raw: Raw, idx: number): Incident {
     last_seen_at: String(raw.last_seen_at ?? new Date().toISOString()),
     person_count: Number(raw.person_count ?? 0),
     alert_count: Number(raw.alert_count ?? raw.sighting_count ?? 0),
+    pending_alert_count: Number(raw.pending_alert_count ?? 0),
+    is_paused: Boolean(raw.is_paused ?? false),
   }
 }
 

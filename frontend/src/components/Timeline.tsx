@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   FolderOpen,
@@ -26,24 +26,27 @@ const typeCfg = {
   TRACKING_PAUSED:     { Icon: PauseCircle,    dot: 'bg-amber-900/30',     icon: 'text-amber-500' },
 } as const
 
+function buildSnapshotUrl(snapshotPath: string, backendBase: string): string {
+  if (snapshotPath.startsWith('http')) return snapshotPath
+  return `${backendBase}/${snapshotPath.replace(/^[/\\]/, '').replace(/\\/g, '/')}`
+}
+
 interface AlertCardProps {
   sighting: Sighting
   backendBase: string
   onConfirm: (id: string) => void
   onReject: (id: string) => void
+  onZoom?: (src: string) => void
 }
 
-function AlertCard({ sighting, backendBase, onConfirm, onReject }: AlertCardProps) {
+function AlertCard({ sighting, backendBase, onConfirm, onReject, onZoom }: AlertCardProps) {
   const pct = Math.round(sighting.confidence * 100)
   const barColor = pct >= 85 ? 'bg-emerald-500' : pct >= 65 ? 'bg-amber-500' : 'bg-red-500'
   const pctColor = pct >= 85 ? 'text-emerald-400' : pct >= 65 ? 'text-amber-400' : 'text-red-400'
   const [imgError, setImgError] = useState(false)
-  const [zoomedSnapshot, setZoomedSnapshot] = useState<{ src: string; alt: string } | null>(null)
 
   const snapshotUrl = sighting.snapshot_path && !imgError
-    ? (sighting.snapshot_path.startsWith('http')
-        ? sighting.snapshot_path
-        : `${backendBase}/${sighting.snapshot_path.replace(/^\//, '')}`)
+    ? buildSnapshotUrl(sighting.snapshot_path, backendBase)
     : null
 
   return (
@@ -56,7 +59,7 @@ function AlertCard({ sighting, backendBase, onConfirm, onReject }: AlertCardProp
               src={snapshotUrl}
               alt="face crop"
               onError={() => setImgError(true)}
-              onClick={() => setZoomedSnapshot({ src: snapshotUrl, alt: 'Face crop' })}
+              onClick={() => onZoom?.(snapshotUrl)}
               className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
               whileHover={{ scale: 1.05 }}
             />
@@ -129,12 +132,6 @@ function AlertCard({ sighting, backendBase, onConfirm, onReject }: AlertCardProp
           REJECTED
         </div>
       )}
-      <ImageZoomModal
-        src={zoomedSnapshot?.src ?? ''}
-        alt={zoomedSnapshot?.alt ?? ''}
-        isOpen={!!zoomedSnapshot}
-        onClose={() => setZoomedSnapshot(null)}
-      />
     </div>
   )
 }
@@ -154,6 +151,23 @@ export default function Timeline({ entries, backendBase = '', onConfirmSighting,
         .map((e) => e.id)
     )
   )
+  const [zoomIdx, setZoomIdx] = useState<number | null>(null)
+
+  // Collect all sighting snapshots for navigation in the zoom modal
+  const allSnapshots = useMemo(() =>
+    entries
+      .filter(e => e.type === 'SIGHTING_DETECTED' && e.sighting?.snapshot_path)
+      .map(e => ({
+        src: buildSnapshotUrl(e.sighting!.snapshot_path!, backendBase),
+        alt: e.sighting!.person_name ?? 'Face crop',
+      })),
+    [entries, backendBase]
+  )
+
+  const handleZoom = useCallback((src: string) => {
+    const idx = allSnapshots.findIndex(s => s.src === src)
+    setZoomIdx(idx >= 0 ? idx : 0)
+  }, [allSnapshots])
 
   const toggle = (id: string) =>
     setExpanded((prev) => {
@@ -221,6 +235,7 @@ export default function Timeline({ entries, backendBase = '', onConfirmSighting,
                       backendBase={backendBase}
                       onConfirm={onConfirmSighting ?? (() => {})}
                       onReject={onRejectSighting ?? (() => {})}
+                      onZoom={handleZoom}
                     />
                   </motion.div>
                 )}
@@ -229,6 +244,13 @@ export default function Timeline({ entries, backendBase = '', onConfirmSighting,
           </motion.div>
         )
       })}
+
+      <ImageZoomModal
+        images={allSnapshots}
+        startIndex={zoomIdx ?? 0}
+        isOpen={zoomIdx !== null}
+        onClose={() => setZoomIdx(null)}
+      />
     </div>
   )
 }

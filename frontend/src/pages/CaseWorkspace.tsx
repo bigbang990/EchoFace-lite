@@ -42,17 +42,42 @@ function PersonAvatar({
   const [imgError, setImgError] = useState(false)
   if (photoUrl && !imgError) {
     return (
-      <motion.img
-        src={photoUrl}
-        alt={name}
-        onError={() => setImgError(true)}
-        onClick={onZoom}
-        className="w-24 h-24 rounded-full object-cover border border-gray-700 cursor-pointer hover:opacity-90 transition-opacity"
-        whileHover={{ scale: 1.02 }}
-      />
+      <div className="w-24 h-24 rounded-full bg-gray-800 border border-gray-700 overflow-hidden flex-shrink-0">
+        <motion.img
+          src={photoUrl}
+          alt={name}
+          onError={() => setImgError(true)}
+          onClick={onZoom}
+          className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+          whileHover={{ scale: 1.02 }}
+        />
+      </div>
     )
   }
   return <Initials name={name || '?'} />
+}
+
+function EnrolledPhoto({ src, name, onClick }: { src: string; name: string; onClick: () => void }) {
+  const [err, setErr] = useState(false)
+  return (
+    <div className="relative">
+      <div className="w-full aspect-square bg-gray-900 border border-gray-700 rounded overflow-hidden">
+        {err ? (
+          <div className="w-full h-full flex items-center justify-center text-[9px] font-mono text-gray-700">NO IMAGE</div>
+        ) : (
+          <motion.img
+            src={src}
+            alt={name}
+            onError={() => setErr(true)}
+            onClick={onClick}
+            className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+            whileHover={{ scale: 1.02 }}
+          />
+        )}
+      </div>
+      <div className="text-[9px] font-mono text-gray-600 truncate mt-0.5">{name}</div>
+    </div>
+  )
 }
 
 const NOTES_PREFIX = 'echoface_notes_'
@@ -67,7 +92,7 @@ export default function CaseWorkspace() {
   const [localStatus, setLocalStatus] = useState<IncidentStatus | null>(null)
   const [comment, setComment] = useState('')
   const [photosOpen, setPhotosOpen] = useState(false)
-  const [zoomedImage, setZoomedImage] = useState<{ src: string; alt: string } | null>(null)
+  const [zoomState, setZoomState] = useState<{ images: Array<{ src: string; alt: string }>; startIndex: number } | null>(null)
 
   const backendBase = incUrl.replace(/\/api\/v1\/?$/, '')
 
@@ -95,7 +120,7 @@ export default function CaseWorkspace() {
   const cfg = statusCfg[currentStatus]
   const person = persons[0]
   const photoUrl = person?.source_image_path
-    ? `${backendBase}/${person.source_image_path.replace(/^\//, '')}`
+    ? `${backendBase}/${person.source_image_path.replace(/^[/\\]/, '').replace(/\\/g, '/')}`
     : null
 
   const persistNotes = (notes: TimelineEntry[]) => {
@@ -209,6 +234,8 @@ export default function CaseWorkspace() {
   const togglePause = async () => {
     if (!incident) return
     const newIsPaused = !incident.is_paused
+    // Optimistic update
+    setExtraEntries((prev) => [...prev]) // Trigger re-render via state bump
     await fetch(`${incUrl}/incidents/${incident.id}/pause`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -282,7 +309,7 @@ export default function CaseWorkspace() {
               name={person?.name ?? '??'}
               photoUrl={accessMode === 'MOCK' ? null : photoUrl}
               onZoom={
-                photoUrl ? () => setZoomedImage({ src: photoUrl, alt: person?.name ?? 'Profile photo' }) : undefined
+                photoUrl ? () => setZoomState({ images: [{ src: photoUrl, alt: person?.name ?? 'Profile photo' }], startIndex: 0 }) : undefined
               }
             />
             <h2 className="text-base font-semibold text-gray-100 mt-3">{person?.name ?? 'Unknown'}</h2>
@@ -311,26 +338,26 @@ export default function CaseWorkspace() {
                 </button>
                 {photosOpen && (
                   <div className="grid grid-cols-2 gap-2">
-                    {persons.map((p) =>
-                      p.source_image_path ? (
-                        <div key={p.id} className="relative">
-                          <motion.img
-                            src={`${backendBase}/${p.source_image_path.replace(/^\//, '')}`}
-                            alt={p.name}
-                            className="w-full aspect-square object-cover rounded border border-gray-700 cursor-pointer hover:opacity-90 transition-opacity"
-                            whileHover={{ scale: 1.02 }}
-                            onClick={() =>
-                              setZoomedImage({
-                                src: `${backendBase}/${p.source_image_path.replace(/^\//, '')}`,
-                                alt: p.name,
-                              })
-                            }
-                            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                    {(() => {
+                      const normPath = (p: string) => p.replace(/^[/\\]/, '').replace(/\\/g, '/')
+                      const enrolledImages = persons
+                        .filter(p => p.source_image_path)
+                        .map(p => ({ src: `${backendBase}/${normPath(p.source_image_path!)}`, alt: p.name }))
+                      return persons.map((p) =>
+                        p.source_image_path ? (
+                          <EnrolledPhoto
+                            key={p.id}
+                            src={`${backendBase}/${normPath(p.source_image_path)}`}
+                            name={p.name}
+                            onClick={() => {
+                              const clickedSrc = `${backendBase}/${normPath(p.source_image_path!)}`
+                              const idx = enrolledImages.findIndex(img => img.src === clickedSrc)
+                              setZoomState({ images: enrolledImages, startIndex: idx >= 0 ? idx : 0 })
+                            }}
                           />
-                          <div className="text-[9px] font-mono text-gray-600 truncate mt-0.5">{p.name}</div>
-                        </div>
-                      ) : null
-                    )}
+                        ) : null
+                      )
+                    })()}
                     {persons.every((p) => !p.source_image_path) && (
                       <div className="col-span-2 text-[10px] font-mono text-gray-700 text-center py-2">No photos stored</div>
                     )}
@@ -454,10 +481,10 @@ export default function CaseWorkspace() {
         </aside>
       </div>
       <ImageZoomModal
-        src={zoomedImage?.src ?? ''}
-        alt={zoomedImage?.alt ?? ''}
-        isOpen={!!zoomedImage}
-        onClose={() => setZoomedImage(null)}
+        images={zoomState?.images ?? []}
+        startIndex={zoomState?.startIndex ?? 0}
+        isOpen={!!zoomState}
+        onClose={() => setZoomState(null)}
       />
     </div>
   )

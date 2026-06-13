@@ -23,6 +23,8 @@ export const mockIncidents: Incident[] = [
     last_seen_at: '2026-06-12T21:30:00Z',
     person_count: 1,
     alert_count: 1,
+    pending_alert_count: 1,
+    is_paused: false,
   },
   {
     id: 'a1b2c3d4-0002-4e5f-8a9b-c0d1e2f30002',
@@ -37,6 +39,8 @@ export const mockIncidents: Incident[] = [
     last_seen_at: '2026-06-12T20:15:00Z',
     person_count: 1,
     alert_count: 0,
+    pending_alert_count: 0,
+    is_paused: false,
   },
   {
     id: 'a1b2c3d4-0003-4e5f-8a9b-c0d1e2f30003',
@@ -51,6 +55,8 @@ export const mockIncidents: Incident[] = [
     last_seen_at: '2026-06-11T13:00:00Z',
     person_count: 1,
     alert_count: 2,
+    pending_alert_count: 0,
+    is_paused: false,
   },
 ]
 
