@@ -249,6 +249,8 @@ export function useIncidentDetail(id: string | undefined) {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Track whether initial data has been loaded — background polls skip the spinner
+  const hasLoadedRef = useRef(false)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -260,11 +262,13 @@ export function useIncidentDetail(id: string | undefined) {
       setSightings(mockSightingsByIncident[id] ?? [])
       setTimeline(mockTimelinesByIncident[id] ?? [])
       setLoading(false)
+      hasLoadedRef.current = true
       return
     }
 
     try {
-      setLoading(true)
+      // Only show the loading overlay on first fetch — subsequent polls are silent
+      if (!hasLoadedRef.current) setLoading(true)
       const client = createApiClient(incUrl)
       const [rawInc, rawPersons, rawSightings] = await Promise.all([
         client.get<Raw>(`/incidents/${id}`),
@@ -279,6 +283,7 @@ export function useIncidentDetail(id: string | undefined) {
       setSightings(ss)
       setTimeline(buildTimeline(inc, ps, ss))
       setError(null)
+      hasLoadedRef.current = true
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -287,6 +292,10 @@ export function useIncidentDetail(id: string | undefined) {
   }, [id, accessMode, incUrl])
 
   useEffect(() => {
+    // Reset on id/mode change so the loading overlay shows for the new case
+    hasLoadedRef.current = false
+    setLoading(true)
+    setIncident(null)
     load()
     if (accessMode === 'ADMIN') {
       const t = setInterval(load, 8_000)
@@ -403,6 +412,9 @@ export interface VideoJobProgress {
   alerts_created: number
   avg_fps: number
   processing_duration_seconds: number
+  total_faces_detected: number
+  total_faces_rejected: number
+  blur_rejections: number
   error_message?: string
 }
 
@@ -431,6 +443,9 @@ export function useVideoJob(jobId: string | null) {
           alerts_created: Number(s.alerts_created ?? 0),
           avg_fps: Number(s.avg_fps ?? 0),
           processing_duration_seconds: Number(s.processing_duration_seconds ?? 0),
+          total_faces_detected: Number(s.total_faces_detected ?? 0),
+          total_faces_rejected: Number(s.total_faces_rejected ?? 0),
+          blur_rejections: Number(s.blur_rejections ?? 0),
           error_message: s.error_message ? String(s.error_message) : undefined,
         })
         setError(null)
@@ -441,7 +456,9 @@ export function useVideoJob(jobId: string | null) {
             const p = await client.get<Raw>(`/videos/processing-preview/${jobId}`)
             const pUrl = String(p.preview_url ?? p.preview_path ?? '')
             if (pUrl && !stopped) {
-              setPreviewUrl(pUrl.startsWith('http') ? pUrl : `${backendBase}${pUrl}`)
+              // ensure leading slash so backendBase + path concatenates correctly
+              const rel = pUrl.startsWith('/') ? pUrl : `/${pUrl}`
+              setPreviewUrl(pUrl.startsWith('http') ? pUrl : `${backendBase}${rel}`)
             }
           } catch { /* preview is optional */ }
         }
