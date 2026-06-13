@@ -147,6 +147,13 @@ class SightingOut(BaseModel):
     camera_id: int | None
     notes: str | None
     created_at: datetime
+    # enriched fields populated by the endpoint via detection_event + person joins
+    person_id: int | None = None
+    person_name: str | None = None
+    confidence: float | None = None
+    source_name: str | None = None
+    frame_index: int | None = None
+    snapshot_path: str | None = None
 
 
 class SightingCreate(BaseModel):

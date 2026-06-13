@@ -14,7 +14,7 @@ from ecoface_lite.api.schemas import (
     SightingCreate,
     SightingOut,
 )
-from ecoface_lite.db.models import Incident, Person, Sighting
+from ecoface_lite.db.models import DetectionEvent, Incident, Person, Sighting
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -107,9 +107,32 @@ async def list_sightings(incident_id: int, db: DbSession) -> list[SightingOut]:
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Incident not found")
     sighting_result = await db.execute(
-        select(Sighting).where(Sighting.incident_id == incident_id)
+        select(Sighting)
+        .options(
+            selectinload(Sighting.detection).selectinload(DetectionEvent.person)
+        )
+        .where(Sighting.incident_id == incident_id)
+        .order_by(Sighting.created_at)
     )
-    return [SightingOut.model_validate(s) for s in sighting_result.scalars().all()]
+    out = []
+    for s in sighting_result.scalars().all():
+        det = s.detection
+        person = det.person if det else None
+        out.append(SightingOut(
+            id=s.id,
+            incident_id=s.incident_id,
+            detection_id=s.detection_id,
+            camera_id=s.camera_id,
+            notes=s.notes,
+            created_at=s.created_at,
+            person_id=person.id if person else None,
+            person_name=person.display_name if person else None,
+            confidence=det.confidence if det else None,
+            source_name=det.source_label if det else None,
+            frame_index=det.frame_index if det else None,
+            snapshot_path=det.snapshot_path if det else None,
+        ))
+    return out
 
 
 @router.post("/{incident_id}/persons/{person_id}", response_model=IncidentPersonOut, status_code=201)

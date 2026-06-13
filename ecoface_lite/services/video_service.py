@@ -165,7 +165,9 @@ async def process_prerecorded_video(
 
     from ecoface_lite.input_sources.video_file import VideoFileSource
 
-    from ecoface_lite.db.models import DetectionEvent
+    from sqlalchemy import select as _select
+
+    from ecoface_lite.db.models import DetectionEvent, Sighting, incident_persons
 
     video_path = _safe_video_path(settings, video_relative_path)
     if not video_path.is_file():
@@ -227,17 +229,24 @@ async def process_prerecorded_video(
             snap_path = settings.resolved_snapshots_dir() / name
             cv2.imwrite(str(snap_path), packet.bgr)
             rel_snap = str(Path("data/snapshots") / name)
-            session.add(
-                DetectionEvent(
-                    person_id=m.person_id,
-                    confidence=m.confidence,
-                    threshold_used=m.threshold,
-                    source_type="video_file",
-                    source_label=str(video_path),
-                    frame_index=m.frame_index,
-                    snapshot_path=rel_snap,
+            det = DetectionEvent(
+                person_id=m.person_id,
+                confidence=m.confidence,
+                threshold_used=m.threshold,
+                source_type="video_file",
+                source_label=str(video_path),
+                frame_index=m.frame_index,
+                snapshot_path=rel_snap,
+            )
+            session.add(det)
+            await session.flush()  # assign det.id before linking to incidents
+            inc_rows = await session.execute(
+                _select(incident_persons.c.incident_id).where(
+                    incident_persons.c.person_id == m.person_id
                 )
             )
+            for (inc_id,) in inc_rows.all():
+                session.add(Sighting(incident_id=inc_id, detection_id=det.id))
             alerts += 1
             job_diagnostics.alerts_created = alerts
             metrics.increment("detection_events_created")
