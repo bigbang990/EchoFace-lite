@@ -9,7 +9,7 @@ export interface BackendEntry {
 
 export const BACKENDS: BackendEntry[] = [
   { name: 'Local CPU', url: 'http://127.0.0.1:8000/api/v1', type: 'local' },
-  { name: 'Colab GPU', url: 'https://b8b7-136-118-99-101.ngrok-free.app/api/v1', type: 'remote' },
+  { name: 'Colab GPU', url: 'https://a84a-136-118-99-101.ngrok-free.app/api/v1', type: 'remote' },
 ]
 
 // Single-server: INC routes live on the same server as the engine.
@@ -41,7 +41,7 @@ export const useAppStore = create<AppState>((set) => ({
   setAccessMode: (mode) => set({ accessMode: mode }),
   setActiveCaseId: (id) => set({ activeCaseId: id }),
   setActiveJobId: (id) => set({ activeJobId: id }),
-  setBackend: (name, url) => set({ backendName: name, backendUrl: url, incUrl: url }),
-  setIncUrl: (url) => set({ incUrl: url }),
+  setBackend: (name, url) => set({ backendName: name, backendUrl: url.trim(), incUrl: url.trim() }),
+  setIncUrl: (url) => set({ incUrl: url.trim() }),
   logout: () => set({ accessMode: null, activeCaseId: null, activeJobId: null }),
 }))

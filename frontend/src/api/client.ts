@@ -6,13 +6,17 @@ export interface ApiClient {
 }
 
 export function createApiClient(baseUrl: string): ApiClient {
-  const base = baseUrl.replace(/\/$/, '')
+  const base = baseUrl.trim().replace(/\/$/, '')
+  // ngrok free-tier shows a browser-warning page on first visit; this header skips it
+  const isNgrok = base.includes('ngrok')
+  const extraHeaders = isNgrok ? { 'ngrok-skip-browser-warning': 'true' } : {}
 
   async function req<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${base}${path}`, {
       ...init,
       headers: {
         'Content-Type': 'application/json',
+        ...extraHeaders,
         ...(init?.headers ?? {}),
       },
     })

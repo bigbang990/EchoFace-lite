@@ -336,21 +336,34 @@ export function useSystemMetrics() {
     }
     try {
       const raw = await createApiClient(backendUrl).get<Raw>('/observability/metrics')
+      // metrics.export() nests observed values: averages{} and rates{}
+      // root level only has: counters, averages, recent_values, rates, uptime_seconds
+      const avgs = (raw.averages as Raw | undefined) ?? {}
+      const rates = (raw.rates as Raw | undefined) ?? {}
+      const eff = (raw.effective_runtime_config as Raw | undefined) ?? {}
+      // backend_type string enum ("LOCAL_CPU" / "COLAB_GPU" / "REMOTE_GPU") is most reliable
+      const backendTypeStr = String(eff.backend_type ?? '')
+      const isGpu = backendTypeStr === 'COLAB_GPU' || backendTypeStr === 'REMOTE_GPU'
+      const hwType = isGpu ? 1 : Number(avgs.hardware_backend_type ?? raw.hardware_backend_type ?? 0)
       const m: SystemMetrics = {
-        fps: Number(raw.fps ?? raw.average_processing_fps ?? 0),
-        detector_latency_ms: Number(raw.detector_latency_ms ?? raw.detector_runtime_ms ?? 0),
+        fps: Number(avgs.average_processing_fps ?? avgs.fps ?? raw.fps ?? raw.average_processing_fps ?? 0),
+        detector_latency_ms: Number(
+          avgs.detector_effective_frame_cost_ms ??
+          avgs.detector_runtime_per_cycle_ms ??
+          raw.detector_latency_ms ?? raw.detector_runtime_ms ?? 0
+        ),
         gpu_status:
           (raw.gpu_status as SystemMetrics['gpu_status']) ??
-          (Number(raw.hardware_backend_type) === 1 ? 'OK' : 'UNAVAILABLE'),
-        hardware_backend_type: Number(raw.hardware_backend_type ?? 0),
-        queue_depth: Number(raw.queue_depth ?? 0),
-        identity_switch_rate: Number(raw.identity_switch_rate ?? 0),
-        active_tracks: Number(raw.active_tracks ?? 0),
-        cpu_percent: Number(raw.cpu_percent ?? 0),
-        memory_mb: Number(raw.memory_mb ?? 0),
-        stable_matches: Number(raw.stable_matches ?? 0),
-        validator_rejection_rate: Number(raw.validator_rejection_rate ?? 0),
-        confirmation_rate: Number(raw.confirmation_rate ?? 0),
+          (isGpu ? 'OK' : 'UNAVAILABLE'),
+        hardware_backend_type: hwType,
+        queue_depth: Number(avgs.queue_depth ?? raw.queue_depth ?? 0),
+        identity_switch_rate: Number(rates.identity_switch_rate ?? avgs.identity_switch_rate ?? raw.identity_switch_rate ?? 0),
+        active_tracks: Number(avgs.active_tracks ?? raw.active_tracks ?? 0),
+        cpu_percent: Number(avgs.cpu_percent ?? raw.cpu_percent ?? 0),
+        memory_mb: Number(avgs.memory_mb ?? raw.memory_mb ?? 0),
+        stable_matches: Number(avgs.stable_matches ?? raw.stable_matches ?? 0),
+        validator_rejection_rate: Number(rates.validator_rejection_rate ?? avgs.validator_rejection_rate ?? raw.validator_rejection_rate ?? 0),
+        confirmation_rate: Number(rates.confirmation_rate ?? avgs.confirmation_rate ?? raw.confirmation_rate ?? 0),
         uptime_seconds: Number(raw.uptime_seconds ?? 0),
       }
       setData(m)
