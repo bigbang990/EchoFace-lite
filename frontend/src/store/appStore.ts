@@ -9,7 +9,7 @@ export interface BackendEntry {
 
 export const BACKENDS: BackendEntry[] = [
   { name: 'Local CPU', url: 'http://127.0.0.1:8000/api/v1', type: 'local' },
-  { name: 'Colab GPU', url: 'https://b96e-34-16-214-94.ngrok-free.app/api/v1', type: 'remote' },
+  { name: 'Colab GPU', url: 'https://b8b7-136-118-99-101.ngrok-free.app/api/v1', type: 'remote' },
 ]
 
 // Single-server: INC routes live on the same server as the engine.

@@ -21,7 +21,7 @@ export default function Overview() {
   const trackingCount = incidents.filter((i) => i.status === 'TRACKING').length
   const openCount     = incidents.filter((i) => i.status === 'OPEN').length
   const resolvedCount = incidents.filter((i) => i.status === 'RESOLVED' || i.status === 'CLOSED').length
-  const pendingAlerts = incidents.reduce((s, i) => s + i.alert_count, 0)
+  const pendingAlerts = incidents.reduce((s, i) => s + i.pending_alert_count, 0)
   const activeCams    = cameras.filter((c) => c.status === 'ACTIVE').length
 
   const activityFeed = useMemo(

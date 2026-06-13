@@ -34,7 +34,7 @@ class VideoPreviewWriter:
         return self._preview_dir / "latest.jpg"
 
     def should_write(self, frame_index: int) -> bool:
-        interval = max(1, self._settings.tracking_overlay_interval)
+        interval = max(1, self._settings.video_preview_interval)
         return frame_index == 0 or frame_index % interval == 0
 
     def write(self, frame_bgr: "np.ndarray", items: list[OverlayItem], frame_index: int) -> str:

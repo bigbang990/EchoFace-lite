@@ -340,27 +340,25 @@ export default function CaseWorkspace() {
                   <div className="grid grid-cols-2 gap-2">
                     {(() => {
                       const normPath = (p: string) => p.replace(/^[/\\]/, '').replace(/\\/g, '/')
-                      const enrolledImages = persons
-                        .filter(p => p.source_image_path)
-                        .map(p => ({ src: `${backendBase}/${normPath(p.source_image_path!)}`, alt: p.name }))
-                      return persons.map((p) =>
-                        p.source_image_path ? (
-                          <EnrolledPhoto
-                            key={p.id}
-                            src={`${backendBase}/${normPath(p.source_image_path)}`}
-                            name={p.name}
-                            onClick={() => {
-                              const clickedSrc = `${backendBase}/${normPath(p.source_image_path!)}`
-                              const idx = enrolledImages.findIndex(img => img.src === clickedSrc)
-                              setZoomState({ images: enrolledImages, startIndex: idx >= 0 ? idx : 0 })
-                            }}
-                          />
-                        ) : null
-                      )
+                      // Collect all photos: primary + extra, across all persons in this incident
+                      const allImages: Array<{ src: string; alt: string }> = []
+                      for (const p of persons) {
+                        if (p.source_image_path)
+                          allImages.push({ src: `${backendBase}/${normPath(p.source_image_path)}`, alt: p.name })
+                        for (const ep of p.extra_photo_paths ?? [])
+                          allImages.push({ src: `${backendBase}/${normPath(ep)}`, alt: `${p.name} (extra)` })
+                      }
+                      if (allImages.length === 0)
+                        return <div className="col-span-2 text-[10px] font-mono text-gray-700 text-center py-2">No photos stored</div>
+                      return allImages.map((img, i) => (
+                        <EnrolledPhoto
+                          key={img.src}
+                          src={img.src}
+                          name={img.alt}
+                          onClick={() => setZoomState({ images: allImages, startIndex: i })}
+                        />
+                      ))
                     })()}
-                    {persons.every((p) => !p.source_image_path) && (
-                      <div className="col-span-2 text-[10px] font-mono text-gray-700 text-center py-2">No photos stored</div>
-                    )}
                   </div>
                 )}
               </div>
@@ -408,6 +406,7 @@ export default function CaseWorkspace() {
           <Timeline
             entries={entries}
             backendBase={backendBase}
+            incidentId={String(incident.id)}
             onConfirmSighting={confirmSighting}
             onRejectSighting={rejectSighting}
           />

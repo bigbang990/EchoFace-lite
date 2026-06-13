@@ -12,19 +12,23 @@
       "runtimeExecutable": ".venv\\Scripts\\python.exe",
       "runtimeArgs": ["-m", "streamlit", "run", "dashboard/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"],
       "port": 8501
-    }
-  ,{
+    },
+    {
       "name": "EchoFace INC Server",
       "runtimeExecutable": ".venv\\Scripts\\python.exe",
       "runtimeArgs": ["-m", "uvicorn", "ecoface_lite.api.inc_server:inc_app", "--host", "0.0.0.0", "--port", "8001", "--reload"],
       "port": 8001
-    }
-  ,{
+    },
+    {
       "name": "EchoFace Frontend",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": ["C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js", "run", "dev"],
       "cwd": "frontend",
-      "port": 5173
+      "port": 5173,
+      "autoPort": false,
+      "env": {
+        "PATH": "C:\\Program Files\\nodejs;C:\\Windows\\system32;C:\\Windows"
+      }
     }
   ]
 }

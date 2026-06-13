@@ -31,6 +31,8 @@ class Person(Base):
     source_image_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # SHA-256 hex of uploaded bytes; used for dedupe (partial unique index on SQLite via migration).
     source_image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # JSON-encoded list of additional enrolled photo paths (from POST /persons/{id}/photos)
+    extra_photo_paths: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

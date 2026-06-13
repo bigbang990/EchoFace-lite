@@ -72,6 +72,9 @@ function normalizePerson(raw: Raw, incidentId: string): Person {
     incident_id: incidentId,
     enrolled_at: String(raw.enrolled_at ?? raw.created_at ?? new Date().toISOString()),
     source_image_path: raw.source_image_path ? String(raw.source_image_path) : undefined,
+    extra_photo_paths: Array.isArray(raw.extra_photo_paths)
+      ? (raw.extra_photo_paths as string[]).filter(Boolean)
+      : [],
   }
 }
 
@@ -437,7 +440,7 @@ export function useVideoJob(jobId: string | null) {
     const client = createApiClient(backendUrl)
     const backendBase = backendUrl.replace(/\/api\/v1\/?$/, '')
     let stopped = false
-    let previewFetched = false
+    let previewUrlSet = false
 
     const poll = async () => {
       if (stopped) return
@@ -458,17 +461,11 @@ export function useVideoJob(jobId: string | null) {
         })
         setError(null)
 
-        if (s.status === 'completed' && !previewFetched) {
-          previewFetched = true
-          try {
-            const p = await client.get<Raw>(`/videos/processing-preview/${jobId}`)
-            const pUrl = String(p.preview_url ?? p.preview_path ?? '')
-            if (pUrl && !stopped) {
-              // ensure leading slash so backendBase + path concatenates correctly
-              const rel = pUrl.startsWith('/') ? pUrl : `/${pUrl}`
-              setPreviewUrl(pUrl.startsWith('http') ? pUrl : `${backendBase}${rel}`)
-            }
-          } catch { /* preview is optional */ }
+        // Set preview URL as soon as processing starts — path is deterministic.
+        // LivePreviewImage appends ?t={tick} every 2s for cache-busting while live.
+        if (!previewUrlSet && (s.status === 'processing' || s.status === 'completed')) {
+          previewUrlSet = true
+          setPreviewUrl(`${backendBase}/data/previews/${jobId}/latest.jpg`)
         }
 
         if (s.status === 'completed' || s.status === 'failed') {

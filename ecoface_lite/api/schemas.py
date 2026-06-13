@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+import json as _json
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class PersonCreate(BaseModel):
@@ -20,7 +22,23 @@ class PersonOut(BaseModel):
     notes: str | None
     source_image_path: str | None
     source_image_hash: str | None = None
+    extra_photo_paths: list[str] = []
     created_at: datetime
+
+    @field_validator("extra_photo_paths", mode="before")
+    @classmethod
+    def _decode_extra(cls, v: object) -> list[str]:
+        if v is None or v == "":
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                parsed = _json.loads(v)
+                return parsed if isinstance(parsed, list) else []
+            except Exception:
+                return []
+        return []
 
 
 class PersonEnrollOut(BaseModel):

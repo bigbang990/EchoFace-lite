@@ -83,6 +83,7 @@ async def _sqlite_apply_schema_patches() -> None:
             "ALTER TABLE sightings ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'pending'",
             "ALTER TABLE incidents ADD COLUMN is_paused BOOLEAN NOT NULL DEFAULT 0",
             "CREATE TABLE IF NOT EXISTS incident_persons (incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE, PRIMARY KEY (incident_id, person_id))",
+            "ALTER TABLE persons ADD COLUMN extra_photo_paths TEXT",
         ):
             try:
                 await conn.execute(text(stmt))

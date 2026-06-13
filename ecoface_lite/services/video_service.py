@@ -228,7 +228,18 @@ async def process_prerecorded_video(
             last_event_frame_by_person[m.person_id] = packet.index
             name = f"{uuid.uuid4().hex}.jpg"
             snap_path = settings.resolved_snapshots_dir() / name
-            cv2.imwrite(str(snap_path), packet.bgr)
+            _ih, _iw = inference_frame.shape[:2]
+            _x1 = max(0, int(m.face.bbox.x1))
+            _y1 = max(0, int(m.face.bbox.y1))
+            _x2 = min(_iw, int(m.face.bbox.x2))
+            _y2 = min(_ih, int(m.face.bbox.y2))
+            _px = max(4, int((_x2 - _x1) * 0.15))
+            _py = max(4, int((_y2 - _y1) * 0.15))
+            _face_crop = inference_frame[
+                max(0, _y1 - _py):min(_ih, _y2 + _py),
+                max(0, _x1 - _px):min(_iw, _x2 + _px),
+            ]
+            cv2.imwrite(str(snap_path), _face_crop)
             rel_snap = str(Path("data/snapshots") / name)
             det = DetectionEvent(
                 person_id=m.person_id,

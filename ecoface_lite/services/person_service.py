@@ -119,6 +119,7 @@ async def add_photos_to_person(
     Returns (accepted_count, rejected_count, rejection_reasons).
     Raises HTTPException 400 if more than 5 photos are submitted.
     """
+    import json
     import cv2
     import numpy as np
     from fastapi import HTTPException
@@ -126,9 +127,18 @@ async def add_photos_to_person(
     if len(files) > 5:
         raise HTTPException(status_code=400, detail="Max 5 photos per call")
 
+    result = await db.execute(select(Person).where(Person.id == person_id))
+    person = result.scalar_one_or_none()
+    if person is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+
     accepted = 0
     rejected = 0
     reasons: list[str] = []
+    new_paths: list[str] = []
+
+    uploads = settings.resolved_uploads_dir()
+    uploads.mkdir(parents=True, exist_ok=True)
 
     for file_bytes, filename in zip(files, filenames):
         digest = sha256_hex(file_bytes)
@@ -157,6 +167,13 @@ async def add_photos_to_person(
             reasons.append(f"{filename}: {exc}")
             continue
 
+        # Save image file to uploads dir so it can be shown in the gallery
+        ext = Path(filename).suffix.lower() or ".jpg"
+        stored_name = f"{uuid.uuid4().hex}{ext}"
+        (uploads / stored_name).write_bytes(file_bytes)
+        rel_path = str(Path("data/uploads") / stored_name)
+        new_paths.append(rel_path)
+
         face = FaceEmbedding(
             person_id=person_id,
             ingest_sha256=digest,
@@ -167,6 +184,11 @@ async def add_photos_to_person(
         db.add(face)
         await db.flush()
         accepted += 1
-        logger.info("Added photo for person id=%s hash=%s", person_id, digest[:12])
+        logger.info("Added photo for person id=%s hash=%s path=%s", person_id, digest[:12], rel_path)
+
+    if new_paths:
+        existing = json.loads(person.extra_photo_paths) if person.extra_photo_paths else []
+        person.extra_photo_paths = json.dumps(existing + new_paths)
+        await db.flush()
 
     return accepted, rejected, reasons

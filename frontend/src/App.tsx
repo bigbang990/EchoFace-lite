@@ -7,6 +7,7 @@ import CreateCase from './pages/CreateCase'
 import Operations from './pages/Operations'
 import CaseList from './pages/CaseList'
 import CaseWorkspace from './pages/CaseWorkspace'
+import AlertDetail from './pages/AlertDetail'
 import SystemHealth from './pages/SystemHealth'
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/cases" element={<CaseList />} />
         <Route path="/cases/new" element={<CreateCase />} />
         <Route path="/cases/:id" element={<CaseWorkspace />} />
+        <Route path="/cases/:id/alerts/:sightingId" element={<AlertDetail />} />
         <Route path="/operations" element={<Operations />} />
         <Route
           path="/system-health"

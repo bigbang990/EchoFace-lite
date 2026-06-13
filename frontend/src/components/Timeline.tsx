@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   FolderOpen,
@@ -10,6 +11,9 @@ import {
   XCircle,
   PauseCircle,
   Cpu,
+  Camera,
+  Clock,
+  ExternalLink,
 } from 'lucide-react'
 import ImageZoomModal from './ImageZoomModal'
 import type { TimelineEntry, Sighting } from '../types'
@@ -34,12 +38,13 @@ function buildSnapshotUrl(snapshotPath: string, backendBase: string): string {
 interface AlertCardProps {
   sighting: Sighting
   backendBase: string
+  incidentId?: string
   onConfirm: (id: string) => void
   onReject: (id: string) => void
   onZoom?: (src: string) => void
 }
 
-function AlertCard({ sighting, backendBase, onConfirm, onReject, onZoom }: AlertCardProps) {
+function AlertCard({ sighting, backendBase, incidentId, onConfirm, onReject, onZoom }: AlertCardProps) {
   const pct = Math.round(sighting.confidence * 100)
   const barColor = pct >= 85 ? 'bg-emerald-500' : pct >= 65 ? 'bg-amber-500' : 'bg-red-500'
   const pctColor = pct >= 85 ? 'text-emerald-400' : pct >= 65 ? 'text-amber-400' : 'text-red-400'
@@ -48,6 +53,10 @@ function AlertCard({ sighting, backendBase, onConfirm, onReject, onZoom }: Alert
   const snapshotUrl = sighting.snapshot_path && !imgError
     ? buildSnapshotUrl(sighting.snapshot_path, backendBase)
     : null
+
+  const detectedAt = new Date(sighting.timestamp).toLocaleTimeString([], {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })
 
   return (
     <div className="mt-3 border border-amber-500/25 bg-amber-500/5 rounded-lg p-4">
@@ -74,12 +83,12 @@ function AlertCard({ sighting, backendBase, onConfirm, onReject, onZoom }: Alert
         </div>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2.5">
+          <div className="flex items-center gap-2 mb-2">
             <span className="text-[10px] font-mono text-gray-500 uppercase">Match</span>
             <span className="text-sm font-semibold text-gray-100">{sighting.person_name}</span>
           </div>
 
-          <div className="mb-2.5">
+          <div className="mb-2">
             <div className="flex justify-between text-[10px] font-mono mb-1">
               <span className="text-gray-600">CONFIDENCE</span>
               <span className={pctColor}>{pct}%</span>
@@ -89,21 +98,38 @@ function AlertCard({ sighting, backendBase, onConfirm, onReject, onZoom }: Alert
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-x-4 text-[10px] font-mono">
-            <div>
-              <div className="text-gray-600">SOURCE</div>
-              <div className="text-gray-400 truncate">{sighting.source_name}</div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[10px] font-mono">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Camera size={9} className="text-gray-600 flex-shrink-0" />
+              <span className="text-gray-400 truncate">{sighting.source_name || `CAM-${sighting.camera_id}` || '—'}</span>
             </div>
-            <div>
-              <div className="text-gray-600">FRAME</div>
-              <div className="text-gray-400">#{String(sighting.frame_index).padStart(5, '0')}</div>
+            <div className="flex items-center gap-1.5">
+              <Clock size={9} className="text-gray-600 flex-shrink-0" />
+              <span className="text-gray-400">{detectedAt}</span>
+            </div>
+            <div className="col-span-2 text-gray-600">
+              Frame #{String(sighting.frame_index).padStart(5, '0')}
+              {sighting.camera_id && sighting.camera_id !== sighting.source_name &&
+                <span className="ml-2 text-gray-700">· cam id {sighting.camera_id}</span>}
             </div>
           </div>
         </div>
       </div>
 
+      {/* View full report link — always shown */}
+      {incidentId && (
+        <div className="mt-2.5 pt-2.5 border-t border-amber-500/10">
+          <Link
+            to={`/cases/${incidentId}/alerts/${sighting.id}`}
+            className="flex items-center gap-1.5 text-[10px] font-mono text-amber-500/70 hover:text-amber-400 transition-colors"
+          >
+            <ExternalLink size={10} /> VIEW FULL REPORT
+          </Link>
+        </div>
+      )}
+
       {sighting.status === 'PENDING' && (
-        <div className="flex gap-2 mt-3 pt-3 border-t border-amber-500/15">
+        <div className="flex gap-2 mt-2.5 pt-2.5 border-t border-amber-500/15">
           <button
             onClick={() => onConfirm(sighting.id)}
             className="flex-1 py-2 text-[11px] font-mono font-semibold tracking-wider bg-emerald-500/15 border border-emerald-500/35 text-emerald-400 rounded hover:bg-emerald-500/25 transition-colors"
@@ -120,14 +146,14 @@ function AlertCard({ sighting, backendBase, onConfirm, onReject, onZoom }: Alert
       )}
 
       {sighting.status === 'CONFIRMED' && (
-        <div className="mt-3 pt-3 border-t border-emerald-500/20 flex items-center justify-center gap-2 text-[11px] font-mono text-emerald-400 tracking-wider">
+        <div className="mt-2.5 pt-2.5 border-t border-emerald-500/20 flex items-center justify-center gap-2 text-[11px] font-mono text-emerald-400 tracking-wider">
           <CheckCircle2 size={12} />
           MATCH CONFIRMED
         </div>
       )}
 
       {sighting.status === 'REJECTED' && (
-        <div className="mt-3 pt-3 border-t border-red-500/20 flex items-center justify-center gap-2 text-[11px] font-mono text-red-400 tracking-wider">
+        <div className="mt-2.5 pt-2.5 border-t border-red-500/20 flex items-center justify-center gap-2 text-[11px] font-mono text-red-400 tracking-wider">
           <XCircle size={12} />
           REJECTED
         </div>
@@ -139,11 +165,12 @@ function AlertCard({ sighting, backendBase, onConfirm, onReject, onZoom }: Alert
 interface Props {
   entries: TimelineEntry[]
   backendBase?: string
+  incidentId?: string
   onConfirmSighting?: (id: string) => void
   onRejectSighting?: (id: string) => void
 }
 
-export default function Timeline({ entries, backendBase = '', onConfirmSighting, onRejectSighting }: Props) {
+export default function Timeline({ entries, backendBase = '', incidentId, onConfirmSighting, onRejectSighting }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(
     new Set(
       entries
@@ -233,6 +260,7 @@ export default function Timeline({ entries, backendBase = '', onConfirmSighting,
                     <AlertCard
                       sighting={entry.sighting}
                       backendBase={backendBase}
+                      incidentId={incidentId}
                       onConfirm={onConfirmSighting ?? (() => {})}
                       onReject={onRejectSighting ?? (() => {})}
                       onZoom={handleZoom}

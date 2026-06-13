@@ -378,7 +378,7 @@ class Settings(BaseSettings):
     video_frame_skip: int = Field(default=1, ge=1, alias="VIDEO_FRAME_SKIP")
     video_inference_width: int = Field(default=640, ge=160, alias="VIDEO_INFERENCE_WIDTH")
     video_progress_interval: int = Field(default=10, ge=1, alias="VIDEO_PROGRESS_INTERVAL")
-    video_preview_interval: int = Field(default=5, ge=1, alias="VIDEO_PREVIEW_INTERVAL")
+    video_preview_interval: int = Field(default=1, ge=1, alias="VIDEO_PREVIEW_INTERVAL")
     rejected_face_snapshot_interval: int = Field(default=10, ge=1, alias="REJECTED_FACE_SNAPSHOT_INTERVAL")
     video_event_dedupe_frames: int = Field(default=30, ge=0, alias="VIDEO_EVENT_DEDUPE_FRAMES")
     video_worker_queue_size: int = Field(default=8, ge=1, alias="VIDEO_WORKER_QUEUE_SIZE")
