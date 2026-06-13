@@ -1,7 +1,21 @@
-# Checkpoint — 2026-06-14 — Phase A session 6: forensic alert detail page
+# Checkpoint — 2026-06-14 — Phase A session 7: hardware_backend_type fix + ngrok fix
 
 ## Phase
-Frontend v1.7 — forensic alert detail page + enriched alert cards
+Frontend v1.8 — hardware_backend_type display fixed; ngrok connectivity fixed
+
+## Changes this session (session 7)
+
+### hardware_backend_type inversion bug (FIXED)
+- `frontend/src/api/hooks.ts` — `useSystemMetrics` normalizer now reads from
+  `raw.averages.hardware_backend_type` (correct nested path from `metrics.export()`);
+  uses `effective_runtime_config.backend_type` string enum as primary GPU source
+  (`"COLAB_GPU"` / `"REMOTE_GPU"` → isGpu=true → hwType=1 → shows GPU label);
+  all other metrics (fps, latency, identity_switch_rate etc.) also fixed to read
+  from `raw.averages.*` / `raw.rates.*` with root-level fallback
+- `frontend/src/api/client.ts` — `.trim()` on baseUrl + `ngrok-skip-browser-warning`
+  header added to bypass ngrok free-tier HTML interstitial
+- `frontend/src/store/appStore.ts` — `.trim()` on `setBackend`/`setIncUrl`;
+  updated Colab GPU ngrok URL to `a84a-136-118-99-101.ngrok-free.app`
 
 ## Changes this session (session 6)
 
