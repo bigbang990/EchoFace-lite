@@ -66,6 +66,7 @@ def create_app() -> FastAPI:
     app.include_router(incidents.router, prefix="/api/v1")
     app.mount("/data/previews", StaticFiles(directory=settings.resolved_previews_dir()), name="previews")
     app.mount("/data/debug/rejected_faces", StaticFiles(directory=settings.resolved_rejected_faces_dir()), name="rejected_faces")
+    app.mount("/data/uploads", StaticFiles(directory=settings.resolved_uploads_dir()), name="uploads")
     return app
 
 

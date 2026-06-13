@@ -24,6 +24,7 @@ export interface Person {
   description: string
   incident_id: string
   enrolled_at: string
+  source_image_path?: string
 }
 
 export interface Sighting {

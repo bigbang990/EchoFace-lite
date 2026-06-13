@@ -1,10 +1,12 @@
-## Checkpoint — 2026-06-13 — Frontend Phase 2 complete (backend-wired)
+## Checkpoint — 2026-06-13 — Phase A: INC API split + alerts fix
 
 ### Phase
-Frontend v1.1 — Backend API wiring + real-time ADMIN mode + metrics export
+Frontend v1.3 — INC API separated; alerts pipeline wired end-to-end
 
 ### Status
-complete — all pages wired to API hooks; dev server (`cd frontend && npm run dev`)
+complete — INC server runs on :8001; core engine stays on :8000; frontend routes
+incident/person calls to incUrl, video/metrics to backendUrl; video detections now
+create Sighting rows so they appear in the case timeline
 
 ### What was built
 A standalone React + TypeScript frontend in `frontend/` — dark, professional
@@ -28,34 +30,40 @@ investigation platform aesthetic matching the spec.
 - package.json, vite.config.ts, tailwind.config.js, postcss.config.js,
   tsconfig.json, index.html, public/favicon.svg
 - src/index.css, src/main.tsx, src/App.tsx
-- src/types/index.ts          — Incident, Person, Sighting, Camera, ActivityEvent,
-                                 TimelineEntry, SystemMetrics, SparkPoint
-- src/store/appStore.ts       — accessMode, activeCaseId, backendName, backendUrl,
+- src/types/index.ts          — Incident, Person (+ source_image_path), Sighting,
+                                 Camera, ActivityEvent, TimelineEntry, SystemMetrics, SparkPoint
+- src/store/appStore.ts       — accessMode, activeCaseId, activeJobId, backendName, backendUrl,
                                  BACKENDS registry (Local CPU + Colab GPU)
 - src/mock/data.ts            — 3 incidents (INC-001 TRACKING, INC-002 OPEN,
                                  INC-003 RESOLVED), persons, sightings, timelines,
                                  activity feed, metrics, fps history
 - src/api/client.ts           — thin fetch wrapper: createApiClient(baseUrl)
 - src/api/hooks.ts            — useIncidents, useIncidentDetail, useSystemMetrics,
-                                 useCameras, useHealthCheck, deriveActivityFeed,
-                                 normalizers, buildTimeline
+                                 useCameras, useVideoJob, useHealthCheck, deriveActivityFeed,
+                                 normalizers (display_name/notes/source_image_path), buildTimeline
 - src/components/AccessGate.tsx        — MOCK / DEMO / ADMIN codes, shake animation,
                                           mode label on success, favicon.svg logo
 - src/components/Layout.tsx            — sidebar + MOCK/DEMO/ADMIN badge + backend btn
-- src/components/BackendPanel.tsx      — slide-over backend registry (mirrors backend_registry.py)
-                                          with health check per entry, custom URL input
+- src/components/BackendPanel.tsx      — slide-over backend registry with health check,
+                                          custom URL input
 - src/components/StatusIndicator.tsx   — dot + label + ONLINE/OFFLINE/DEGRADED badge
 - src/components/Timeline.tsx          — stagger animation, expandable alert cards
 - src/components/ProcessingSequence.tsx — STABLE — do not modify timing
 - src/pages/Overview.tsx       — useIncidents + useSystemMetrics + useCameras hooks;
                                    ADMIN: 4 live telemetry tiles + "LIVE · 3s" badge
-- src/pages/CreateCase.tsx     — 3-step form → ProcessingSequence → success screen
-- src/pages/Operations.tsx     — drag/drop video upload, live mock stat ticker
+- src/pages/CreateCase.tsx     — 3-step form → real 4-step API progress tracker →
+                                   navigate to created case (DEMO/ADMIN) or success
+                                   screen (MOCK). Photo rejection warning + agent
+                                   confirmation dialog. personId from pData.person.id
+- src/pages/Operations.tsx     — real video upload via POST /videos/upload-and-process,
+                                   persistent job in Zustand, useVideoJob polling,
+                                   preview video on completion
 - src/pages/CaseList.tsx       — useIncidents hook; loading/error states
-- src/pages/CaseWorkspace.tsx  — useIncidentDetail hook; 3-column layout; local state
-                                   for confirm/reject/comment/status actions
-- src/pages/SystemHealth.tsx   — useSystemMetrics (3s polling in ADMIN); CSV + JSON
-                                   export buttons (URL.createObjectURL); LIVE badge
+- src/pages/CaseWorkspace.tsx  — useIncidentDetail hook; 3-column layout; PersonAvatar
+                                   shows enrolled photo (source_image_path via
+                                   /data/uploads/ static mount); close/pause buttons
+                                   send PATCH /incidents/{id}/status to backend
+- src/pages/SystemHealth.tsx   — useSystemMetrics (3s polling in ADMIN); CSV + JSON export
 
 ### API hooks — MOCK mode returns mock data, DEMO/ADMIN hit real FastAPI
 - useIncidents()        → incidents[], ADMIN polls every 10s
@@ -74,9 +82,34 @@ When backend is running at http://127.0.0.1:8000 (or Colab ngrok URL):
 ### Mock data shape matches real API
 Incident { id (UUID), ref, title, status, created_at, updated_at,
            description, last_seen_location, last_seen_at, person_count, alert_count }
-Person   { id, name, age, gender, description, incident_id, enrolled_at }
+Person   { id, name, age, gender, description, incident_id, enrolled_at,
+           source_image_path? }
 Sighting { id, incident_id, person_id, person_name, confidence, camera_id,
            source_name, timestamp, status, frame_index }
+
+### Critical enrollment bug (FIXED)
+Backend PersonEnrollOut = { person: PersonOut, deduplicated: bool }.
+The person ID is at `pData.person.id`, NOT `pData.id`.
+The old code read `pData.id` (undefined) → personId = '' → link skipped →
+person existed in DB but not linked to any incident → gallery was empty →
+"No enrolled persons in gallery" on video scan.
+
+### Backend schemas (key for API wiring)
+- POST /persons → PersonEnrollOut { person: PersonOut, deduplicated: bool }
+  PersonOut { id, display_name, notes, source_image_path, source_image_hash, created_at }
+- POST /persons/{id}/photos → PersonEnrollMultiOut { person, photos_accepted, photos_rejected, rejection_reasons[] }
+- PATCH /incidents/{id}/status → body: { status: "open" | "active" | "closed" }
+- source_image_path format: "data/uploads/{uuid}.ext" — served at {backendBase}/data/uploads/{uuid}.ext
+
+### Static mounts in main.py
+- /data/previews → settings.resolved_previews_dir()
+- /data/debug/rejected_faces → settings.resolved_rejected_faces_dir()
+- /data/uploads → settings.resolved_uploads_dir()  ← added Phase 3
+
+### Embedding lifecycle
+Gallery = persons linked to OPEN incidents. Closing an incident (PATCH status: "closed")
+removes its persons from the gallery automatically. Reopening (status: "open") re-enables.
+No separate embedding delete step needed — controlled entirely by incident status.
 
 ### To start
 ```
@@ -101,10 +134,42 @@ Node.js 18+ must be installed (nodejs.org).
 - Phase 8A: ExperimentCoordinator extracted
 - Phase 7B: session lifecycle isolation, multi-photo enrollment
 
+### Architecture — two servers, one DB
+
+```
+Core Engine  :8000   — video processing, observability, cameras, live_test
+INC Server   :8001   — incidents, persons, sightings, /data/uploads static
+Both share the same SQLite/PostgreSQL database.
+Engine writes DetectionEvent + Sighting rows; INC serves them.
+```
+
+Start commands:
+```
+# terminal 1 — core engine (needs GPU/ML deps)
+uvicorn ecoface_lite.api.main:app --port 8000 --reload
+
+# terminal 2 — INC server (lightweight, no ML)
+uvicorn ecoface_lite.api.inc_server:inc_app --port 8001 --reload
+
+# terminal 3 — frontend
+cd frontend && npm run dev
+```
+
+Frontend store: `backendUrl` (engine) + `incUrl` (INC, default :8001).
+Change `incUrl` via BackendPanel gear icon → INC SERVER section.
+
+### Alerts pipeline (fixed)
+`video_service.py` now: DetectionEvent → `session.flush()` → query
+`incident_persons` → create `Sighting(incident_id, detection_id)`.
+`GET /incidents/{id}/sightings` eager-loads detection+person, returns
+enriched `SightingOut` with person_name, confidence, source_name, frame_index.
+Frontend `normalizeSighting` uses `raw.created_at` as timestamp fallback.
+
 ### Next target
-Wire frontend to real FastAPI backend — replace mock/data.ts with
-fetch/SWR calls to /api/v1/incidents, /api/v1/incidents/:id/persons,
-/api/v1/incidents/:id/sightings, /api/v1/observability/*
+- Phase B: INC server writes sightings via its own endpoint (engine POSTs to INC API
+  instead of writing to DB directly) — full service separation
+- Same-person photo verification during enrollment
+- Confirm/reject sighting wired to real API
 
 ### Branch
 phase8-pipeline-decompose

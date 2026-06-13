@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Upload, X, ArrowRight, ArrowLeft, ExternalLink } from 'lucide-react'
-import ProcessingSequence, { ProcessingStep } from '../components/ProcessingSequence'
+import { Upload, X, ArrowRight, ArrowLeft, ExternalLink, AlertTriangle, CheckCircle2, XCircle, Loader2, AlertCircle } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 import { nextIncidentRef } from '../mock/data'
 
@@ -20,22 +19,31 @@ interface FormData {
   photos: File[]
 }
 
-const STEPS: Step[] = ['person', 'last-seen', 'photos', 'processing', 'success']
+interface ProcStep {
+  label: string
+  status: 'idle' | 'running' | 'ok' | 'warn' | 'fail'
+  detail: string
+}
 
-const PROCESSING_STEPS: ProcessingStep[] = [
-  { label: 'Uploading reference photos',         detail: 'Transferring to secure intake buffer', durationMs: 1200 },
-  { label: 'Generating face embeddings',          detail: 'ArcFace / buffalo_l — 512-dim vectors', durationMs: 2200 },
-  { label: 'Creating case record',                detail: 'Writing to incident database',          durationMs: 900 },
-  { label: 'Registering tracking profile',        detail: 'Loading embedding into identity store', durationMs: 1100 },
-  { label: 'Activating search engine',            detail: 'Arming SORT tracker and matcher',       durationMs: 800 },
-  { label: 'Tracking active',                     detail: 'Pipeline ready — awaiting video source', durationMs: 600 },
+interface PhotoWarning {
+  rejected: number
+  accepted: number
+  reasons: string[]
+}
+
+const PROC_STEPS: ProcStep[] = [
+  { label: 'Analyzing reference photos',   status: 'idle', detail: '' },
+  { label: 'Creating face embeddings',      status: 'idle', detail: '' },
+  { label: 'Creating case record',          status: 'idle', detail: '' },
+  { label: 'Activating tracking profile',   status: 'idle', detail: '' },
 ]
 
+const STEPS: Step[] = ['person', 'last-seen', 'photos', 'processing', 'success']
 const GENDERS = ['Female', 'Male', 'Non-binary / Other', 'Prefer not to say']
 
 export default function CreateCase() {
   const navigate = useNavigate()
-  const { accessMode, backendUrl } = useAppStore()
+  const { accessMode, incUrl } = useAppStore()
   const fileRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>('person')
   const [caseRef] = useState(() => nextIncidentRef())
@@ -51,10 +59,11 @@ export default function CreateCase() {
     photos: [],
   })
 
-  // Dual-gate: both animation AND api call must finish before navigating
-  const [animDone, setAnimDone] = useState(false)
-  const [apiDone, setApiDone] = useState(false)
-  const [createdIncidentId, setCreatedIncidentId] = useState<string | null>(null)
+  const [procSteps, setProcSteps] = useState<ProcStep[]>(PROC_STEPS.map((s) => ({ ...s })))
+  const [photoWarning, setPhotoWarning] = useState<PhotoWarning | null>(null)
+  // Refs survive async continuations without stale-closure issues
+  const personIdRef = useRef<string>('')
+  const incidentIdRef = useRef<string>('')
 
   const currentIdx = STEPS.indexOf(step)
 
@@ -71,94 +80,179 @@ export default function CreateCase() {
   const removePhoto = (i: number) =>
     update('photos', form.photos.filter((_, idx) => idx !== i))
 
-  // Fire real API calls while the animation plays
-  const submitCaseToApi = async () => {
+  const updateStep = (idx: number, status: ProcStep['status'], detail: string) =>
+    setProcSteps((prev) => prev.map((s, i) => (i === idx ? { ...s, status, detail } : s)))
+
+  // MOCK: fake delays, then success screen
+  const runMockProcessing = async () => {
+    const details = [
+      'Face detected · 1 embedding generated',
+      `${form.photos.length} photo${form.photos.length !== 1 ? 's' : ''} · embeddings generated`,
+      'Case record written to database',
+      `${form.name || 'Unknown'} enrolled · tracking active`,
+    ]
+    const delays = [1200, 2200, 900, 1100]
+    for (let i = 0; i < 4; i++) {
+      updateStep(i, 'running', '')
+      await new Promise((r) => setTimeout(r, delays[i]))
+      updateStep(i, 'ok', details[i])
+    }
+    setTimeout(() => setStep('success'), 600)
+  }
+
+  // REAL step 1: enroll person with first photo
+  const runProcessing = async () => {
+    personIdRef.current = ''
+    incidentIdRef.current = ''
+    setPhotoWarning(null)
+    setProcSteps(PROC_STEPS.map((s) => ({ ...s })))
+
+    // Step 0: first photo → create person + embedding
+    updateStep(0, 'running', '')
+    const pForm = new FormData()
+    pForm.append('display_name', form.name)
+    pForm.append(
+      'notes',
+      `Age: ${form.age || 'unknown'}, Gender: ${form.gender}. ${form.description}`
+    )
+    if (form.photos.length > 0) pForm.append('image', form.photos[0])
+
+    let personId: string
     try {
-      // 1. Create incident
-      const incRes = await fetch(`${backendUrl}/incidents`, {
+      const pRes = await fetch(`${incUrl}/persons`, { method: 'POST', body: pForm })
+      if (!pRes.ok) {
+        const errText = await pRes.text().catch(() => pRes.statusText)
+        updateStep(0, 'fail', `Enrollment failed: ${errText}`)
+        return
+      }
+      const pData = await pRes.json()
+      // Backend returns PersonEnrollOut = { person: PersonOut, deduplicated: bool }
+      personId = String(pData.person?.id ?? pData.id ?? '')
+      if (!personId) {
+        updateStep(0, 'fail', 'No person ID in response — check backend logs')
+        return
+      }
+      personIdRef.current = personId
+      const dedup = pData.deduplicated ? ' · matched existing profile' : ''
+      updateStep(0, 'ok', `Face detected · embedding generated${dedup}`)
+    } catch (e) {
+      updateStep(0, 'fail', (e as Error).message)
+      return
+    }
+
+    // Step 1: additional photos (one by one for per-photo feedback)
+    let totalAccepted = 1
+    let totalRejected = 0
+    const rejectionReasons: string[] = []
+
+    if (form.photos.length > 1) {
+      updateStep(
+        1,
+        'running',
+        `Processing ${form.photos.length - 1} additional photo${form.photos.length > 2 ? 's' : ''}…`
+      )
+      for (let i = 1; i < form.photos.length; i++) {
+        try {
+          const ef = new FormData()
+          ef.append('images', form.photos[i])
+          const res = await fetch(`${incUrl}/persons/${personId}/photos`, {
+            method: 'POST',
+            body: ef,
+          })
+          if (res.ok) {
+            const d = await res.json()
+            // PersonEnrollMultiOut = { person, photos_accepted, photos_rejected, rejection_reasons }
+            totalAccepted += Number(d.photos_accepted ?? 1)
+            const rej = Number(d.photos_rejected ?? 0)
+            totalRejected += rej
+            if (rej > 0 && Array.isArray(d.rejection_reasons)) {
+              rejectionReasons.push(...(d.rejection_reasons as string[]))
+            }
+          }
+        } catch { /* continue — non-fatal */ }
+      }
+
+      if (totalRejected > 0) {
+        const reason = rejectionReasons[0] ?? 'no clear face detected'
+        updateStep(
+          1,
+          'warn',
+          `${totalAccepted} accepted · ${totalRejected} rejected (${reason})`
+        )
+        setPhotoWarning({ rejected: totalRejected, accepted: totalAccepted, reasons: rejectionReasons })
+        return // pause — wait for agent confirmation below
+      } else {
+        updateStep(1, 'ok', `${totalAccepted} photos · ${totalAccepted} embeddings generated`)
+      }
+    } else {
+      updateStep(1, 'ok', 'Primary photo processed')
+    }
+
+    await continueCreatingCase()
+  }
+
+  // REAL steps 2–3: create incident + link person
+  const continueCreatingCase = async () => {
+    const personId = personIdRef.current
+
+    // Step 2: create incident
+    updateStep(2, 'running', '')
+    let incidentId: string
+    try {
+      const incRes = await fetch(`${incUrl}/incidents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: `Missing: ${form.name}`,
-          description:
-            form.notes
-              ? `${form.notes}. Last seen: ${form.location}`
-              : `Last seen: ${form.location} on ${form.lastSeenDate} at ${form.lastSeenTime}`,
+          description: form.notes
+            ? `${form.notes}. Last seen: ${form.location}`
+            : `Last seen: ${form.location} on ${form.lastSeenDate} at ${form.lastSeenTime}`,
           operator_id: 'operator',
         }),
       })
-      if (!incRes.ok) throw new Error(`Incident create failed: ${incRes.status}`)
+      if (!incRes.ok) {
+        const errText = await incRes.text().catch(() => incRes.statusText)
+        updateStep(2, 'fail', `Failed: ${errText}`)
+        return
+      }
       const incData = await incRes.json()
-      const incidentId = String(incData.id)
+      incidentId = String(incData.id ?? '')
+      incidentIdRef.current = incidentId
+      const ref = incData.ref ? ` · ${incData.ref}` : ''
+      updateStep(2, 'ok', `Case created${ref}`)
+    } catch (e) {
+      updateStep(2, 'fail', (e as Error).message)
+      return
+    }
 
-      // 2. Enroll person with first photo
-      const pForm = new FormData()
-      pForm.append('display_name', form.name)
-      pForm.append(
-        'notes',
-        `Age: ${form.age || 'unknown'}, Gender: ${form.gender}. ${form.description}`
+    // Step 3: link person → incident
+    updateStep(3, 'running', '')
+    try {
+      const linkRes = await fetch(
+        `${incUrl}/incidents/${incidentId}/persons/${personId}`,
+        { method: 'POST' }
       )
-      if (form.photos.length > 0) pForm.append('image', form.photos[0])
-      const pRes = await fetch(`${backendUrl}/persons`, { method: 'POST', body: pForm })
-      if (!pRes.ok) throw new Error(`Person enroll failed: ${pRes.status}`)
-      const pData = await pRes.json()
-      const personId = String(pData.id ?? pData.person_id ?? '')
-
-      // 3. Additional photos (if any)
-      if (form.photos.length > 1 && personId) {
-        const extraForm = new FormData()
-        form.photos.slice(1).forEach((p) => extraForm.append('images', p))
-        await fetch(`${backendUrl}/persons/${personId}/photos`, {
-          method: 'POST',
-          body: extraForm,
-        })
+      if (!linkRes.ok) {
+        updateStep(3, 'fail', `Link failed (${linkRes.status}) — person was enrolled but not linked`)
+        return
       }
-
-      // 4. Link person → incident
-      if (personId && incidentId) {
-        await fetch(`${backendUrl}/incidents/${incidentId}/persons/${personId}`, {
-          method: 'POST',
-        })
-      }
-
-      setCreatedIncidentId(incidentId)
-    } catch (err) {
-      console.error('Case creation API error:', err)
-      // graceful: createdIncidentId stays null → fallback to success screen
-    } finally {
-      setApiDone(true)
+      updateStep(3, 'ok', `${form.name} enrolled · tracking profile active`)
+      setTimeout(() => navigate(`/cases/${incidentId}`), 1400)
+    } catch (e) {
+      updateStep(3, 'fail', (e as Error).message)
     }
   }
 
   const handleSubmit = () => {
     setStep('processing')
-    setAnimDone(false)
-    setApiDone(false)
-    setCreatedIncidentId(null)
-
-    if (accessMode !== 'MOCK') {
-      submitCaseToApi()
+    setProcSteps(PROC_STEPS.map((s) => ({ ...s })))
+    setPhotoWarning(null)
+    if (accessMode === 'MOCK') {
+      runMockProcessing()
+    } else {
+      runProcessing()
     }
   }
-
-  // When both gates open, navigate or show success
-  useEffect(() => {
-    if (!animDone) return
-
-    if (accessMode === 'MOCK') {
-      setTimeout(() => setStep('success'), 400)
-      return
-    }
-
-    if (apiDone) {
-      if (createdIncidentId) {
-        navigate(`/cases/${createdIncidentId}`)
-      } else {
-        setStep('success') // API failed gracefully
-      }
-    }
-    // else: animation done but API still running — stay on processing screen
-  }, [animDone, apiDone, createdIncidentId, accessMode, navigate])
 
   return (
     <div className="p-8 max-w-2xl">
@@ -291,10 +385,13 @@ export default function CreateCase() {
                 <div className="mt-4 space-y-2">
                   {form.photos.map((file, i) => (
                     <div key={i} className="flex items-center gap-3 bg-gray-800/60 border border-gray-700 rounded px-4 py-2.5">
-                      <div className="w-8 h-8 bg-gray-700 rounded flex items-center justify-center flex-shrink-0">
-                        <span className="text-[10px] font-mono text-gray-400">
-                          {['FNT', 'LFT', 'RGT'][i] ?? `P${i + 1}`}
-                        </span>
+                      <div className="w-8 h-8 bg-gray-700 rounded flex items-center justify-center flex-shrink-0 overflow-hidden">
+                        <img
+                          src={URL.createObjectURL(file)}
+                          alt=""
+                          className="w-full h-full object-cover"
+                          onLoad={(e) => URL.revokeObjectURL((e.target as HTMLImageElement).src)}
+                        />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-sm text-gray-300 truncate">{file.name}</div>
@@ -323,20 +420,108 @@ export default function CreateCase() {
 
           {step === 'processing' && (
             <StepPanel key="processing" title="Creating Case" subtitle={caseRef}>
-              <div className="mb-6">
-                <div className="text-sm text-gray-500 mb-1">
-                  Setting up{' '}
-                  <span className="font-semibold text-gray-300">{form.name || 'unknown'}</span>
-                  {' '}— {form.photos.length} photo{form.photos.length !== 1 ? 's' : ''} enrolled
-                </div>
+              <div className="mb-5 text-sm text-gray-500">
+                Enrolling{' '}
+                <span className="font-semibold text-gray-300">{form.name || 'subject'}</span>
+                {' '}— {form.photos.length} photo{form.photos.length !== 1 ? 's' : ''} submitted
               </div>
-              <ProcessingSequence
-                steps={PROCESSING_STEPS}
-                onComplete={() => setAnimDone(true)}
-              />
-              {animDone && !apiDone && (
-                <div className="mt-4 text-center text-[11px] font-mono text-gray-600 animate-pulse">
-                  Finalising with server…
+
+              <div className="space-y-3">
+                {procSteps.map((s, i) => (
+                  <div
+                    key={i}
+                    className={`flex items-start gap-3 rounded-lg px-4 py-3 border transition-colors ${
+                      s.status === 'idle'    ? 'border-gray-800 bg-transparent' :
+                      s.status === 'running' ? 'border-cyan-500/25 bg-cyan-500/5' :
+                      s.status === 'ok'      ? 'border-emerald-500/25 bg-emerald-500/5' :
+                      s.status === 'warn'    ? 'border-amber-500/25 bg-amber-500/5' :
+                                               'border-red-500/25 bg-red-500/5'
+                    }`}
+                  >
+                    <div className="flex-shrink-0 mt-0.5">
+                      {s.status === 'idle'    && <div className="w-4 h-4 rounded-full border border-gray-700" />}
+                      {s.status === 'running' && <Loader2 size={16} className="text-cyan-400 animate-spin" />}
+                      {s.status === 'ok'      && <CheckCircle2 size={16} className="text-emerald-400" />}
+                      {s.status === 'warn'    && <AlertCircle size={16} className="text-amber-400" />}
+                      {s.status === 'fail'    && <XCircle size={16} className="text-red-400" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className={`text-[13px] font-medium ${
+                        s.status === 'idle'    ? 'text-gray-600' :
+                        s.status === 'running' ? 'text-cyan-300' :
+                        s.status === 'ok'      ? 'text-emerald-300' :
+                        s.status === 'warn'    ? 'text-amber-300' :
+                                                  'text-red-300'
+                      }`}>{s.label}</div>
+                      {s.detail && (
+                        <div className="text-[11px] font-mono text-gray-500 mt-0.5 break-words">{s.detail}</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Photo quality warning — agent confirmation required */}
+              {photoWarning && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-5 bg-amber-500/8 border border-amber-500/30 rounded-lg p-4"
+                >
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle size={15} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold text-amber-300 mb-1">
+                        Photo Quality Warning — Agent Confirmation Required
+                      </div>
+                      <p className="text-[11px] text-amber-400/80 mb-1">
+                        {photoWarning.rejected} of {photoWarning.accepted + photoWarning.rejected}{' '}
+                        photo{photoWarning.rejected !== 1 ? 's' : ''} could not be processed.
+                        {photoWarning.reasons[0] ? ` Reason: ${photoWarning.reasons[0]}` : ''}
+                      </p>
+                      <p className="text-[10px] text-gray-500 mb-3">
+                        These photos may not contain a detectable face or are too low quality.
+                        They will not be included in the tracking profile.
+                        Confirm to proceed with the {photoWarning.accepted} accepted photo{photoWarning.accepted !== 1 ? 's' : ''}.
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setPhotoWarning(null); void continueCreatingCase() }}
+                          className="px-3 py-1.5 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded text-[11px] font-medium hover:bg-amber-500/25 transition-colors"
+                        >
+                          Proceed with {photoWarning.accepted} photo{photoWarning.accepted !== 1 ? 's' : ''}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setPhotoWarning(null)
+                            setProcSteps(PROC_STEPS.map((s) => ({ ...s })))
+                            setStep('photos')
+                          }}
+                          className="px-3 py-1.5 border border-gray-700 text-gray-500 rounded text-[11px] hover:bg-gray-800 hover:text-gray-300 transition-colors"
+                        >
+                          Re-upload Photos
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Any step failed — offer to retry or go back */}
+              {!photoWarning && procSteps.some((s) => s.status === 'fail') && (
+                <div className="mt-5 flex justify-center gap-3">
+                  <button
+                    onClick={() => { setProcSteps(PROC_STEPS.map((s) => ({ ...s }))); handleSubmit() }}
+                    className="px-4 py-2 bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 rounded text-xs hover:bg-cyan-500/25 transition-colors"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    onClick={() => setStep('photos')}
+                    className="px-4 py-2 border border-gray-700 text-gray-500 rounded text-xs hover:bg-gray-800 hover:text-gray-300 transition-colors"
+                  >
+                    Back to Photos
+                  </button>
                 </div>
               )}
             </StepPanel>

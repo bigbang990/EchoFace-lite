@@ -15,7 +15,43 @@
   torch.load patch for PyTorch 2.6 weights_only. Production verified on T4.
 
 ## Active
-(nothing — awaiting next task)
+INC API split — Phase A done; Option 1 (Colab dual-server) unblocks hybrid immediately.
+See AI_CONTEXT/checkpoint_latest.md for full architecture state.
+
+## INC API phases
+
+### Phase A — ✅ DONE
+- `ecoface_lite/api/inc_server.py` — second entry point, INC routers only, same DB
+- Frontend: `incUrl` in store, BackendPanel INC section, all incident/person calls
+  routed to `incUrl`, video/metrics stay on `backendUrl`
+- For Colab hybrid: run both servers, expose via 2 ngrok tunnels
+  → `python scripts/colab_start.py` handles setup
+
+### Phase B — engine calls INC HTTP (true separation)
+Goal: engine never writes incident/sighting data directly; INC is the DB master.
+
+Changes needed:
+1. `ecoface_lite/core/config.py` — add `INC_API_URL: str | None = None`
+2. `ecoface_lite/api/inc_server.py` — add `POST /api/v1/gallery` endpoint
+   that returns `[{person_id, embedding_b64}]` for all OPEN incident persons
+3. `ecoface_lite/services/video_service.py` — `load_gallery()` calls
+   `GET {INC_API_URL}/gallery` when INC_API_URL is set (falls back to local DB)
+4. `ecoface_lite/services/video_service.py` — instead of creating Sighting in DB,
+   call `POST {INC_API_URL}/incidents/{id}/sightings`
+5. `ecoface_lite/api/inc_server.py` — add `POST /api/v1/embed` proxy
+   (INC calls this on enrollment; engine generates the 512-dim vector and returns it)
+   This makes enrollment work from any host without InsightFace locally.
+
+Result: engine can run on Colab GPU; INC can run on cheap cloud/local. No shared filesystem.
+
+### Phase C — public viewer (SSE stream)
+1. `ecoface_lite/api/inc_server.py` — add `GET /api/v1/incidents/{id}/stream` (SSE)
+   - subscriber list per incident_id
+   - when a sighting is POSTed (Phase B), broadcast to all subscribers
+2. Simple React page at `/view/{caseRef}` — no auth, just case ref
+   - connects to SSE stream, shows live timeline updates
+   - can be shared publicly ("watch case INC-004 live")
+3. CORS on INC server already `allow_origins=["*"]` — ready for public access
 
 ## Pending
 - Phase 7: resolve capped_detector_resolution in detection_optimizer.py

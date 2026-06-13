@@ -14,6 +14,12 @@
       "port": 8501
     }
   ,{
+      "name": "EchoFace INC Server",
+      "runtimeExecutable": ".venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "ecoface_lite.api.inc_server:inc_app", "--host", "0.0.0.0", "--port", "8001", "--reload"],
+      "port": 8001
+    }
+  ,{
       "name": "EchoFace Frontend",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],

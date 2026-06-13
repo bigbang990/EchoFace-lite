@@ -26,12 +26,30 @@ import {
 
 type Raw = Record<string, unknown>
 
+function normalizeStatus(raw: unknown): Incident['status'] {
+  switch (String(raw ?? '').toLowerCase()) {
+    case 'active':
+    case 'tracking':  return 'TRACKING'
+    case 'resolved':  return 'RESOLVED'
+    case 'closed':    return 'CLOSED'
+    default:          return 'OPEN'
+  }
+}
+
+function normalizeSightingStatus(raw: unknown): Sighting['status'] {
+  switch (String(raw ?? '').toLowerCase()) {
+    case 'confirmed': return 'CONFIRMED'
+    case 'rejected':  return 'REJECTED'
+    default:          return 'PENDING'
+  }
+}
+
 function normalizeIncident(raw: Raw, idx: number): Incident {
   return {
     id: String(raw.id ?? ''),
     ref: String(raw.ref ?? `INC-${String(idx + 1).padStart(3, '0')}`),
     title: String(raw.title ?? 'Unknown case'),
-    status: (raw.status as Incident['status']) ?? 'OPEN',
+    status: normalizeStatus(raw.status),
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? new Date().toISOString()),
     description: String(raw.description ?? ''),
@@ -45,12 +63,13 @@ function normalizeIncident(raw: Raw, idx: number): Incident {
 function normalizePerson(raw: Raw, incidentId: string): Person {
   return {
     id: String(raw.id ?? ''),
-    name: String(raw.name ?? ''),
+    name: String(raw.display_name ?? raw.name ?? ''),
     age: Number(raw.age ?? 0),
     gender: String(raw.gender ?? ''),
-    description: String(raw.description ?? ''),
+    description: String(raw.notes ?? raw.description ?? ''),
     incident_id: incidentId,
     enrolled_at: String(raw.enrolled_at ?? raw.created_at ?? new Date().toISOString()),
+    source_image_path: raw.source_image_path ? String(raw.source_image_path) : undefined,
   }
 }
 
@@ -63,8 +82,8 @@ function normalizeSighting(raw: Raw): Sighting {
     confidence: Number(raw.confidence ?? raw.match_confidence ?? 0),
     camera_id: String(raw.camera_id ?? ''),
     source_name: String(raw.source_name ?? raw.camera_id ?? 'Unknown source'),
-    timestamp: String(raw.timestamp ?? raw.detected_at ?? new Date().toISOString()),
-    status: (raw.status as Sighting['status']) ?? 'PENDING',
+    timestamp: String(raw.timestamp ?? raw.detected_at ?? raw.created_at ?? new Date().toISOString()),
+    status: normalizeSightingStatus(raw.status),
     frame_index: Number(raw.frame_index ?? 0),
   }
 }
@@ -184,7 +203,7 @@ let _incidentsCache: Incident[] = []
 // ── useIncidents ──────────────────────────────────────────────────────────────
 
 export function useIncidents() {
-  const { accessMode, backendUrl } = useAppStore()
+  const { accessMode, incUrl } = useAppStore()
   const [data, setData] = useState<Incident[]>(_incidentsCache)
   const [loading, setLoading] = useState(_incidentsCache.length === 0)
   const [error, setError] = useState<string | null>(null)
@@ -197,7 +216,7 @@ export function useIncidents() {
     }
     try {
       setLoading(true)
-      const raw = await createApiClient(backendUrl).get<Raw[]>('/incidents')
+      const raw = await createApiClient(incUrl).get<Raw[]>('/incidents')
       const normalized = raw.map((r, i) => normalizeIncident(r, i))
       _incidentsCache = normalized
       setData(normalized)
@@ -207,7 +226,7 @@ export function useIncidents() {
     } finally {
       setLoading(false)
     }
-  }, [accessMode, backendUrl])
+  }, [accessMode, incUrl])
 
   useEffect(() => {
     load()
@@ -223,7 +242,7 @@ export function useIncidents() {
 // ── useIncidentDetail ─────────────────────────────────────────────────────────
 
 export function useIncidentDetail(id: string | undefined) {
-  const { accessMode, backendUrl } = useAppStore()
+  const { accessMode, incUrl } = useAppStore()
   const [incident, setIncident] = useState<Incident | null>(null)
   const [persons, setPersons] = useState<Person[]>([])
   const [sightings, setSightings] = useState<Sighting[]>([])
@@ -246,7 +265,7 @@ export function useIncidentDetail(id: string | undefined) {
 
     try {
       setLoading(true)
-      const client = createApiClient(backendUrl)
+      const client = createApiClient(incUrl)
       const [rawInc, rawPersons, rawSightings] = await Promise.all([
         client.get<Raw>(`/incidents/${id}`),
         client.get<Raw[]>(`/incidents/${id}/persons`),
@@ -265,7 +284,7 @@ export function useIncidentDetail(id: string | undefined) {
     } finally {
       setLoading(false)
     }
-  }, [id, accessMode, backendUrl])
+  }, [id, accessMode, incUrl])
 
   useEffect(() => {
     load()

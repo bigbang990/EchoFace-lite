@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import Timeline from '../components/Timeline'
 import { useIncidentDetail } from '../api/hooks'
+import { useAppStore } from '../store/appStore'
 import type { IncidentStatus, TimelineEntry } from '../types'
 
 const statusCfg: Record<IncidentStatus, { label: string; color: string; dot: string }> = {
@@ -27,14 +28,32 @@ function Initials({ name }: { name: string }) {
   )
 }
 
+function PersonAvatar({ name, photoUrl }: { name: string; photoUrl: string | null }) {
+  const [imgError, setImgError] = useState(false)
+  if (photoUrl && !imgError) {
+    return (
+      <img
+        src={photoUrl}
+        alt={name}
+        onError={() => setImgError(true)}
+        className="w-24 h-24 rounded-full object-cover border border-gray-700"
+      />
+    )
+  }
+  return <Initials name={name || '?'} />
+}
+
 export default function CaseWorkspace() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { accessMode, incUrl } = useAppStore()
   const { incident, persons, timeline: baseTimeline, loading, error, refetch } = useIncidentDetail(id)
 
   const [extraEntries, setExtraEntries] = useState<TimelineEntry[]>([])
   const [localStatus, setLocalStatus] = useState<IncidentStatus | null>(null)
   const [comment, setComment] = useState('')
+
+  const backendBase = incUrl.replace(/\/api\/v1\/?$/, '')
 
   const entries = [
     ...baseTimeline.map((e) => {
@@ -47,6 +66,9 @@ export default function CaseWorkspace() {
   const currentStatus = localStatus ?? incident?.status ?? 'OPEN'
   const cfg = statusCfg[currentStatus]
   const person = persons[0]
+  const photoUrl = person?.source_image_path
+    ? `${backendBase}/${person.source_image_path}`
+    : null
 
   const addComment = () => {
     if (!comment.trim()) return
@@ -107,28 +129,40 @@ export default function CaseWorkspace() {
     })
   }
 
+  const patchStatus = async (backendStatus: 'open' | 'active' | 'closed') => {
+    if (accessMode !== 'MOCK' && incident) {
+      await fetch(`${incUrl}/incidents/${incident.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: backendStatus }),
+      }).catch(console.error)
+    }
+  }
+
   const pauseTracking = () => {
     setLocalStatus('OPEN')
+    void patchStatus('open')
     setExtraEntries((prev) => [
       ...prev,
       {
         id: `pause-${Date.now()}`,
         type: 'TRACKING_PAUSED' as const,
         timestamp: new Date().toISOString(),
-        message: 'Tracking paused by operator — pipeline suspended',
+        message: 'Tracking paused — pipeline suspended, embeddings still registered',
       },
     ])
   }
 
   const closeCase = () => {
-    setLocalStatus('RESOLVED')
+    setLocalStatus('CLOSED')
+    void patchStatus('closed')
     setExtraEntries((prev) => [
       ...prev,
       {
         id: `close-${Date.now()}`,
         type: 'CASE_CLOSED' as const,
         timestamp: new Date().toISOString(),
-        message: `Case ${incident?.ref ?? ''} marked resolved and closed`,
+        message: `Case ${incident?.ref ?? ''} closed — embedding search disabled`,
       },
     ])
   }
@@ -176,7 +210,7 @@ export default function CaseWorkspace() {
         {/* Left: Profile */}
         <aside className="w-64 flex-shrink-0 border-r border-gray-800 bg-gray-950 overflow-y-auto p-5">
           <div className="flex flex-col items-center text-center mb-5">
-            <Initials name={person?.name ?? '??'} />
+            <PersonAvatar name={person?.name ?? '??'} photoUrl={accessMode === 'MOCK' ? null : photoUrl} />
             <h2 className="text-base font-semibold text-gray-100 mt-3">{person?.name ?? 'Unknown'}</h2>
             <div className="text-xs font-mono text-gray-600 mt-0.5">
               {person?.age ? `${person.age} yrs` : ''}{person?.age && person?.gender ? ' · ' : ''}{person?.gender ?? ''}
