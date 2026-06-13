@@ -120,12 +120,15 @@ class IncidentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    ref: str = ''
     title: str
     description: str | None
     status: str
     operator_id: str | None
     created_at: datetime
     updated_at: datetime
+    person_count: int = 0
+    alert_count: int = 0
 
 
 class IncidentCreate(BaseModel):

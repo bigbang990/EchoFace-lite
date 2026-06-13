@@ -23,6 +23,22 @@ class IncidentDetailOut(IncidentOut):
     sightings: list[SightingOut] = []
 
 
+def _incident_out(inc: Incident) -> IncidentOut:
+    """Build IncidentOut with computed ref/counts from loaded relationships."""
+    return IncidentOut(
+        id=inc.id,
+        ref=f"INC-{inc.id:03d}",
+        title=inc.title,
+        description=inc.description,
+        status=inc.status,
+        operator_id=inc.operator_id,
+        created_at=inc.created_at,
+        updated_at=inc.updated_at,
+        person_count=len(inc.persons) if inc.persons is not None else 0,
+        alert_count=len(inc.sightings) if inc.sightings is not None else 0,
+    )
+
+
 @router.post("", response_model=IncidentOut, status_code=201)
 async def create_incident(body: IncidentCreate, db: DbSession) -> IncidentOut:
     incident = Incident(
@@ -34,7 +50,13 @@ async def create_incident(body: IncidentCreate, db: DbSession) -> IncidentOut:
     db.add(incident)
     await db.commit()
     await db.refresh(incident)
-    return IncidentOut.model_validate(incident)
+    # eager-load relationships so _incident_out can count them
+    result = await db.execute(
+        select(Incident)
+        .options(selectinload(Incident.persons), selectinload(Incident.sightings))
+        .where(Incident.id == incident.id)
+    )
+    return _incident_out(result.scalar_one())
 
 
 @router.get("", response_model=list[IncidentOut])
@@ -42,16 +64,23 @@ async def list_incidents(
     db: DbSession,
     status: str | None = Query(default=None),
 ) -> list[IncidentOut]:
-    stmt = select(Incident)
+    stmt = (
+        select(Incident)
+        .options(selectinload(Incident.persons), selectinload(Incident.sightings))
+    )
     if status is not None:
         stmt = stmt.where(Incident.status == status)
     result = await db.execute(stmt)
-    return [IncidentOut.model_validate(i) for i in result.scalars().all()]
+    return [_incident_out(i) for i in result.scalars().all()]
 
 
 @router.get("/{incident_id}", response_model=IncidentDetailOut)
 async def get_incident(incident_id: int, db: DbSession) -> IncidentDetailOut:
-    result = await db.execute(select(Incident).where(Incident.id == incident_id))
+    result = await db.execute(
+        select(Incident)
+        .options(selectinload(Incident.persons), selectinload(Incident.sightings))
+        .where(Incident.id == incident_id)
+    )
     incident = result.scalar_one_or_none()
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
@@ -59,9 +88,9 @@ async def get_incident(incident_id: int, db: DbSession) -> IncidentDetailOut:
         select(Sighting).where(Sighting.incident_id == incident_id)
     )
     sightings_out = [SightingOut.model_validate(s) for s in sighting_result.scalars().all()]
-    incident_data = IncidentOut.model_validate(incident).model_dump()
-    incident_data["sightings"] = sightings_out
-    return IncidentDetailOut(**incident_data)
+    inc_data = _incident_out(incident).model_dump()
+    inc_data["sightings"] = sightings_out
+    return IncidentDetailOut(**inc_data)
 
 
 @router.patch("/{incident_id}/status", response_model=IncidentOut)
@@ -76,8 +105,12 @@ async def update_incident_status(
         raise HTTPException(status_code=404, detail="Incident not found")
     incident.status = body.status
     await db.commit()
-    await db.refresh(incident)
-    return IncidentOut.model_validate(incident)
+    result2 = await db.execute(
+        select(Incident)
+        .options(selectinload(Incident.persons), selectinload(Incident.sightings))
+        .where(Incident.id == incident_id)
+    )
+    return _incident_out(result2.scalar_one())
 
 
 @router.post("/{incident_id}/sightings", response_model=SightingOut, status_code=201)

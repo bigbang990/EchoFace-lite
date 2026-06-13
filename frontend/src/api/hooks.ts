@@ -207,20 +207,24 @@ export function useIncidents() {
   const [data, setData] = useState<Incident[]>(_incidentsCache)
   const [loading, setLoading] = useState(_incidentsCache.length === 0)
   const [error, setError] = useState<string | null>(null)
+  const hasLoadedRef = useRef(false)
 
   const load = useCallback(async () => {
     if (accessMode === 'MOCK') {
       setData(mockIncidents)
       setLoading(false)
+      hasLoadedRef.current = true
       return
     }
     try {
-      setLoading(true)
+      // background polls are silent — only the first fetch shows the spinner
+      if (!hasLoadedRef.current) setLoading(true)
       const raw = await createApiClient(incUrl).get<Raw[]>('/incidents')
       const normalized = raw.map((r, i) => normalizeIncident(r, i))
       _incidentsCache = normalized
       setData(normalized)
       setError(null)
+      hasLoadedRef.current = true
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -229,6 +233,7 @@ export function useIncidents() {
   }, [accessMode, incUrl])
 
   useEffect(() => {
+    hasLoadedRef.current = false
     load()
     if (accessMode === 'ADMIN') {
       const t = setInterval(load, 10_000)
