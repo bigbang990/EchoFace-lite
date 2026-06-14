@@ -21,7 +21,8 @@ class SourceType(str, Enum):
     FILE = "file"
     RTSP = "rtsp"
     ANDROID = "android"   # VSL Phase 3
-    NVR = "nvr"           # VSL Phase 5
+    NVR = "nvr"           # VSL Phase 5 — ONVIF device, live + historical via GetReplayUri
+    DVR = "dvr"           # VSL Phase 5 — legacy DVR, live RTSP + operator-exported clips for historical
 
 
 class SourceStatus(str, Enum):

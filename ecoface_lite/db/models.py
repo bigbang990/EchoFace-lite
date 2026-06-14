@@ -168,6 +168,12 @@ class Camera(Base):
     supports_ptz: Mapped[bool] = mapped_column(default=False, nullable=False, server_default="0")
     retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)      # Phase 4: historical search gate
     trust_level: Mapped[str] = mapped_column(String(32), nullable=False, default="medium", server_default="medium")
+    # VSL Phase 5: NVR/DVR integration fields
+    onvif_host: Mapped[str | None] = mapped_column(String(255), nullable=True)       # NVR IP or hostname
+    onvif_port: Mapped[int | None] = mapped_column(Integer, nullable=True)           # ONVIF service port (default 80)
+    onvif_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    onvif_password_enc: Mapped[str | None] = mapped_column(Text, nullable=True)      # base64 — never in config/env
+    dvr_clip_dir: Mapped[str | None] = mapped_column(String(1024), nullable=True)   # DVR export drop directory
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     sightings: Mapped[list["Sighting"]] = relationship(back_populates="camera")
     zone_obj: Mapped["Zone | None"] = relationship("Zone", back_populates="cameras", foreign_keys=[zone_id])

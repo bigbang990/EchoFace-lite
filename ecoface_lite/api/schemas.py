@@ -183,6 +183,11 @@ class CameraOut(BaseModel):
     supports_ptz: bool
     retention_days: int | None
     trust_level: str
+    # VSL Phase 5: NVR/DVR fields (password never returned)
+    onvif_host: str | None
+    onvif_port: int | None
+    onvif_username: str | None
+    dvr_clip_dir: str | None
     created_at: datetime
 
 
@@ -191,7 +196,7 @@ class CameraCreate(BaseModel):
     stream_url: str | None = Field(default=None, max_length=1024)
     location: str | None = Field(default=None, max_length=512)
     # VSL Phase 1
-    source_type: str = Field(default="file", pattern=r"^(file|rtsp|android)$")
+    source_type: str = Field(default="file", pattern=r"^(file|rtsp|android|nvr|dvr)$")
     zone: str | None = Field(default=None, max_length=255)
     # VSL Phase 2
     zone_id: int | None = Field(default=None)
@@ -202,6 +207,12 @@ class CameraCreate(BaseModel):
     supports_ptz: bool = Field(default=False)
     retention_days: int | None = Field(default=None, ge=1)
     trust_level: str = Field(default="medium", pattern=r"^(high|medium|low)$")
+    # VSL Phase 5: NVR/DVR fields
+    onvif_host: str | None = Field(default=None, max_length=255)
+    onvif_port: int | None = Field(default=None, ge=1, le=65535)
+    onvif_username: str | None = Field(default=None, max_length=128)
+    onvif_password: str | None = Field(default=None, max_length=256, description="Plaintext — stored as base64")
+    dvr_clip_dir: str | None = Field(default=None, max_length=1024)
 
 
 class CameraHealthUpdate(BaseModel):
@@ -344,3 +355,31 @@ class AlertLevelUpdate(BaseModel):
 
 class AlertNoteCreate(BaseModel):
     note: str = Field(min_length=1, max_length=4000)
+
+
+# ── VSL Phase 5: NVR / DVR ───────────────────────────────────────────────────
+
+class ONVIFDeviceInfo(BaseModel):
+    """Response from POST /cameras/{id}/nvr/test-onvif."""
+    manufacturer: str | None
+    model: str | None
+    firmware_version: str | None
+    serial_number: str | None
+    hardware_id: str | None
+    onvif_host: str
+    onvif_port: int
+
+
+class ONVIFDiscoveryResult(BaseModel):
+    """Single candidate returned by GET /cameras/discover-onvif."""
+    xaddrs: list[str]
+    types: list[str]
+    scopes: list[str]
+
+
+class NVRCredentialsUpdate(BaseModel):
+    """PATCH /cameras/{id}/nvr/credentials — update ONVIF auth without touching other fields."""
+    onvif_host: str | None = Field(default=None, max_length=255)
+    onvif_port: int | None = Field(default=None, ge=1, le=65535)
+    onvif_username: str | None = Field(default=None, max_length=128)
+    onvif_password: str | None = Field(default=None, max_length=256, description="Stored as base64")

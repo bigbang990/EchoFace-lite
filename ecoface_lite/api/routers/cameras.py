@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
@@ -38,6 +39,15 @@ async def create_camera(body: CameraCreate, db: DbSession) -> CameraOut:
         supports_ptz=body.supports_ptz,
         retention_days=body.retention_days,
         trust_level=body.trust_level,
+        # VSL Phase 5: NVR/DVR fields
+        onvif_host=body.onvif_host,
+        onvif_port=body.onvif_port,
+        onvif_username=body.onvif_username,
+        onvif_password_enc=(
+            base64.b64encode(body.onvif_password.encode()).decode()
+            if body.onvif_password else None
+        ),
+        dvr_clip_dir=body.dvr_clip_dir,
         status="unknown",
     )
     db.add(camera)

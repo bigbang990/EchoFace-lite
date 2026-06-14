@@ -121,6 +121,12 @@ async def _sqlite_apply_schema_patches() -> None:
             "ALTER TABLE cameras ADD COLUMN supports_ptz BOOLEAN NOT NULL DEFAULT 0",
             "ALTER TABLE cameras ADD COLUMN retention_days INTEGER",
             "ALTER TABLE cameras ADD COLUMN trust_level VARCHAR(32) NOT NULL DEFAULT 'medium'",
+            # VSL Phase 5: NVR/DVR integration fields
+            "ALTER TABLE cameras ADD COLUMN onvif_host VARCHAR(255)",
+            "ALTER TABLE cameras ADD COLUMN onvif_port INTEGER",
+            "ALTER TABLE cameras ADD COLUMN onvif_username VARCHAR(128)",
+            "ALTER TABLE cameras ADD COLUMN onvif_password_enc TEXT",
+            "ALTER TABLE cameras ADD COLUMN dvr_clip_dir VARCHAR(1024)",
         ):
             try:
                 await conn.execute(text(stmt))

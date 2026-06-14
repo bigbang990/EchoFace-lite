@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from ecoface_lite import __version__
-from ecoface_lite.api.routers import alerts, cameras, detections, experimental, health, historical, incidents, live_test, observability, persons, processing, sites, zones
+from ecoface_lite.api.routers import alerts, cameras, detections, experimental, health, historical, incidents, live_test, nvr, observability, persons, processing, sites, zones
 from ecoface_lite.core.config import get_settings
 from ecoface_lite.core.logging import get_logger, setup_logging
 from ecoface_lite.db.session import init_db
@@ -83,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(observability.router, prefix="/api/v1")
     app.include_router(experimental.router, prefix="/api/v1")
     app.include_router(cameras.router, prefix="/api/v1")
+    app.include_router(nvr.router, prefix="/api/v1")
     app.include_router(sites.router, prefix="/api/v1")
     app.include_router(zones.router, prefix="/api/v1")
     app.include_router(incidents.router, prefix="/api/v1")

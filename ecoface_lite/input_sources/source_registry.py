@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.input_sources.android_source import AndroidCameraSource
 from ecoface_lite.input_sources.base import BaseVideoSource, SourceType
+from ecoface_lite.input_sources.nvr_source import DVRSource, NVRSource
 from ecoface_lite.input_sources.rtsp_source import RTSPSource
 from ecoface_lite.input_sources.video_file import VideoFileSource
 
@@ -55,6 +56,37 @@ class SourceRegistry:
                 zone=zone,
                 location=location,
                 source_type=SourceType.RTSP,
+            )
+
+        if stype == SourceType.NVR.value:
+            if not camera.stream_url:
+                raise ValueError(f"Camera {camera.id} has source_type 'nvr' but no stream_url (live RTSP)")
+            if not getattr(camera, "onvif_host", None):
+                raise ValueError(f"Camera {camera.id} has source_type 'nvr' but no onvif_host")
+            return NVRSource(
+                source_id=source_id,
+                name=name,
+                stream_url=camera.stream_url,
+                onvif_host=camera.onvif_host,
+                onvif_port=getattr(camera, "onvif_port", None) or 80,
+                onvif_username=getattr(camera, "onvif_username", None) or "admin",
+                onvif_password_enc=getattr(camera, "onvif_password_enc", None),
+                zone=zone,
+                location=location,
+            )
+
+        if stype == SourceType.DVR.value:
+            if not camera.stream_url:
+                raise ValueError(f"Camera {camera.id} has source_type 'dvr' but no stream_url (live RTSP)")
+            if not getattr(camera, "dvr_clip_dir", None):
+                raise ValueError(f"Camera {camera.id} has source_type 'dvr' but no dvr_clip_dir")
+            return DVRSource(
+                source_id=source_id,
+                name=name,
+                stream_url=camera.stream_url,
+                dvr_clip_dir=camera.dvr_clip_dir,
+                zone=zone,
+                location=location,
             )
 
         # Default: file source (source_type == "file" or legacy rows with no type)

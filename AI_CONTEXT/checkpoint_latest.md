@@ -1,9 +1,9 @@
-# Checkpoint — 2026-06-14 — VSL Phases 3 + 4 complete
+# Checkpoint — 2026-06-14 — VSL Phase 5 complete: NVR/DVR Integration
 
 ## Phase
-VSL Phase 4 — Historical Footage Access (complete)
+VSL Phase 5 — NVR/DVR Enterprise Integration (complete)
 Branch: `vsl-phase2-location-health`
-All prior phases (1, 2, 3) complete and verified on same branch.
+All prior VSL phases (1–4) intact and verified.
 
 ## Regression baseline metrics (30/30 pass)
 identity_switch_rate: 0.000
@@ -13,153 +13,143 @@ validator_rejection_rate: green
 bbox_jitter: green
 Test suite: 30 tests, 0 failed
 
-## Bug fixed this session
-`main.py` shutdown handler caught `Exception` after `await _health_task` — but
-`asyncio.CancelledError` is a `BaseException` in Python 3.8+, not `Exception`.
-Fix: changed `except Exception` → `except BaseException` in lifespan shutdown.
-Impact: `test_health` was failing with `CancelledError` on every TestClient teardown.
-Now 30/30 green.
-
 ---
 
-## VSL Phase 3 changes (AndroidCameraSource + MultiSourceScheduler)
+## VSL Phase 5 changes
 
-### New file — `ecoface_lite/input_sources/android_source.py`
-- `AndroidCameraSource(RTSPSource)`: thin subclass, `SourceType.ANDROID`,
-  initial backoff 1s (Android RTSP restarts faster than IP cameras)
-- Constructor matches RTSPSource interface, passes `source_type=SourceType.ANDROID`
+### Enum — `ecoface_lite/input_sources/base.py`
+- `SourceType.DVR = "dvr"` added (NVR was already present from Phase 1 stub)
+  Both NVR and DVR are now first-class source types.
+
+### DB model — `ecoface_lite/db/models.py`
+5 new columns on `cameras`:
+| Column | Type | Purpose |
+|---|---|---|
+| `onvif_host` | VARCHAR(255) | NVR IP or hostname |
+| `onvif_port` | INTEGER | ONVIF service port (default 80) |
+| `onvif_username` | VARCHAR(128) | ONVIF login |
+| `onvif_password_enc` | TEXT | base64-encoded — never in config/env |
+| `dvr_clip_dir` | VARCHAR(1024) | operator drop directory for DVR exports |
+
+### DB migrations — `ecoface_lite/db/session.py`
+5 ALTER TABLE patches added to `_sqlite_apply_schema_patches()`:
+  `onvif_host`, `onvif_port`, `onvif_username`, `onvif_password_enc`, `dvr_clip_dir`
+
+### New file — `ecoface_lite/input_sources/nvr_source.py`
+
+**NVRSource(RTSPSource)**:
+- Live path: inherited RTSPSource.get_frame() — no changes to live pipeline
+- Historical: ONVIF GetReplayUri() → time-windowed RTSP URL → OpenCV VideoCapture
+  Same technique as VideoFileSource — frames yielded until EOF or end_time
+- `get_device_info()`: ONVIF GetDeviceInformation (model, firmware, serial)
+- `discover(timeout_seconds)` classmethod: WS-Discovery probe, returns candidate list
+  NEVER auto-registers — operator-triggered only via GET /cameras/discover-onvif
+- `supports_historical = True`
+- `onvif-zeep` import is lazy (inside method bodies only); module loads without it
+  ImportError at call time includes `pip install onvif-zeep` instruction
+
+**DVRSource(RTSPSource)**:
+- Live path: inherited RTSPSource.get_frame()
+- Historical: scans `dvr_clip_dir` for video files (.mp4/.avi/.mkv etc.),
+  picks best match by mtime proximity to requested start_time,
+  delegates to `VideoFileSource.get_historical_stream()` — zero new packages
+- `_find_clip(start, end)`: window match ±24h, fallback to closest mtime
+- `supports_historical = True`
+- Raises FileNotFoundError with clear message if no clips found
+
+**Helpers** (module-level):
+- `_encode_password(plaintext) -> str`: base64 for storage
+- `_decode_password(enc) -> str`: base64 decode, falls through if not base64
 
 ### Modified — `ecoface_lite/input_sources/source_registry.py`
-- `build_source()` dispatches on `source_type` string:
-  `"android"` → `AndroidCameraSource`, `"rtsp"` → `RTSPSource`, else → `VideoFileSource`
-- Singleton: `get_source_registry()` returns module-level `SourceRegistry` instance
+- Imports `NVRSource`, `DVRSource`
+- `build_source()` dispatch extended:
+  - `"nvr"` → `NVRSource(onvif_host, onvif_port, onvif_username, onvif_password_enc)`
+  - `"dvr"` → `DVRSource(dvr_clip_dir)`
+  - Both validate required fields with clear ValueError messages before construction
 
-### New file — `ecoface_lite/services/multi_source_scheduler.py`
-- `MultiSourceScheduler(sources: list[BaseVideoSource])`
-- `start() → dict[int, bool]`: calls `connect()` once per source (ByteTrack safe)
-- `stop() → None`: calls `disconnect()` once per source (ByteTrack safe)
-- `get_next_frame() → Frame | None`: round-robin, skips sources on exception,
-  returns None only when all sources exhausted this round
-- `_FpsTracker`: rolling deque window (configurable size) for per-source FPS
-- Source isolation: one source returning None or raising never stops the loop
-
-### Config — `ecoface_lite/core/config.py`
-- `use_vsl_frame_path: bool = False` (USE_VSL_FRAME_PATH feature flag)
-  → NEVER True until 3× consecutive green GPU regression runs on Colab T4
-- `scheduler_fps_window: int = 30` (rolling FPS window size)
-
-### Exports — `ecoface_lite/input_sources/__init__.py`
-- Added `AndroidCameraSource` to `__all__`
-
----
-
-## VSL Phase 4 changes (Historical Footage Access)
-
-### Modified — `ecoface_lite/input_sources/video_file.py`
-- `VideoFileSource.__init__`: added `video_epoch: datetime | None = None` param
-  → anchor for wall-clock → frame-index mapping in historical stream
-- `get_historical_stream(start_time, end_time) → Generator[Frame, None, None]`:
-  - Epoch resolution: `video_epoch` if set, else file `mtime`
-  - Seeks to `start_frame` via `CAP_PROP_POS_FRAMES`
-  - Yields frames with wall-clock `captured_at` timestamps
-  - Opens/releases its own `cv2.VideoCapture` (leaves `self._cap` for `get_frame()` intact)
-  - Guards: logs and returns early if window is outside video range
-- `supports_historical` property override: `True` (file sources support seek)
-
-### New file — `ecoface_lite/services/historical_search.py`
-- `_run_historical_search(*, job_id, incident_id, video_path, start_time, end_time,
-  source_id, video_epoch, frame_skip, settings)`:
-  - Background asyncio coroutine (launched via `asyncio.create_task()`)
-  - Loads gallery from DB, aborts with `mark_failed` if empty
-  - Iterates `VideoFileSource.get_historical_stream()`
-  - `pipeline.process_frame()` per frame
-  - Creates `DetectionEvent` + `Sighting(source="historical", alert_id=None)` per match
-  - `await asyncio.sleep(0)` each frame — yields to event loop, live pipeline unaffected
-  - Progress update every 50 frames via `processing_status_service.set_progress()`
-  - `mark_completed` / `mark_failed` at end
-- `submit_historical_search(*, incident_id, video_path, start_time, end_time,
-  video_epoch=None, frame_skip=1, source_id="historical", job_id=None) → str`:
-  - Accepts optional `job_id` (caller pre-created the status row) or auto-generates one
-  - Returns `job_id` for polling
+### Modified — `ecoface_lite/input_sources/__init__.py`
+- `NVRSource`, `DVRSource` added to imports and `__all__`
 
 ### Modified — `ecoface_lite/api/schemas.py`
-- `HistoricalSearchRequest`: video_path (str), start_time (datetime), end_time (datetime),
-  video_epoch (datetime|None, default None), frame_skip (int, ge=1, default 1)
+- `CameraOut`: added `onvif_host`, `onvif_port`, `onvif_username`, `dvr_clip_dir`
+  (`onvif_password_enc` is NEVER returned — password stays in DB only)
+- `CameraCreate`: added same fields + `onvif_password` (plaintext input, encoded on write);
+  `source_type` pattern extended to `^(file|rtsp|android|nvr|dvr)$`
+- New schemas:
+  - `ONVIFDeviceInfo`: manufacturer, model, firmware_version, serial_number, hardware_id, host, port
+  - `ONVIFDiscoveryResult`: xaddrs, types, scopes (one per discovered device)
+  - `NVRCredentialsUpdate`: PATCH body for credential updates only
 
-### New file — `ecoface_lite/api/routers/historical.py`
-- `POST /incidents/{incident_id}/historical-search` (202, AsyncVideoJobResponse):
-  - Validates incident exists + not closed
-  - `safe_video_path()` validates path under VIDEOS_DIR
-  - Pre-creates `ProcessingStatus` row with shared `job_id`
-  - Calls `submit_historical_search(..., job_id=job_id)` — single job_id, no mismatch
-  - Returns `{job_id, status: "queued", status_url: /api/v1/videos/processing-status/{job_id}}`
-- `GET /incidents/{incident_id}/historical-sightings`:
-  - Queries `Sighting WHERE incident_id=X AND source="historical"`
-  - Ordered by `frame_index`
-  - Returns id, person_id, confidence, frame_index, snapshot_path, status, source, created_at
+### New file — `ecoface_lite/api/routers/nvr.py`
+- `POST /cameras/{id}/nvr/test-onvif` → `ONVIFDeviceInfo`
+  Connects ONVIF, returns device info. 501 if onvif-zeep absent, 502 on connection fail.
+- `PATCH /cameras/{id}/nvr/credentials` → `{updated: true, camera_id: N}`
+  Encodes password before storage. PATCH semantics — only present fields updated.
+- `GET /cameras/discover-onvif?timeout=5.0` → `list[ONVIFDiscoveryResult]`
+  WS-Discovery scan. 501 if onvif-zeep absent. Opt-in, never auto-registers.
+
+### Modified — `ecoface_lite/api/routers/cameras.py`
+- `POST /cameras`: persists all 5 NVR/DVR fields; `onvif_password` encoded to
+  `onvif_password_enc` at write time (plaintext never stored)
 
 ### Modified — `ecoface_lite/api/main.py`
-- Imports `historical` router
-- Registers at `/api/v1` (between incidents and alerts)
-- Shutdown fix: `except BaseException` instead of `except Exception` for health task cancel
+- Imports `nvr` router; registers at `/api/v1`
 
 ---
 
-## Architecture state (VSL Phases 1–4 complete)
+## Architecture state (VSL Phases 1–5 complete)
 
 ```
 Input sources:
-  base.py              → BaseVideoSource ABC (connect/disconnect/get_frame/get_metadata/health_check)
-  video_file.py        → VideoFileSource (frames() legacy + get_frame() + get_historical_stream())
-  rtsp_source.py       → RTSPSource (exponential backoff: 2s→4s→8s→16s→30s cap)
-  android_source.py    → AndroidCameraSource (RTSPSource subclass, 1s initial backoff)
-  source_registry.py   → SourceRegistry.build_source() dispatches on source_type
+  base.py              → BaseVideoSource ABC
+  video_file.py        → VideoFileSource (file + historical)
+  rtsp_source.py       → RTSPSource (live, exponential backoff)
+  android_source.py    → AndroidCameraSource (RTSPSource subclass)
+  nvr_source.py        → NVRSource (ONVIF live+historical), DVRSource (RTSP+clip dir)
+  source_registry.py   → dispatches file/rtsp/android/nvr/dvr
 
-Multi-source scheduling:
-  services/multi_source_scheduler.py → MultiSourceScheduler (round-robin, source isolation)
-  connect() once in start(), disconnect() once in stop() — ByteTrack state preserved
-  USE_VSL_FRAME_PATH=False → single-source pipeline still uses frames() iterator
-
-Health monitoring (Phase 2):
-  services/health_monitor.py → standalone asyncio.Task "health_monitor"
-  polls every 60s; writes cameras.status/last_seen; NOT in frame loop
-
-Location hierarchy (Phase 2):
-  sites → zones → cameras (FK chain, SET NULL on zone delete)
+NVR/DVR API:
+  POST /api/v1/cameras/{id}/nvr/test-onvif      (ONVIF device info)
+  PATCH /api/v1/cameras/{id}/nvr/credentials    (update ONVIF auth)
+  GET  /api/v1/cameras/discover-onvif           (WS-Discovery, opt-in)
 
 Historical search (Phase 4):
-  services/historical_search.py → asyncio background task per job
-  VideoFileSource.get_historical_stream() → seeks by wall-clock window
-  Sighting(source="historical", alert_id=None) → never in live alert feed
-  ProcessingStatus row polled via GET /api/v1/videos/processing-status/{job_id}
+  VideoFileSource  → frame seek by epoch anchor
+  NVRSource        → ONVIF GetReplayUri -> RTSP playback
+  DVRSource        → operator-exported clip -> VideoFileSource delegation
 
-API surface (complete through Phase 4):
-  GET  /api/v1/sites
-  POST /api/v1/sites
-  GET  /api/v1/sites/{id}
-  GET  /api/v1/sites/{id}/zones
-  DELETE /api/v1/sites/{id}
-  GET  /api/v1/zones
-  POST /api/v1/zones
-  GET  /api/v1/zones/{id}
-  DELETE /api/v1/zones/{id}
-  GET  /api/v1/cameras/health-summary
-  POST /api/v1/incidents/{id}/historical-search   [Phase 4]
-  GET  /api/v1/incidents/{id}/historical-sightings [Phase 4]
+onvif-zeep dependency:
+  NOT installed by default. Required for:
+    - NVRSource.get_historical_stream()
+    - NVRSource.get_device_info()
+    - NVRSource.discover()
+  Install: pip install onvif-zeep
+  All three raise ImportError with the install command if absent.
+  DVRSource requires NO additional packages.
 ```
 
-## VSL Phase 5 (deferred — post-dissertation)
-NVR/DVR integration: RTSPSource.supports_historical override, NVR-specific auth,
-DVR segment fetching. No code written. Deferred per roadmap.
+## Smoke test results (VSL Phase 5 verification — 10/10)
+1. SourceType.NVR + SourceType.DVR defined
+2. NVRSource instantiated — supports_live=True, supports_historical=True, supports_ptz=False
+3. DVRSource instantiated — supports_historical=True
+4. NVRSource.get_historical_stream raises ImportError with pip hint (no onvif-zeep)
+5. DVRSource.get_historical_stream raises FileNotFoundError on empty clip dir
+6. NVRSource.discover raises ImportError with pip hint (no onvif-zeep)
+7. SourceRegistry dispatches nvr->NVRSource, dvr->DVRSource
+8. NVR router has all 3 routes (test-onvif, credentials, discover-onvif)
+9. Password base64 encode/decode round-trip correct
+10. CameraCreate accepts source_type=nvr with ONVIF fields
 
-## Hard stops still in force
-- `frames()` iterator must remain callable forever (never delete)
-- `USE_VSL_FRAME_PATH=False` default — flip only after 3× green GPU regression runs
-- Health monitor never called from frame loop
-- `get_frame()` single-source pipeline switch deferred to Phase 3 scheduler activation
+## VSL roadmap complete
+All 5 VSL phases implemented:
+  Phase 1: BaseVideoSource abstraction, VideoFileSource, RTSPSource, SourceRegistry
+  Phase 2: Location hierarchy (Site->Zone->Camera), health monitor background task
+  Phase 3: AndroidCameraSource, MultiSourceScheduler, USE_VSL_FRAME_PATH flag
+  Phase 4: Historical footage search, get_historical_stream, historical sightings API
+  Phase 5: NVRSource (ONVIF), DVRSource (clip dir), NVR management API
 
-## Prior phases preserved
-VSL Phase 1 (base abstraction) intact.
-VSL Phase 2 (location hierarchy + health monitor) intact.
-VSL Phase 3 (Android source + multi-source scheduler) intact.
-Phase 8 + 8.5–8.7 (alert session engine) intact.
+## Next roadmap item
+INC API Phase B — engine calls INC HTTP (true separation)
+or Intelligence Layer Phase 10 — Cross-Camera Intelligence
+(per roadmap.md)
