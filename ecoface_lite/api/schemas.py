@@ -95,6 +95,18 @@ class AsyncVideoJobResponse(BaseModel):
     status_url: str
 
 
+class HistoricalSearchRequest(BaseModel):
+    """VSL Phase 4 — trigger a historical footage search on an incident."""
+    video_path: str = Field(description="Relative path under VIDEOS_DIR")
+    start_time: datetime = Field(description="Wall-clock start of the search window (UTC)")
+    end_time: datetime = Field(description="Wall-clock end of the search window (UTC)")
+    video_epoch: datetime | None = Field(
+        default=None,
+        description="When the video recording began (UTC). Defaults to file mtime.",
+    )
+    frame_skip: int = Field(default=1, ge=1, description="Process every Nth frame")
+
+
 class LiveTestMatchResponse(BaseModel):
     matched: bool
     person_id: int | None = None
