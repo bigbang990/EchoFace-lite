@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Plus, Trash2, ChevronDown, ChevronRight, X, Loader2,
 } from 'lucide-react'
@@ -119,7 +119,7 @@ function RegisterCameraModal({
     setSaving(true); setError(null)
     try {
       await client.post('/cameras', {
-        name: name.trim(),
+        label: name.trim(),
         source_type: sourceType,
         stream_url: streamUrl || undefined,
         zone_id: zoneId ? Number(zoneId) : undefined,
@@ -288,6 +288,7 @@ export default function Administration() {
   const [health, setHealth] = useState<HealthSummary>({ total: 0, online: 0, offline: 0, reconnecting: 0, unknown: 0 })
   const [expandedSites, setExpandedSites] = useState<Set<string>>(new Set(['1']))
   const [showRegisterModal, setShowRegisterModal] = useState(false)
+  const loadCancelledRef = useRef(false)
 
   const [addingSite, setAddingSite] = useState(false)
   const [newSiteName, setNewSiteName] = useState('')
@@ -299,6 +300,7 @@ export default function Administration() {
     const client = createApiClient(backendUrl)
     try {
       const raw = await client.get<Array<Record<string, unknown>>>('/sites')
+      if (loadCancelledRef.current) return
       const list: Site[] = raw.map((s) => ({
         id: String(s.id),
         name: String(s.name ?? ''),
@@ -320,7 +322,7 @@ export default function Administration() {
           } catch { zonesMap[site.id] = [] }
         })
       )
-      setZonesBySite(zonesMap)
+      if (!loadCancelledRef.current) setZonesBySite(zonesMap)
     } catch { /* ignore */ }
   }, [backendUrl, isMock])
 
@@ -332,6 +334,7 @@ export default function Administration() {
         client.get<Array<Record<string, unknown>>>('/cameras'),
         client.get<Record<string, unknown>>('/cameras/health-summary'),
       ])
+      if (loadCancelledRef.current) return
       setCameras(rawCams.map((c) => ({
         id: String(c.id),
         name: String(c.name ?? ''),
@@ -352,8 +355,10 @@ export default function Administration() {
   }, [backendUrl, isMock])
 
   useEffect(() => {
+    loadCancelledRef.current = false
     loadSites()
     loadCameras()
+    return () => { loadCancelledRef.current = true }
   }, [loadSites, loadCameras])
 
   // ── Site actions ────────────────────────────────────────────────────────────

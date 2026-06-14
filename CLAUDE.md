@@ -110,6 +110,16 @@ cd frontend && npm install && npm run dev
 calls to `/api/v1/incidents`, `/api/v1/incidents/:id/persons`,
 `/api/v1/incidents/:id/sightings`, `/api/v1/observability/*`.
 
+## Infrastructure
+
+Cloudflare Tunnel is primary tunnel provider.
+ngrok is fallback only — free tier has monthly HTTP request cap.
+Colab startup cell tries Cloudflare first (30s timeout),
+falls back to ngrok if Cloudflare URL not detected.
+Both require `User-Agent: EchoFace-Dashboard/1.0` in API headers
+to bypass browser interstitial pages.
+NGROK_TOKEN in Colab Secrets still required as fallback credential.
+
 ## VSL hard stops
 
 ### Production pipeline call path (confirmed VSL Phase 1)

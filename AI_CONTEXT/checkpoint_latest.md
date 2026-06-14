@@ -1,7 +1,7 @@
-# Checkpoint — 2026-06-14 — UI: Administration panel + VSL source selector
+# Checkpoint — 2026-06-14 — AndroidCameraSource (VSL Phase 3)
 
 ## Phase
-Frontend UI — Administration panel, Operations source selector, Live Feed stub
+VSL Phase 3 — AndroidCameraSource standalone implementation
 Branch: `vsl-phase3-multi-source`
 All prior VSL phases (1–5) intact and verified.
 
@@ -15,83 +15,71 @@ Test suite: 30 tests, 0 failed
 
 ---
 
-## UI changes this session
+## Backend change this session
 
-### Task 1 — Administration tab unlocked (Layout.tsx)
-- `ShieldOff` disabled block removed; replaced with active NavLink `/administration`
-- `Settings` icon replaces `ShieldOff` in import list
-- Tab appears in ADMIN and MOCK sidebar under ADMIN section
+### AndroidCameraSource rewrite (ecoface_lite/input_sources/android_source.py)
 
-### Task 2 — Administration page (new: frontend/src/pages/Administration.tsx)
-Two-panel layout:
-- **Sites & Zones**: GET/POST/DELETE /sites, GET/POST/DELETE /zones
-  Expandable site rows, zone rows with camera count + online count
-  Inline add-site and add-zone forms (Enter to save, Escape to cancel)
-  MOCK mode: pre-seeded data (HQ Building, Warehouse A, 3 zones)
-- **Camera Sources**: GET/POST/DELETE /cameras, GET /cameras/health-summary
-  Health summary bar (online/offline/reconnecting)
-  Camera table with name, zone, type, status badge, delete button
-  Register Camera modal: name, source_type, stream_url, site, zone, direction,
-    trust_level, overlap_group, retention_days
-    Zone select auto-populates after site is chosen (GET /sites/{id}/zones)
+Previous implementation was a thin subclass of RTSPSource targeting RTSP endpoints.
+Replaced with a full standalone BaseVideoSource implementation targeting the MJPEG
+HTTP endpoint (`http://<phone-ip>:8080/video`) of the Android IP Webcam app.
 
-### Task 3 — Operations source selector (Operations.tsx)
-- Source type tabs: File Upload | Registered Camera | RTSP URL
-  Only visible when no job is running and not in running mock state
-- File Upload: existing behavior 100% unchanged
-- Registered Camera panel: dropdown from useCameras(), selected camera card,
-  Activate button → POST /cameras/{id}/start-tracking (backend stub)
-- RTSP URL panel: text input, Test button → POST /cameras/test-rtsp,
-  shows ✓ Connected / ✗ Connection failed, Activate button
-- Live Feed button always in header → window.open('/live-feed', ...)
+**Key design decisions:**
 
-### Task 4 — LiveFeed.tsx stub (new: frontend/src/pages/LiveFeed.tsx)
-- Full-screen dark page, no sidebar, no auth required
-- Header: ECHOFACE · Live Tracking Feed · [✕ close window]
-- Body: Radio icon placeholder + "No active feed" message
-- Footer: ● No active session | FPS: -- | Faces: --
-- Route /live-feed added to App.tsx OUTSIDE <Layout> (no AccessGate)
+**Persistent connection**
+- `connect()` opens `cv2.VideoCapture(stream_url)` once and holds it
+- `get_frame()` calls `grab()` / `retrieve()` on the same persistent object
+- Cap object is never opened/closed per frame
 
-### Task 5 — Overview camera health (Overview.tsx)
-- Replaced useCameras() + activeCams with useCameraHealthSummary() (30s poll)
-- Camera Sources StatusIndicator replaced with inline JSX showing:
-  ● {total} registered  ● {online} online  ◌ {offline} offline
-  + [Manage →] button navigating to /administration
+**Stale-frame flush**
+- IP Webcam maintains an internal MJPEG buffer
+- Every `get_frame()` call calls `grab()` first (discards buffered frame) then
+  `retrieve()` (decodes the newest frame)
+- Prevents multi-second frame lag at typical 15–30 fps phone capture rates
 
-### Task 6 — AlertDetail camera enrichment (AlertDetail.tsx)
-- Added backendUrl to useAppStore destructure
-- Added createApiClient import
-- cameraDetail state (useState) + useEffect after sighting useMemo
-  → GET /cameras/{camera_id} on each alert load (ADMIN/DEMO only)
-- CAMERA / SOURCE cell shows:
-  enriched: "{name} · {zone_name}" / "{site_name} · {direction} · Trust: {level} | {TYPE}"
-  fallback: raw source_name / camera_id (unchanged)
+**Failure tracking + inline reconnect**
+- `consecutive_failures` counter increments on every failed `grab()` or `retrieve()`
+- Counter resets to 0 on any successful read
+- Threshold: 3 consecutive failures triggers `_reconnect()`
+- Backoff sequence: 5 s → 10 s → 30 s (index capped at 2, i.e. 30 s max)
+- `_reconnect_attempts` tracks which backoff slot to use, resets on successful `connect()`
 
-### New hook (hooks.ts)
-useCameraHealthSummary():
-  - GET /cameras/health-summary, polls every 30s
-  - MOCK returns { total:3, online:2, offline:1, reconnecting:0, unknown:0 }
-  - Exports CameraHealthSummary interface
+**HealthStatus mapping**
+SourceStatus has no WARNING variant; UNKNOWN is used as the intermediate state:
+- `consecutive_failures == 0`            → ONLINE
+- `consecutive_failures 1–2`             → UNKNOWN (degraded, reconnect not triggered)
+- `consecutive_failures >= 3`            → RECONNECTING
+- `_cap is None`                         → OFFLINE
 
-### App.tsx restructure
-- /live-feed route is first, outside auth + layout
-- Remaining routes wrapped in conditional: !accessMode → AccessGate, else Layout
+**Capability properties**
+- `supports_live` → True
+- `supports_historical` → False
+- `supports_ptz` → False
+- `get_historical_stream()` → raises NotImplementedError
 
-### index.css
-- Added @layer components { .field-input { ... } } Tailwind component utility
-  Used in RegisterCameraModal form fields
+**Tested URL format**
+http://192.168.1.21:8080/video  (MJPEG from IP Webcam app)
+
+**Source type:** SourceType.ANDROID
+
+**No files touched other than android_source.py**
+- `source_registry.py` already had the ANDROID case and the import — unchanged
+- `__init__.py` already exported AndroidCameraSource — unchanged
+- `base.py`, `rtsp_source.py`, `video_file.py` — not touched
+
+---
+
+## Previous session UI changes (still valid)
+
+### Administration panel (frontend/src/pages/Administration.tsx)
+- RegisterCameraModal: fixed 422 error — POST body now sends `label` (not `name`)
+
+### Other UI changes from previous session
+See git log for Administration.tsx, LiveFeed.tsx, Operations.tsx, Overview.tsx,
+AlertDetail.tsx, Layout.tsx, App.tsx, hooks.ts, index.css.
 
 ## TypeScript
-- tsc --noEmit: 0 errors
-- Runtime: 0 console errors verified in browser
+- tsc --noEmit: 0 errors (last verified previous session)
 
-## Files changed
-frontend/src/pages/Administration.tsx  (new)
-frontend/src/pages/LiveFeed.tsx         (new)
-frontend/src/api/hooks.ts               (append: useCameraHealthSummary)
-frontend/src/components/Layout.tsx      (Administration tab unlocked)
-frontend/src/App.tsx                    (live-feed route + administration route)
-frontend/src/pages/Operations.tsx       (source selector + Live Feed button)
-frontend/src/pages/Overview.tsx         (camera health panel)
-frontend/src/pages/AlertDetail.tsx      (camera enrichment)
-frontend/src/index.css                  (field-input utility)
+## Files changed this session
+ecoface_lite/input_sources/android_source.py  (rewritten — standalone BaseVideoSource)
+frontend/src/pages/Administration.tsx          (label field fix in RegisterCameraModal)

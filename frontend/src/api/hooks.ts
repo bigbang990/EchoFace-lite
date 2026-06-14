@@ -214,6 +214,7 @@ export function useIncidents() {
   const [loading, setLoading] = useState(_incidentsCache.length === 0)
   const [error, setError] = useState<string | null>(null)
   const hasLoadedRef = useRef(false)
+  const cancelledRef = useRef(false)
 
   const load = useCallback(async () => {
     if (accessMode === 'MOCK') {
@@ -223,28 +224,30 @@ export function useIncidents() {
       return
     }
     try {
-      // background polls are silent — only the first fetch shows the spinner
       if (!hasLoadedRef.current) setLoading(true)
       const raw = await createApiClient(incUrl).get<Raw[]>('/incidents')
+      if (cancelledRef.current) return
       const normalized = raw.map((r, i) => normalizeIncident(r, i))
       _incidentsCache = normalized
       setData(normalized)
       setError(null)
       hasLoadedRef.current = true
     } catch (e) {
-      setError((e as Error).message)
+      if (!cancelledRef.current) setError((e as Error).message)
     } finally {
-      setLoading(false)
+      if (!cancelledRef.current) setLoading(false)
     }
   }, [accessMode, incUrl])
 
   useEffect(() => {
+    cancelledRef.current = false
     hasLoadedRef.current = false
     load()
     if (accessMode === 'ADMIN') {
-      const t = setInterval(load, 10_000)
-      return () => clearInterval(t)
+      const t = setInterval(load, 60_000)
+      return () => { cancelledRef.current = true; clearInterval(t) }
     }
+    return () => { cancelledRef.current = true }
   }, [load, accessMode])
 
   return { data, loading, error, refetch: load }
@@ -260,8 +263,8 @@ export function useIncidentDetail(id: string | undefined) {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  // Track whether initial data has been loaded — background polls skip the spinner
   const hasLoadedRef = useRef(false)
+  const cancelledRef = useRef(false)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -278,7 +281,6 @@ export function useIncidentDetail(id: string | undefined) {
     }
 
     try {
-      // Only show the loading overlay on first fetch — subsequent polls are silent
       if (!hasLoadedRef.current) setLoading(true)
       const client = createApiClient(incUrl)
       const [rawInc, rawPersons, rawSightings] = await Promise.all([
@@ -286,6 +288,7 @@ export function useIncidentDetail(id: string | undefined) {
         client.get<Raw[]>(`/incidents/${id}/persons`),
         client.get<Raw[]>(`/incidents/${id}/sightings`),
       ])
+      if (cancelledRef.current) return
       const inc = normalizeIncident(rawInc, 0)
       const ps = rawPersons.map((p) => normalizePerson(p, id))
       const ss = rawSightings.map(normalizeSighting)
@@ -296,22 +299,23 @@ export function useIncidentDetail(id: string | undefined) {
       setError(null)
       hasLoadedRef.current = true
     } catch (e) {
-      setError((e as Error).message)
+      if (!cancelledRef.current) setError((e as Error).message)
     } finally {
-      setLoading(false)
+      if (!cancelledRef.current) setLoading(false)
     }
   }, [id, accessMode, incUrl])
 
   useEffect(() => {
-    // Reset on id/mode change so the loading overlay shows for the new case
+    cancelledRef.current = false
     hasLoadedRef.current = false
     setLoading(true)
     setIncident(null)
     load()
     if (accessMode === 'ADMIN') {
-      const t = setInterval(load, 8_000)
-      return () => clearInterval(t)
+      const t = setInterval(load, 60_000)
+      return () => { cancelledRef.current = true; clearInterval(t) }
     }
+    return () => { cancelledRef.current = true }
   }, [load, accessMode])
 
   return { incident, persons, sightings, timeline, loading, error, refetch: load }
@@ -326,6 +330,7 @@ export function useSystemMetrics() {
   const [error, setError] = useState<string | null>(null)
   const [fpsHistory, setFpsHistory] = useState<SparkPoint[]>(mockFpsHistory)
   const lastHistoryTs = useRef(0)
+  const cancelledRef = useRef(false)
 
   const fetch = useCallback(async () => {
     if (accessMode === 'MOCK') {
@@ -336,12 +341,10 @@ export function useSystemMetrics() {
     }
     try {
       const raw = await createApiClient(backendUrl).get<Raw>('/observability/metrics')
-      // metrics.export() nests observed values: averages{} and rates{}
-      // root level only has: counters, averages, recent_values, rates, uptime_seconds
+      if (cancelledRef.current) return
       const avgs = (raw.averages as Raw | undefined) ?? {}
       const rates = (raw.rates as Raw | undefined) ?? {}
       const eff = (raw.effective_runtime_config as Raw | undefined) ?? {}
-      // backend_type string enum ("LOCAL_CPU" / "COLAB_GPU" / "REMOTE_GPU") is most reliable
       const backendTypeStr = String(eff.backend_type ?? '')
       const isGpu = backendTypeStr === 'COLAB_GPU' || backendTypeStr === 'REMOTE_GPU'
       const hwType = isGpu ? 1 : Number(avgs.hardware_backend_type ?? raw.hardware_backend_type ?? 0)
@@ -375,18 +378,20 @@ export function useSystemMetrics() {
         setFpsHistory((prev) => [...prev.slice(-23), { t, v: Math.round(m.fps) }])
       }
     } catch (e) {
-      setError((e as Error).message)
+      if (!cancelledRef.current) setError((e as Error).message)
     } finally {
-      setLoading(false)
+      if (!cancelledRef.current) setLoading(false)
     }
   }, [accessMode, backendUrl])
 
   useEffect(() => {
+    cancelledRef.current = false
     fetch()
     if (accessMode === 'ADMIN') {
-      const t = setInterval(fetch, 3_000)
-      return () => clearInterval(t)
+      const t = setInterval(fetch, 30_000)
+      return () => { cancelledRef.current = true; clearInterval(t) }
     }
+    return () => { cancelledRef.current = true }
   }, [fetch, accessMode])
 
   return { data, loading, error, fpsHistory }
@@ -401,6 +406,8 @@ export function useCameras() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false
+
     if (accessMode === 'MOCK') {
       setData(mockCameras)
       setLoading(false)
@@ -409,6 +416,7 @@ export function useCameras() {
     createApiClient(backendUrl)
       .get<Raw[]>('/cameras')
       .then((raw) => {
+        if (cancelled) return
         setData(
           raw.map((c) => ({
             id: String(c.id ?? ''),
@@ -420,8 +428,10 @@ export function useCameras() {
         )
         setError(null)
       })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false))
+      .catch((e: Error) => { if (!cancelled) setError(e.message) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+
+    return () => { cancelled = true }
   }, [accessMode, backendUrl])
 
   return { data, loading, error }
@@ -582,34 +592,37 @@ export function useCameraHealthSummary() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
-    if (accessMode === 'MOCK') {
-      setData({ total: 3, online: 2, offline: 1, reconnecting: 0, unknown: 0 })
-      setLoading(false)
-      return
-    }
-    try {
-      const raw = await createApiClient(backendUrl).get<Record<string, unknown>>('/cameras/health-summary')
-      setData({
-        total:        Number(raw.total        ?? 0),
-        online:       Number(raw.online        ?? 0),
-        offline:      Number(raw.offline       ?? 0),
-        reconnecting: Number(raw.reconnecting  ?? 0),
-        unknown:      Number(raw.unknown       ?? 0),
-      })
-      setError(null)
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setLoading(false)
-    }
-  }, [accessMode, backendUrl])
-
   useEffect(() => {
-    load()
-    const t = setInterval(load, 30_000)
-    return () => clearInterval(t)
-  }, [load])
+    let cancelled = false
+
+    const doFetch = async () => {
+      if (accessMode === 'MOCK') {
+        if (!cancelled) { setData({ total: 3, online: 2, offline: 1, reconnecting: 0, unknown: 0 }); setLoading(false) }
+        return
+      }
+      try {
+        const raw = await createApiClient(backendUrl).get<Record<string, unknown>>('/cameras/health-summary')
+        if (!cancelled) {
+          setData({
+            total:        Number(raw.total        ?? 0),
+            online:       Number(raw.online        ?? 0),
+            offline:      Number(raw.offline       ?? 0),
+            reconnecting: Number(raw.reconnecting  ?? 0),
+            unknown:      Number(raw.unknown       ?? 0),
+          })
+          setError(null)
+        }
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    doFetch()
+    const t = setInterval(doFetch, 120_000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [accessMode, backendUrl])
 
   return { data, loading, error }
 }

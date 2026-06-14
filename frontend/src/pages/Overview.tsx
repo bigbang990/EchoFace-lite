@@ -57,7 +57,7 @@ export default function Overview() {
         {isAdmin && !metricsError && (
           <div className="flex items-center gap-1.5 text-[10px] font-mono text-cyan-400">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-            LIVE · 3s refresh
+            LIVE · 30s refresh
           </div>
         )}
         {metricsError && (
