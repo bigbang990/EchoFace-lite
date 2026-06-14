@@ -71,6 +71,31 @@ input_sources/
   __init__.py      ← exports all VSL Phase 1 symbols
 ```
 
+## Smoke test results (VSL Phase 1 verification)
+
+### Smoke test 1 — VideoFileSource via get_frame() (PASSED)
+- `connect()` → True on valid file
+- `Frame.bgr` shape=(352, 640, 3) dtype=uint8 — OpenCV-processable confirmed
+- `Frame.captured_at` is UTC-aware (timezone.utc set)
+- `Frame.index` increments 0, 1, 2, 3, 4... correctly
+- `Frame.source_id` matches constructor arg
+- `get_metadata()` returns source_type=file, fps=29.95, width=640, height=352
+- `health_check()` → ONLINE when connected, OFFLINE after disconnect()
+
+### Production pipeline call path finding
+**`video_service.process_prerecorded_video` calls `video_source.frames()` (legacy iterator),
+NOT the new `get_frame()` path.** This is correct and intentional:
+- Frame pipeline switches to `get_frame()` in VSL Phase 3 (multi-source scheduler)
+- `frames()` remains the production entry point until then
+- Documented as hard stop in CLAUDE.md to prevent premature wiring
+
+### Smoke test 2 — RTSPSource backoff behavior (PASSED)
+- connect() → True / get_frame() → Frame on mocked stream
+- Stream drop: get_frame() → None, status → OFFLINE immediately
+- `reconnect_with_backoff(max_attempts=5)` on all-failing source:
+  sleep sequence = [2.0, 4.0, 8.0, 16.0, 30.0] — cap at 30s confirmed
+- Partial success (fail × 2 then succeed): sleep=[2.0, 4.0], status → ONLINE, returns True
+
 ## VSL Phase 2 prerequisites (next)
 - Location hierarchy: Country → State → District → Site → Zone → Camera
 - Health monitor async background task (polls each source, calls PATCH /{id}/health)
