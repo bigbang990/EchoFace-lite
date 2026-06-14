@@ -564,6 +564,56 @@ export function useAlert(alertId: string | undefined) {
   return { alert, loading, error, refetch: load }
 }
 
+// ── useCameraHealthSummary ────────────────────────────────────────────────────
+
+export interface CameraHealthSummary {
+  total: number
+  online: number
+  offline: number
+  reconnecting: number
+  unknown: number
+}
+
+export function useCameraHealthSummary() {
+  const { accessMode, backendUrl } = useAppStore()
+  const [data, setData] = useState<CameraHealthSummary>({
+    total: 0, online: 0, offline: 0, reconnecting: 0, unknown: 0,
+  })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    if (accessMode === 'MOCK') {
+      setData({ total: 3, online: 2, offline: 1, reconnecting: 0, unknown: 0 })
+      setLoading(false)
+      return
+    }
+    try {
+      const raw = await createApiClient(backendUrl).get<Record<string, unknown>>('/cameras/health-summary')
+      setData({
+        total:        Number(raw.total        ?? 0),
+        online:       Number(raw.online        ?? 0),
+        offline:      Number(raw.offline       ?? 0),
+        reconnecting: Number(raw.reconnecting  ?? 0),
+        unknown:      Number(raw.unknown       ?? 0),
+      })
+      setError(null)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }, [accessMode, backendUrl])
+
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 30_000)
+    return () => clearInterval(t)
+  }, [load])
+
+  return { data, loading, error }
+}
+
 // ── useHealthCheck ────────────────────────────────────────────────────────────
 
 export function useHealthCheck(url: string) {

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { useIncidentDetail, useAlert } from '../api/hooks'
 import { useAppStore } from '../store/appStore'
+import { createApiClient } from '../api/client'
 import ImageZoomModal from '../components/ImageZoomModal'
 import type { Sighting } from '../types'
 
@@ -110,7 +111,7 @@ function HistoryRow({
 export default function AlertDetail() {
   const { id: incidentId, sightingId } = useParams<{ id: string; sightingId: string }>()
   const navigate = useNavigate()
-  const { accessMode, incUrl } = useAppStore()
+  const { accessMode, incUrl, backendUrl } = useAppStore()
   const { incident, persons, sightings, loading, error, refetch } = useIncidentDetail(incidentId)
   const { alert: alertData, refetch: refetchAlert } = useAlert(sightingId)
   const backendBase = incUrl.replace(/\/api\/v1\/?$/, '')
@@ -118,6 +119,12 @@ export default function AlertDetail() {
   const [note, setNote] = useState('')
   const [notes, setNotes] = useState<string[]>([])
   const [localStatus, setLocalStatus] = useState<Sighting['status'] | null>(null)
+
+  // Camera registry enrichment for the CAMERA / SOURCE field
+  const [cameraDetail, setCameraDetail] = useState<{
+    name: string; direction: string; trust_level: string
+    source_type: string; zone_name?: string; site_name?: string
+  } | null>(null)
 
   // Seed notes from persisted operator_notes on first load
   useEffect(() => {
@@ -135,6 +142,27 @@ export default function AlertDetail() {
     () => sightings.find(s => String(s.id) === String(sightingId)) ?? null,
     [sightings, sightingId]
   )
+
+  // Fetch camera registry record to enrich the CAMERA / SOURCE display field
+  useEffect(() => {
+    const camId = sighting?.camera_id
+    if (!camId || accessMode === 'MOCK') return
+    const numId = parseInt(String(camId), 10)
+    if (isNaN(numId)) return
+    createApiClient(backendUrl)
+      .get<Record<string, unknown>>(`/cameras/${numId}`)
+      .then((cam) => {
+        setCameraDetail({
+          name:        String(cam.name        ?? ''),
+          direction:   String(cam.direction   ?? ''),
+          trust_level: String(cam.trust_level ?? ''),
+          source_type: String(cam.source_type ?? ''),
+          zone_name:   cam.zone_name ? String(cam.zone_name) : undefined,
+          site_name:   cam.site_name ? String(cam.site_name) : undefined,
+        })
+      })
+      .catch(() => { /* fall back to raw source_name */ })
+  }, [sighting?.camera_id, accessMode, backendUrl])
 
   // All sightings for the same person, newest first
   const personHistory = useMemo(() => {
@@ -451,8 +479,12 @@ export default function AlertDetail() {
                 {
                   Icon: Camera,
                   label: 'CAMERA / SOURCE',
-                  value: sighting.source_name || `CAM-${sighting.camera_id}` || '—',
-                  sub: sighting.camera_id ? `ID: ${sighting.camera_id}` : undefined,
+                  value: cameraDetail
+                    ? `${cameraDetail.name}${cameraDetail.zone_name ? ` · ${cameraDetail.zone_name}` : ''}`
+                    : (sighting.source_name || (sighting.camera_id ? `CAM-${sighting.camera_id}` : '—')),
+                  sub: cameraDetail
+                    ? `${cameraDetail.site_name ? cameraDetail.site_name + ' · ' : ''}${cameraDetail.direction} · Trust: ${cameraDetail.trust_level} | ${cameraDetail.source_type.toUpperCase()}`
+                    : (sighting.camera_id ? `ID: ${sighting.camera_id}` : undefined),
                 },
                 {
                   Icon: MapPin,

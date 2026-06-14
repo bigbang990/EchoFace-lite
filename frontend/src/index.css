@@ -24,3 +24,9 @@
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
+
+@layer components {
+  .field-input {
+    @apply w-full bg-gray-950 border border-gray-700 focus:border-cyan-600/50 rounded px-3 py-2 text-sm text-gray-200 outline-none;
+  }
+}

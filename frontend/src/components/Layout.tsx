@@ -6,7 +6,7 @@ import {
   Video,
   FolderOpen,
   Cpu,
-  ShieldOff,
+  Settings,
   LogOut,
   ServerCog,
 } from 'lucide-react'
@@ -21,7 +21,8 @@ const demoNavItems = [
 ]
 
 const adminNavItems = [
-  { to: '/system-health', icon: Cpu, label: 'System Health', end: false },
+  { to: '/system-health',  icon: Cpu,      label: 'System Health',  end: false },
+  { to: '/administration', icon: Settings,  label: 'Administration', end: false },
 ]
 
 interface Props {
@@ -70,17 +71,6 @@ export default function Layout({ children }: Props) {
             <NavSection label="ADMIN" items={adminNavItems} />
           )}
 
-          {(isAdmin || isMock) && (
-            <div className="px-3 mt-1">
-              <div className="flex items-center gap-3 px-3 py-2 rounded text-[13px] text-gray-700 select-none cursor-not-allowed">
-                <ShieldOff size={14} className="flex-shrink-0" />
-                <div className="leading-tight">
-                  <div>Administration</div>
-                  <div className="text-[9px] text-gray-800 mt-0.5">Available in v2.0</div>
-                </div>
-              </div>
-            </div>
-          )}
         </nav>
 
         <div className="px-4 py-4 border-t border-gray-800/80 space-y-3">

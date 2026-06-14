@@ -4,12 +4,15 @@ import {
   Upload, Video, Play, Square, CheckCircle2, AlertTriangle,
   RotateCcw, Loader2, Film, Download, Activity,
   Gauge, Cpu, ShieldCheck, TrendingDown, Zap,
+  Camera, Wifi, ExternalLink,
 } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
-import { useVideoJob } from '../api/hooks'
+import { useVideoJob, useCameras } from '../api/hooks'
 import { createApiClient } from '../api/client'
 
 // ── types ──────────────────────────────────────────────────────────────────────
+
+type SourceType = 'file' | 'camera' | 'rtsp'
 
 type RawMetrics = Record<string, unknown>
 
@@ -136,6 +139,13 @@ export default function Operations() {
   const [snapshot, setSnapshot] = useState<JobMetricsSnapshot | null>(null)
   const capturedRef = useRef(false)
 
+  // ── source selector state ─────────────────────────────────────────────────
+  const [sourceType, setSourceType] = useState<SourceType>('file')
+  const [selectedCameraId, setSelectedCameraId] = useState('')
+  const [rtspUrl, setRtspUrl] = useState('')
+  const [rtspTestStatus, setRtspTestStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const { data: registeredCameras } = useCameras()
+
   const isMock = accessMode === 'MOCK'
   const isAdmin = accessMode === 'ADMIN'
 
@@ -190,20 +200,49 @@ export default function Operations() {
     if (f?.type.startsWith('video/')) { setFile(f); setSnapshot(null); capturedRef.current = false }
   }
 
+  const testRtsp = async () => {
+    if (!rtspUrl) return
+    setRtspTestStatus('testing')
+    try {
+      await createApiClient(backendUrl).post('/cameras/test-rtsp', { stream_url: rtspUrl })
+      setRtspTestStatus('ok')
+    } catch {
+      setRtspTestStatus('fail')
+    }
+  }
+
   const startTracking = async () => {
     if (isMock) { mock.start(); return }
-    if (!file) return
     setSnapshot(null)
     capturedRef.current = false
     setUploading(true)
     setUploadError(null)
     try {
-      const form = new FormData()
-      form.append('video', file)
-      const res = await fetch(`${backendUrl}/videos/upload-and-process`, { method: 'POST', body: form })
-      if (!res.ok) throw new Error(`Upload failed (${res.status}): ${await res.text().catch(() => res.statusText)}`)
-      const data = await res.json()
-      setActiveJobId(String(data.job_id))
+      if (sourceType === 'file') {
+        if (!file) return
+        const form = new FormData()
+        form.append('video', file)
+        const res = await fetch(`${backendUrl}/videos/upload-and-process`, { method: 'POST', body: form })
+        if (!res.ok) throw new Error(`Upload failed (${res.status}): ${await res.text().catch(() => res.statusText)}`)
+        const data = await res.json()
+        setActiveJobId(String(data.job_id))
+      } else if (sourceType === 'camera') {
+        if (!selectedCameraId) return
+        const res = await fetch(`${backendUrl}/cameras/${selectedCameraId}/start-tracking`, { method: 'POST' })
+        if (!res.ok) throw new Error(`Failed (${res.status}): ${await res.text().catch(() => res.statusText)}`)
+        const data = await res.json()
+        setActiveJobId(String(data.job_id))
+      } else if (sourceType === 'rtsp') {
+        if (!rtspUrl) return
+        const res = await fetch(`${backendUrl}/streams/start-tracking`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stream_url: rtspUrl }),
+        })
+        if (!res.ok) throw new Error(`Failed (${res.status}): ${await res.text().catch(() => res.statusText)}`)
+        const data = await res.json()
+        setActiveJobId(String(data.job_id))
+      }
     } catch (e) {
       setUploadError((e as Error).message)
     } finally {
@@ -225,7 +264,9 @@ export default function Operations() {
   const realStatus = progress?.status ?? 'queued'
   const realDone = realJobActive && (realStatus === 'completed' || realStatus === 'failed')
   const realRunning = realJobActive && !realDone
-  const showUpload = isMock ? mock.state === 'idle' : !activeJobId
+  const showUpload = sourceType === 'file' && (isMock ? mock.state === 'idle' : !activeJobId)
+  const showCameraPanel = sourceType === 'camera' && !activeJobId && mock.state === 'idle'
+  const showRtspPanel   = sourceType === 'rtsp'   && !activeJobId && mock.state === 'idle'
   const trackState: 'idle' | 'running' | 'done' =
     isMock ? mock.state : realRunning ? 'running' : realDone ? 'done' : 'idle'
   const pct = progress && progress.total_frames > 0
@@ -238,22 +279,56 @@ export default function Operations() {
       {/* ── left column ───────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto p-8 min-w-0">
         {/* header */}
-        <div className="mb-7 flex items-start justify-between">
+        <div className="mb-6 flex items-start justify-between">
           <div>
             <h1 className="text-xl font-semibold text-gray-100">Operations</h1>
             <p className="text-xs font-mono text-gray-600 mt-1">
-              Feed video into the tracking pipeline — file upload · live CCTV streams in a future release
+              Feed video into the tracking pipeline — file upload · registered cameras · RTSP streams
             </p>
           </div>
-          {(realJobActive || realDone || mock.state !== 'idle') && (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {(realJobActive || realDone || mock.state !== 'idle') && (
+              <button
+                onClick={clearJob}
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-700 rounded text-xs font-mono text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-colors"
+              >
+                <RotateCcw size={11} /> New job
+              </button>
+            )}
             <button
-              onClick={clearJob}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-700 rounded text-xs font-mono text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-colors flex-shrink-0"
+              onClick={() =>
+                window.open('/live-feed', 'echoface-live', 'width=1280,height=720,toolbar=0,menubar=0,location=0')
+              }
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-700 rounded text-xs font-mono text-gray-500 hover:text-cyan-400 hover:border-cyan-700/50 transition-colors"
             >
-              <RotateCcw size={11} /> New job
+              <ExternalLink size={11} /> Open Live Feed ↗
             </button>
-          )}
+          </div>
         </div>
+
+        {/* ── source type selector ─────────────────────────────────────────── */}
+        {mock.state === 'idle' && !activeJobId && (
+          <div className="mb-5 flex items-center gap-1 p-1 bg-gray-900 border border-gray-800 rounded-lg">
+            {([
+              { key: 'file',   Icon: Upload, label: 'File Upload'       },
+              { key: 'camera', Icon: Camera, label: 'Registered Camera' },
+              { key: 'rtsp',   Icon: Wifi,   label: 'RTSP URL'          },
+            ] as const).map(({ key, Icon, label }) => (
+              <button
+                key={key}
+                onClick={() => { setSourceType(key); setUploadError(null) }}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded text-xs font-mono transition-colors ${
+                  sourceType === key
+                    ? 'bg-gray-800 text-gray-200 shadow-inner'
+                    : 'text-gray-600 hover:text-gray-400'
+                }`}
+              >
+                <Icon size={11} />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* ── upload / file selection ──────────────────────────────────────── */}
         <AnimatePresence mode="wait">
@@ -326,6 +401,141 @@ export default function Operations() {
                   className="mt-4 w-full flex items-center justify-center gap-2 py-3 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded-xl text-sm font-semibold tracking-wide hover:bg-cyan-500/25 transition-colors disabled:opacity-50 disabled:pointer-events-none"
                 >
                   {uploading ? <><Loader2 size={15} className="animate-spin" /> Uploading…</> : <><Play size={15} /> Activate Tracking Pipeline</>}
+                </motion.button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── registered camera panel ─────────────────────────────────────── */}
+        <AnimatePresence mode="wait">
+          {showCameraPanel && (
+            <motion.div
+              key="camera-panel"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-5"
+            >
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center">
+                  <Camera size={15} className="text-cyan-400" />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-gray-200">Camera Source — Registered Camera</div>
+                  <div className="text-[10px] font-mono text-gray-600">Select an online registered camera</div>
+                </div>
+              </div>
+
+              <select
+                value={selectedCameraId}
+                onChange={(e) => setSelectedCameraId(e.target.value)}
+                className="w-full bg-gray-950 border border-gray-700 focus:border-cyan-600/50 rounded-lg px-3 py-2.5 text-sm text-gray-200 outline-none mb-4"
+              >
+                <option value="">Select camera…</option>
+                {registeredCameras.map((cam) => (
+                  <option key={cam.id} value={cam.id}>
+                    {cam.name}{cam.location ? ` · ${cam.location}` : ''} · {cam.status}
+                  </option>
+                ))}
+              </select>
+
+              {selectedCameraId && (() => {
+                const cam = registeredCameras.find((c) => c.id === selectedCameraId)
+                if (!cam) return null
+                return (
+                  <div className="border border-gray-700 bg-gray-800/40 rounded-xl p-4 mb-4">
+                    <div className="text-sm font-semibold text-gray-200">{cam.name}</div>
+                    <div className="text-[10px] font-mono text-gray-500 mt-0.5">
+                      {cam.location || 'No zone assigned'} · {cam.status === 'ACTIVE' ? '● Active' : '◌ Inactive'}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {uploadError && (
+                <div className="mb-4 border border-red-500/30 bg-red-500/8 rounded-lg px-3 py-2 text-xs font-mono text-red-400">
+                  {uploadError}
+                </div>
+              )}
+
+              {selectedCameraId && (
+                <motion.button
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  onClick={startTracking}
+                  disabled={uploading}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded-xl text-sm font-semibold hover:bg-cyan-500/25 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  {uploading ? <><Loader2 size={15} className="animate-spin" /> Connecting…</> : <><Play size={15} /> Activate Tracking Pipeline</>}
+                </motion.button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── RTSP URL panel ───────────────────────────────────────────────── */}
+        <AnimatePresence mode="wait">
+          {showRtspPanel && (
+            <motion.div
+              key="rtsp-panel"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-5"
+            >
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center">
+                  <Wifi size={15} className="text-cyan-400" />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-gray-200">Camera Source — RTSP Stream</div>
+                  <div className="text-[10px] font-mono text-gray-600">Enter a direct RTSP stream URL</div>
+                </div>
+              </div>
+
+              <div className="flex gap-2 mb-4">
+                <input
+                  value={rtspUrl}
+                  onChange={(e) => { setRtspUrl(e.target.value); setRtspTestStatus('idle') }}
+                  placeholder="rtsp://192.168.1.100:554/stream"
+                  className="flex-1 bg-gray-950 border border-gray-700 focus:border-cyan-600/50 rounded-lg px-3 py-2.5 text-sm font-mono text-gray-200 outline-none"
+                />
+                <button
+                  onClick={testRtsp}
+                  disabled={!rtspUrl || rtspTestStatus === 'testing'}
+                  className="px-4 py-2.5 border border-gray-700 rounded-lg text-xs font-mono text-gray-400 hover:border-gray-600 hover:text-gray-200 transition-colors disabled:opacity-40"
+                >
+                  {rtspTestStatus === 'testing' ? <Loader2 size={12} className="animate-spin" /> : 'Test'}
+                </button>
+              </div>
+
+              {rtspTestStatus === 'ok' && (
+                <div className="mb-4 flex items-center gap-2 text-xs font-mono text-emerald-400">
+                  <CheckCircle2 size={12} /> Connected
+                </div>
+              )}
+              {rtspTestStatus === 'fail' && (
+                <div className="mb-4 flex items-center gap-2 text-xs font-mono text-red-400">
+                  <AlertTriangle size={12} /> Connection failed
+                </div>
+              )}
+
+              {uploadError && (
+                <div className="mb-4 border border-red-500/30 bg-red-500/8 rounded-lg px-3 py-2 text-xs font-mono text-red-400">
+                  {uploadError}
+                </div>
+              )}
+
+              {rtspUrl && (
+                <motion.button
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  onClick={startTracking}
+                  disabled={uploading}
+                  className="w-full flex items-center justify-center gap-2 py-3 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded-xl text-sm font-semibold hover:bg-cyan-500/25 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  {uploading ? <><Loader2 size={15} className="animate-spin" /> Connecting…</> : <><Play size={15} /> Activate Tracking Pipeline</>}
                 </motion.button>
               )}
             </motion.div>

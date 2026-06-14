@@ -5,7 +5,7 @@ import {
   Zap, Timer, Layers, Cpu, ArrowRight,
 } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
-import { useIncidents, useSystemMetrics, useCameras, deriveActivityFeed } from '../api/hooks'
+import { useIncidents, useSystemMetrics, useCameraHealthSummary, deriveActivityFeed } from '../api/hooks'
 import { mockActivityFeed } from '../mock/data'
 import StatusIndicator from '../components/StatusIndicator'
 
@@ -14,7 +14,7 @@ export default function Overview() {
   const { accessMode } = useAppStore()
   const { data: incidents, loading: incLoading } = useIncidents()
   const { data: m, error: metricsError } = useSystemMetrics()
-  const { data: cameras } = useCameras()
+  const { data: camHealth } = useCameraHealthSummary()
 
   const isAdmin = accessMode === 'ADMIN'
 
@@ -22,7 +22,6 @@ export default function Overview() {
   const openCount     = incidents.filter((i) => i.status === 'OPEN').length
   const resolvedCount = incidents.filter((i) => i.status === 'RESOLVED' || i.status === 'CLOSED').length
   const pendingAlerts = incidents.reduce((s, i) => s + i.pending_alert_count, 0)
-  const activeCams    = cameras.filter((c) => c.status === 'ACTIVE').length
 
   const activityFeed = useMemo(
     () => (accessMode === 'MOCK' ? mockActivityFeed : deriveActivityFeed(incidents)),
@@ -147,11 +146,28 @@ export default function Overview() {
               detail={metricsError ? 'unreachable' : `${hwLabel} · ${hwStatus.toLowerCase()}`}
             />
             <StatusIndicator status="online"  label="Embedding Engine" detail="ArcFace / buffalo_l" />
-            <StatusIndicator
-              status={activeCams > 0 ? 'online' : 'offline'}
-              label="Camera Sources"
-              detail={cameras.length > 0 ? `${activeCams} / ${cameras.length} active` : 'none registered'}
-            />
+            {/* Camera Sources — live health summary, 30s poll */}
+            <div className="flex items-start gap-2.5 py-0.5">
+              <span className={`w-1.5 h-1.5 rounded-full mt-[5px] flex-shrink-0 ${
+                camHealth.online > 0 ? 'bg-emerald-400' : camHealth.total > 0 ? 'bg-red-400' : 'bg-gray-700'
+              }`} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-300">Camera Sources</span>
+                  <button
+                    onClick={() => navigate('/administration')}
+                    className="text-[10px] font-mono text-cyan-600 hover:text-cyan-400 transition-colors"
+                  >
+                    Manage →
+                  </button>
+                </div>
+                <div className="text-[10px] font-mono text-gray-600 mt-0.5">
+                  {camHealth.total === 0
+                    ? 'none registered'
+                    : `● ${camHealth.total} registered  ● ${camHealth.online} online  ◌ ${camHealth.offline} offline`}
+                </div>
+              </div>
+            </div>
             <StatusIndicator
               status={metricsError ? 'offline' : 'online'}
               label="INC API"
