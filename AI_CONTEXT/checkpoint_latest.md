@@ -1,8 +1,8 @@
-# Checkpoint — 2026-06-14 — VSL Phase 1 complete: Source Abstraction Foundation
+# Checkpoint — 2026-06-14 — VSL Phase 2 complete: Location Intelligence + Health Monitor
 
 ## Phase
-VSL Phase 1 — Source Abstraction Foundation (complete)
-Branch: `vsl-phase1-source-abstraction`
+VSL Phase 2 — Location Intelligence + Health Monitoring (complete)
+Branch: `vsl-phase2-location-health`
 
 ## Regression baseline metrics (14/14 pass)
 identity_switch_rate: 0.000
@@ -11,101 +11,104 @@ confirmation_rate: green
 validator_rejection_rate: green
 bbox_jitter: green
 
-## Changes this session (VSL Phase 1)
+## Changes this session (VSL Phase 2)
 
-### New file: `ecoface_lite/input_sources/base.py`
-- `BaseVideoSource` ABC — the contract every video source must satisfy
-- `Frame` dataclass: index, bgr, captured_at (datetime), source_id (str)
-- `CameraMetadata` dataclass: source_id, name, source_type, stream_url, zone, location, fps, width, height
-- `HealthStatus` dataclass: source_id, status (SourceStatus), last_seen, error
-- `SourceType` enum: FILE / RTSP / ANDROID (Phase 3) / NVR (Phase 5)
-- `SourceStatus` enum: ONLINE / OFFLINE / RECONNECTING / UNKNOWN
-- Interface: connect() → bool, disconnect() → None, get_frame() → Frame | None,
-  get_metadata() → CameraMetadata, health_check() → HealthStatus,
-  get_historical_stream(start, end) → NotImplementedError until VSL Phase 4
+### DB — `ecoface_lite/db/models.py`
+- `Site` model: id, name (unique), description, created_at
+  → has `zones` relationship (cascade delete-orphan)
+- `Zone` model: id, site_id (FK → sites.id ON DELETE CASCADE), name, description, created_at
+  → has `site` and `cameras` relationships
+- `Camera`: added `zone_id` FK (→ zones.id ON DELETE SET NULL, nullable)
+  → `zone` (free-text, Phase 1 fallback) kept for backward compat
+  → `zone_obj` relationship to Zone
 
-### Modified: `ecoface_lite/input_sources/video_file.py`
-- `VideoFileSource` now implements `BaseVideoSource` (multiple inheritance; VideoSource kept)
-- Added: connect(), disconnect(), get_frame(), get_metadata(), health_check()
-- `frames()` iterator preserved unchanged — existing pipeline callers unaffected
-- Optional params: source_id, name, zone, location
+### DB migrations — `ecoface_lite/db/session.py`
+- `CREATE TABLE IF NOT EXISTS sites`
+- `CREATE TABLE IF NOT EXISTS zones` (with site_id FK)
+- `CREATE INDEX IF NOT EXISTS ix_zones_site_id ON zones(site_id)`
+- `ALTER TABLE cameras ADD COLUMN zone_id INTEGER REFERENCES zones(id) ON DELETE SET NULL`
+- `CREATE INDEX IF NOT EXISTS ix_cameras_zone_id ON cameras(zone_id)`
 
-### New file: `ecoface_lite/input_sources/rtsp_source.py`
-- `RTSPSource` implementing `BaseVideoSource`
-- Drop-stale-frames policy: always serves latest frame, never queues
-- Auto-reconnect: `reconnect_with_backoff(max_attempts=5)` — exponential 2s → 30s cap
-- Covers Hikvision, Dahua, Android IP Webcam RTSP URL patterns
+### Config — `ecoface_lite/core/config.py`
+- `health_monitor_enabled: bool = True` (HEALTH_MONITOR_ENABLED)
+- `health_monitor_interval_seconds: int = 60` (HEALTH_MONITOR_INTERVAL_SECONDS)
 
-### New file: `ecoface_lite/input_sources/source_registry.py`
-- `SourceRegistry` — bridges Camera DB rows to concrete BaseVideoSource instances
-- `build_source(camera)` dispatches on `camera.source_type` (file → VideoFileSource, rtsp/android → RTSPSource)
-- `register()` persists new Camera row and returns it
-- `list_cameras()` / `get_camera()` async DB helpers
-- `get_source_registry()` — process-lifetime singleton
+### Health monitor — `ecoface_lite/services/health_monitor.py` (NEW)
+- `_poll_all_cameras(session_factory, settings)`: queries active cameras,
+  `build_source()` → `connect()` → `health_check()` → `disconnect()` per camera,
+  writes `status` + `last_seen` directly to DB (no HTTP overhead)
+- `_health_monitor_loop(session_factory, settings)`: runs forever,
+  `asyncio.sleep(interval)` between passes; exceptions logged, never crash
+- `start_health_monitor(session_factory, settings) → asyncio.Task | None`:
+  creates named task `"health_monitor"` if enabled; returns None if disabled
+- **Isolation verified**: runs as standalone asyncio.Task, NOT in frame loop;
+  camera offline cannot block frame acquisition
 
-### Modified: `ecoface_lite/db/models.py`
-- Camera: +source_type VARCHAR(32) DEFAULT 'file', +zone VARCHAR(255),
-  +status VARCHAR(32) DEFAULT 'unknown', +last_seen DATETIME
+### API — `ecoface_lite/api/routers/sites.py` (NEW)
+- `POST /sites` (201)
+- `GET /sites`
+- `GET /sites/{id}`
+- `GET /sites/{id}/zones` — convenience sub-resource
+- `DELETE /sites/{id}` (cascade deletes zones)
 
-### Modified: `ecoface_lite/db/session.py`
-- 4 new `ALTER TABLE cameras ADD COLUMN` migration patches
+### API — `ecoface_lite/api/routers/zones.py` (NEW)
+- `POST /zones` (validates site_id, 404 if site missing)
+- `GET /zones`
+- `GET /zones/{id}`
+- `DELETE /zones/{id}`
 
-### Modified: `ecoface_lite/api/schemas.py`
-- `CameraOut`: added source_type, zone, status, last_seen
-- `CameraCreate`: added source_type (file|rtsp|android, pattern-validated), zone
-- `CameraHealthUpdate` (NEW): status + last_seen — used by health monitor patch endpoint
+### API — `ecoface_lite/api/routers/cameras.py` (MODIFIED)
+- `POST /cameras`: validates `zone_id` FK (404 if zone missing), stores it
+- `GET /cameras/health-summary` (NEW): `{total, online, offline, reconnecting, unknown}`
 
-### Modified: `ecoface_lite/api/routers/cameras.py`
-- create_camera: passes source_type + zone
-- `PATCH /{id}/health`: updates status/last_seen — called by VSL Phase 2 health monitor
-- `POST /{id}/test-connect`: builds source, attempts live connect, persists result, returns JSON
+### Schemas — `ecoface_lite/api/schemas.py`
+- `SiteCreate`: name, description
+- `SiteOut`: id, name, description, created_at
+- `ZoneCreate`: site_id, name, description
+- `ZoneOut`: id, site_id, name, description, created_at
+- `CameraOut`: added `zone_id: int | None`
+- `CameraCreate`: added `zone_id: int | None`
+
+### App lifespan — `ecoface_lite/api/main.py`
+- Imports `sites`, `zones` routers; both registered at `/api/v1`
+- `start_health_monitor()` called after `init_db()` + alert engine rebuild
+- Task cancelled with `task.cancel() + await task` on shutdown (CancelledError swallowed)
 
 ## Architecture state
 
 ```
-input_sources/
-  base.py          ← BaseVideoSource ABC (VSL contract)
-  video_file.py    ← VideoFileSource (file + legacy frames())
-  rtsp_source.py   ← RTSPSource (RTSP/Android)
-  source_registry.py ← SourceRegistry singleton
-  __init__.py      ← exports all VSL Phase 1 symbols
+Location hierarchy:
+  sites    → id, name
+  zones    → id, site_id FK, name
+  cameras  → id, zone_id FK (nullable), source_type, status, last_seen
+
+Health monitor:
+  services/health_monitor.py → standalone asyncio.Task "health_monitor"
+  polls every HEALTH_MONITOR_INTERVAL_SECONDS (default 60s)
+  writes directly to cameras.status / cameras.last_seen
+  NOT in frame loop (hard boundary per CLAUDE.md VSL hard stops)
+
+API surface added:
+  GET  /api/v1/sites
+  POST /api/v1/sites
+  GET  /api/v1/sites/{id}
+  GET  /api/v1/sites/{id}/zones
+  DELETE /api/v1/sites/{id}
+  GET  /api/v1/zones
+  POST /api/v1/zones
+  GET  /api/v1/zones/{id}
+  DELETE /api/v1/zones/{id}
+  GET  /api/v1/cameras/health-summary
 ```
 
-## Smoke test results (VSL Phase 1 verification)
-
-### Smoke test 1 — VideoFileSource via get_frame() (PASSED)
-- `connect()` → True on valid file
-- `Frame.bgr` shape=(352, 640, 3) dtype=uint8 — OpenCV-processable confirmed
-- `Frame.captured_at` is UTC-aware (timezone.utc set)
-- `Frame.index` increments 0, 1, 2, 3, 4... correctly
-- `Frame.source_id` matches constructor arg
-- `get_metadata()` returns source_type=file, fps=29.95, width=640, height=352
-- `health_check()` → ONLINE when connected, OFFLINE after disconnect()
-
-### Production pipeline call path finding
-**`video_service.process_prerecorded_video` calls `video_source.frames()` (legacy iterator),
-NOT the new `get_frame()` path.** This is correct and intentional:
-- Frame pipeline switches to `get_frame()` in VSL Phase 3 (multi-source scheduler)
-- `frames()` remains the production entry point until then
-- Documented as hard stop in CLAUDE.md to prevent premature wiring
-
-### Smoke test 2 — RTSPSource backoff behavior (PASSED)
-- connect() → True / get_frame() → Frame on mocked stream
-- Stream drop: get_frame() → None, status → OFFLINE immediately
-- `reconnect_with_backoff(max_attempts=5)` on all-failing source:
-  sleep sequence = [2.0, 4.0, 8.0, 16.0, 30.0] — cap at 30s confirmed
-- Partial success (fail × 2 then succeed): sleep=[2.0, 4.0], status → ONLINE, returns True
-
-## VSL Phase 2 prerequisites (next)
-- Location hierarchy: Country → State → District → Site → Zone → Camera
-- Health monitor async background task (polls each source, calls PATCH /{id}/health)
-- Dashboard panel: Connected / Online / Offline / Warning counts
-- Zone-aware alert routing (zone field now on Camera, needs FK in Phase 2)
+## VSL Phase 3 prerequisites (next)
+- `AndroidCameraSource` — connects via IP Webcam or RTSP app (same RTSPSource interface)
+- Multi-source frame scheduler — round-robin or priority-based frame pull
+- Per-source frame rate tracking
+- Source isolation — one source failing doesn't crash others
+- When multi-source scheduler lands: wire `get_frame()` into the pipeline
+  (replacing `frames()` iterator — the planned Phase 1 production path switch)
 
 ## Prior phases preserved
-See prior checkpoint history — Phase 8 + 8.5–8.7 changes remain in full effect
-on `phase8-lifecycle-enrollment`. VSL Phase 1 branched from there.
-
-## Branch
-`vsl-phase1-source-abstraction` — regression gate passed, safe to merge to main
-after stress suite (per CLAUDE.md rules, do NOT skip)
+VSL Phase 1 changes intact on `vsl-phase1-source-abstraction`.
+Phase 8 + 8.5–8.7 intact on `phase8-lifecycle-enrollment`.
