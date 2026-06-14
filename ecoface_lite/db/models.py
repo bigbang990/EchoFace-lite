@@ -143,7 +143,7 @@ class Zone(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     site: Mapped[Site] = relationship(back_populates="zones")
-    cameras: Mapped[list["Camera"]] = relationship(back_populates="zone")
+    cameras: Mapped[list["Camera"]] = relationship(back_populates="zone_obj")
 
 
 class Camera(Base):

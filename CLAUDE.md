@@ -139,3 +139,35 @@ Every camera health event must carry zone context before it reaches the dashboar
 Implement the location hierarchy (Site → Zone → Camera) in the DB **before**
 writing the health monitor task. A health event without zone context is meaningless
 in the multi-camera dashboard.
+
+### VSL Phase 3 — frames() to get_frame() path switch (highest-risk change in VSL)
+
+The pipeline switch from `frames()` to `get_frame()` is the most consequential
+change in the VSL roadmap. It touches the live frame acquisition loop directly.
+These hard stops are non-negotiable before and during the switch:
+
+1. **`frames()` iterator must remain callable after the switch.**
+   Delete nothing. The legacy iterator stays as fallback forever.
+
+2. **`get_frame()` path must be feature-flagged on introduction.**
+   Add `USE_VSL_FRAME_PATH: bool = False` to Settings. The flag is off by default.
+   The multi-source scheduler uses `get_frame()` only when this flag is True.
+   Single-source pipeline continues using `frames()` until the flag is enabled.
+
+3. **Flag becomes default True only after 3 consecutive green regression runs on GPU.**
+   Run identity_stress_suite on Colab T4 three times with the flag enabled.
+   All three runs must match or beat the Phase 1 baseline metrics.
+   Report each run in checkpoint_latest.md before flipping the default.
+
+4. **ByteTrack/SORT state must not reset between get_frame() calls.**
+   The legacy `frames()` iterator held the OpenCV capture object open for the
+   entire video in a single generator context. `get_frame()` must do the same:
+   call `connect()` once before the loop, `disconnect()` once after.
+   Opening and closing the capture per call resets frame counters and causes
+   track ID discontinuity — the primary regression risk for this switch.
+   Confirmed safe: VideoFileSource.connect() opens cap once; get_frame() reads
+   from the same cap object until disconnect() is called.
+
+5. **Source isolation must be verified before enabling multi-source.**
+   One source calling get_frame() returning None must not interrupt the scheduler
+   loop for other sources. The scheduler must catch None and move to the next source.
