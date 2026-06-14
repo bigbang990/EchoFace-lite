@@ -109,3 +109,33 @@ cd frontend && npm install && npm run dev
 **Next phase (frontend):** Replace `src/mock/data.ts` exports with fetch/SWR
 calls to `/api/v1/incidents`, `/api/v1/incidents/:id/persons`,
 `/api/v1/incidents/:id/sightings`, `/api/v1/observability/*`.
+
+## VSL hard stops
+
+### Production pipeline call path (confirmed VSL Phase 1)
+`video_service.process_prerecorded_video` calls `video_source.frames()` —
+the **legacy iterator**, NOT the new `BaseVideoSource.get_frame()` path.
+This is intentional: the frame-pipeline switches to `get_frame()` in VSL Phase 3
+when multi-source scheduling is introduced. Until then, `frames()` stays as the
+production entry point. Do NOT wire `get_frame()` into the single-source pipeline
+prematurely — the switch happens with the multi-source scheduler, not before.
+
+### Health monitor separation (VSL Phase 2 — mandatory boundary)
+The `PATCH /cameras/{id}/health` endpoint is the health monitor's write channel.
+It must be called **only** by the health monitor background task on its own
+internal timer — never by the frame acquisition loop.
+
+Health monitoring and frame acquisition are completely separate concerns:
+- Frame acquisition: pull frames as fast as the source provides them
+- Health monitoring: poll each source every N seconds in a background asyncio task
+
+If this boundary is blurred, a camera going offline will block the frame pipeline.
+The health monitor background task (VSL Phase 2) must be implemented as a
+standalone `asyncio` task, started in `lifespan()` after `init_db()`, and
+cancelled on shutdown — never called from within a frame loop.
+
+### Zone context before health events (VSL Phase 2)
+Every camera health event must carry zone context before it reaches the dashboard.
+Implement the location hierarchy (Site → Zone → Camera) in the DB **before**
+writing the health monitor task. A health event without zone context is meaningless
+in the multi-camera dashboard.
