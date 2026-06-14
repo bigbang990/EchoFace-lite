@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -358,7 +358,7 @@ async def close_incident(
 async def upload_incident_evidence(
     incident_id: int,
     db: DbSession,
-    files: list["UploadFile"],
+    files: list[UploadFile] = File(...),
 ) -> IncidentOut:
     """Upload evidence files to an incident (call before or during closure).
 
