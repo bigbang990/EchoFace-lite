@@ -49,6 +49,10 @@ def _safe_video_path(settings: Settings, relative_path: str) -> Path:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _is_stream_url(path: str) -> bool:
+    return path.startswith(("http://", "https://", "rtsp://"))
+
+
 def count_emitted_frames(video_path: Path, frame_skip: int) -> int:
     """Approximate emitted frame count (matches VideoFileSource logic when CAP_PROP works)."""
     import cv2
@@ -165,22 +169,46 @@ async def process_prerecorded_video(
     """Process a video; optionally update `processing_status` every N emitted frames."""
     import cv2
 
-    from ecoface_lite.input_sources.video_file import VideoFileSource
+    from ecoface_lite.input_sources.video_file import FramePacket, VideoFileSource
 
     from sqlalchemy import select as _select
 
     from ecoface_lite.db.models import DetectionEvent, Incident, incident_persons
 
-    video_path = _safe_video_path(settings, video_relative_path)
-    if not video_path.is_file():
-        raise HTTPException(status_code=404, detail="Video file not found under configured videos directory")
+    if _is_stream_url(video_relative_path):
+        _cap = cv2.VideoCapture(video_relative_path)
+        if not _cap.isOpened():
+            _cap.release()
+            raise HTTPException(status_code=422, detail=f"Cannot connect to stream: {video_relative_path}")
+        video_path = video_relative_path
+
+        def _make_frame_iter():
+            _idx = 0
+            _emit = 0
+            try:
+                while True:
+                    ok, frame = _cap.read()
+                    if not ok:
+                        break
+                    if _idx % settings.video_frame_skip == 0:
+                        yield FramePacket(index=_emit, bgr=frame)
+                        _emit += 1
+                    _idx += 1
+            finally:
+                _cap.release()
+
+        _frame_iter = _make_frame_iter()
+    else:
+        video_path = _safe_video_path(settings, video_relative_path)
+        if not video_path.is_file():
+            raise HTTPException(status_code=404, detail="Video file not found under configured videos directory")
+        _frame_iter = VideoFileSource(video_path, settings.video_frame_skip).frames()
 
     gallery = await load_gallery(session)
     if not gallery:
         raise HTTPException(status_code=400, detail="No enrolled persons in gallery")
 
     alert_engine = get_alert_session_engine()
-    video_source = VideoFileSource(video_path, settings.video_frame_skip)
     alerts = 0
     new_sessions = 0
     emitted_count = 0
@@ -188,7 +216,7 @@ async def process_prerecorded_video(
     preview_writer = VideoPreviewWriter(settings, job_id)
     last_sighting_frame_by_person: dict[int, int] = {}  # controls sighting write frequency
     started_at = perf_counter()
-    for packet in video_source.frames():
+    for packet in _frame_iter:
         emitted_count += 1
         job_diagnostics.frames_processed = emitted_count
         inference_frame = _resize_for_inference(packet.bgr, settings.video_inference_width)
@@ -415,23 +443,26 @@ async def run_async_video_job(job_id: str, video_relative_path: str) -> None:
     pipeline = get_recognition_pipeline()
 
     async with factory() as meta_session:
-        try:
-            video_path = safe_video_path(settings, video_relative_path)
-        except ValueError as exc:
-            await processing_status_service.mark_failed(meta_session, job_id, str(exc))
-            await meta_session.commit()
-            return
+        if _is_stream_url(video_relative_path):
+            total = 0  # frame count unknown ahead of time for live streams
+        else:
+            try:
+                video_path = safe_video_path(settings, video_relative_path)
+            except ValueError as exc:
+                await processing_status_service.mark_failed(meta_session, job_id, str(exc))
+                await meta_session.commit()
+                return
 
-        if not video_path.is_file():
-            await processing_status_service.mark_failed(
-                meta_session,
-                job_id,
-                "Video file not found under configured videos directory",
-            )
-            await meta_session.commit()
-            return
+            if not video_path.is_file():
+                await processing_status_service.mark_failed(
+                    meta_session,
+                    job_id,
+                    "Video file not found under configured videos directory",
+                )
+                await meta_session.commit()
+                return
 
-        total = count_emitted_frames(video_path, settings.video_frame_skip)
+            total = count_emitted_frames(video_path, settings.video_frame_skip)
         await processing_status_service.set_total_frames_and_running(
             meta_session,
             job_id,

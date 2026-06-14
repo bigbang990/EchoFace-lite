@@ -23,7 +23,7 @@ interface Zone {
 
 interface CameraRow {
   id: string
-  name: string
+  label: string
   zone_name?: string
   source_type: string
   status: string
@@ -57,9 +57,9 @@ const MOCK_ZONES: Record<string, Zone[]> = {
 }
 
 const MOCK_CAMERAS: CameraRow[] = [
-  { id: '1', name: 'CAM-001', zone_name: 'Main Entrance', source_type: 'rtsp', status: 'online',  trust_level: 'high',   direction: 'North' },
-  { id: '2', name: 'CAM-002', zone_name: 'Lobby',        source_type: 'rtsp', status: 'online',  trust_level: 'medium', direction: 'South' },
-  { id: '3', name: 'CAM-003', zone_name: 'Loading Bay',  source_type: 'rtsp', status: 'offline', trust_level: 'low',    direction: 'East'  },
+  { id: '1', label: 'CAM-001', zone_name: 'Main Entrance', source_type: 'rtsp', status: 'online',  trust_level: 'high',   direction: 'North' },
+  { id: '2', label: 'CAM-002', zone_name: 'Lobby',         source_type: 'rtsp', status: 'online',  trust_level: 'medium', direction: 'South' },
+  { id: '3', label: 'CAM-003', zone_name: 'Loading Bay',   source_type: 'rtsp', status: 'offline', trust_level: 'low',    direction: 'East'  },
 ]
 
 const MOCK_HEALTH: HealthSummary = { total: 3, online: 2, offline: 1, reconnecting: 0, unknown: 0 }
@@ -329,21 +329,30 @@ export default function Administration() {
   const loadCameras = useCallback(async () => {
     if (isMock) { setCameras(MOCK_CAMERAS); setHealth(MOCK_HEALTH); return }
     const client = createApiClient(backendUrl)
-    try {
-      const [rawCams, rawHealth] = await Promise.all([
-        client.get<Array<Record<string, unknown>>>('/cameras'),
-        client.get<Record<string, unknown>>('/cameras/health-summary'),
-      ])
-      if (loadCancelledRef.current) return
+    const [camsResult, healthResult] = await Promise.allSettled([
+      client.get<Array<Record<string, unknown>>>('/cameras'),
+      client.get<Record<string, unknown>>('/cameras/health-summary'),
+    ])
+    if (loadCancelledRef.current) return
+
+    if (camsResult.status === 'fulfilled') {
+      const rawCams = camsResult.value
+      console.log('[Administration] cameras loaded:', rawCams.length, rawCams)
       setCameras(rawCams.map((c) => ({
         id: String(c.id),
-        name: String(c.name ?? ''),
+        label: String(c.label ?? c.name ?? ''),
         zone_name: c.zone_name ? String(c.zone_name) : undefined,
         source_type: String(c.source_type ?? 'unknown'),
         status: String(c.status ?? 'unknown'),
         trust_level: String(c.trust_level ?? 'medium'),
         direction: c.direction ? String(c.direction) : undefined,
       })))
+    } else {
+      console.warn('[Administration] cameras fetch failed:', camsResult.reason)
+    }
+
+    if (healthResult.status === 'fulfilled') {
+      const rawHealth = healthResult.value
       setHealth({
         total:        Number(rawHealth.total        ?? 0),
         online:       Number(rawHealth.online        ?? 0),
@@ -351,7 +360,7 @@ export default function Administration() {
         reconnecting: Number(rawHealth.reconnecting  ?? 0),
         unknown:      Number(rawHealth.unknown       ?? 0),
       })
-    } catch { /* ignore */ }
+    }
   }, [backendUrl, isMock])
 
   useEffect(() => {
@@ -606,7 +615,7 @@ export default function Administration() {
                   className="grid grid-cols-[1fr_60px_100px_32px] gap-3 items-center px-2 py-2.5 border-b border-gray-800/40 last:border-0"
                 >
                   <div className="min-w-0">
-                    <div className="text-[12px] font-medium text-gray-200 truncate">{cam.name}</div>
+                    <div className="text-[12px] font-medium text-gray-200 truncate">{cam.label}</div>
                     {cam.zone_name && (
                       <div className="text-[10px] font-mono text-gray-600 truncate">{cam.zone_name}</div>
                     )}

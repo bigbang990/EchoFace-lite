@@ -200,15 +200,14 @@ export default function Operations() {
     if (f?.type.startsWith('video/')) { setFile(f); setSnapshot(null); capturedRef.current = false }
   }
 
-  const testRtsp = async () => {
+  const testRtsp = () => {
     if (!rtspUrl) return
     setRtspTestStatus('testing')
-    try {
-      await createApiClient(backendUrl).post('/cameras/test-rtsp', { stream_url: rtspUrl })
-      setRtspTestStatus('ok')
-    } catch {
-      setRtspTestStatus('fail')
-    }
+    // Colab cannot reach local-network IPs — validate URL format only.
+    const valid = rtspUrl.startsWith('rtsp://') ||
+                  rtspUrl.startsWith('http://')  ||
+                  rtspUrl.startsWith('https://')
+    setTimeout(() => setRtspTestStatus(valid ? 'ok' : 'fail'), 250)
   }
 
   const startTracking = async () => {
@@ -228,19 +227,19 @@ export default function Operations() {
         setActiveJobId(String(data.job_id))
       } else if (sourceType === 'camera') {
         if (!selectedCameraId) return
-        const res = await fetch(`${backendUrl}/cameras/${selectedCameraId}/start-tracking`, { method: 'POST' })
-        if (!res.ok) throw new Error(`Failed (${res.status}): ${await res.text().catch(() => res.statusText)}`)
-        const data = await res.json()
+        const client = createApiClient(backendUrl)
+        const camData = await client.get<Record<string, unknown>>(`/cameras/${selectedCameraId}`)
+        const streamUrl = camData.stream_url ? String(camData.stream_url) : null
+        if (!streamUrl) throw new Error('Camera has no stream URL configured')
+        const data = await client.post<{ job_id: string }>('/videos/process/async', {
+          video_relative_path: streamUrl,
+        })
         setActiveJobId(String(data.job_id))
       } else if (sourceType === 'rtsp') {
         if (!rtspUrl) return
-        const res = await fetch(`${backendUrl}/streams/start-tracking`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ stream_url: rtspUrl }),
+        const data = await createApiClient(backendUrl).post<{ job_id: string }>('/videos/process/async', {
+          video_relative_path: rtspUrl,
         })
-        if (!res.ok) throw new Error(`Failed (${res.status}): ${await res.text().catch(() => res.statusText)}`)
-        const data = await res.json()
         setActiveJobId(String(data.job_id))
       }
     } catch (e) {
@@ -512,12 +511,12 @@ export default function Operations() {
 
               {rtspTestStatus === 'ok' && (
                 <div className="mb-4 flex items-center gap-2 text-xs font-mono text-emerald-400">
-                  <CheckCircle2 size={12} /> Connected
+                  <CheckCircle2 size={12} /> URL format valid
                 </div>
               )}
               {rtspTestStatus === 'fail' && (
                 <div className="mb-4 flex items-center gap-2 text-xs font-mono text-red-400">
-                  <AlertTriangle size={12} /> Connection failed
+                  <AlertTriangle size={12} /> Invalid URL format — expected rtsp://, http://, or https://
                 </div>
               )}
 

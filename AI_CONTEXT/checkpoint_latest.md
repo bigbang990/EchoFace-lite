@@ -1,7 +1,7 @@
-# Checkpoint — 2026-06-14 — AndroidCameraSource (VSL Phase 3)
+# Checkpoint — 2026-06-15 — video_service.py stream URL support (VSL Phase 3)
 
 ## Phase
-VSL Phase 3 — AndroidCameraSource standalone implementation
+VSL Phase 3 — multi-source stream URL routing
 Branch: `vsl-phase3-multi-source`
 All prior VSL phases (1–5) intact and verified.
 
@@ -15,71 +15,64 @@ Test suite: 30 tests, 0 failed
 
 ---
 
-## Backend change this session
+## Changes this session
 
-### AndroidCameraSource rewrite (ecoface_lite/input_sources/android_source.py)
+### video_service.py — stream URL support
 
-Previous implementation was a thin subclass of RTSPSource targeting RTSP endpoints.
-Replaced with a full standalone BaseVideoSource implementation targeting the MJPEG
-HTTP endpoint (`http://<phone-ip>:8080/video`) of the Android IP Webcam app.
+**Problem:** `video_relative_path` was always treated as a filesystem path.
+Stream URLs (`http://`, `https://`, `rtsp://`) failed with "Video file not found" because
+`_safe_video_path()` would resolve the URL against `VIDEOS_DIR`, and `is_file()` returned False.
 
-**Key design decisions:**
+**Fix (video_service.py only):**
 
-**Persistent connection**
-- `connect()` opens `cv2.VideoCapture(stream_url)` once and holds it
-- `get_frame()` calls `grab()` / `retrieve()` on the same persistent object
-- Cap object is never opened/closed per frame
+**`_is_stream_url(path: str) -> bool`** — new module-level helper added after `_safe_video_path`.
+Returns True if path starts with `http://`, `https://`, or `rtsp://`.
 
-**Stale-frame flush**
-- IP Webcam maintains an internal MJPEG buffer
-- Every `get_frame()` call calls `grab()` first (discards buffered frame) then
-  `retrieve()` (decodes the newest frame)
-- Prevents multi-second frame lag at typical 15–30 fps phone capture rates
+**`process_prerecorded_video()`** — branched before `_safe_video_path()`:
+- Stream URL path: opens `cv2.VideoCapture(url)` directly, checks `isOpened()`,
+  raises HTTP 422 if connection fails. Frame iteration uses an inline generator
+  (`_make_frame_iter`) that yields `FramePacket` objects compatible with the
+  existing loop body. `_cap.release()` is in the generator's `finally` block.
+- File path: unchanged — `_safe_video_path()` + `is_file()` check as before.
+- `video_path` is set to the URL string for stream paths (used only for logging/return).
+- `VideoFileSource` is NOT used for stream URLs — `path.resolve()` in VideoFileSource
+  mangles URL strings on Windows (pathlib collapses `//` to `/`).
 
-**Failure tracking + inline reconnect**
-- `consecutive_failures` counter increments on every failed `grab()` or `retrieve()`
-- Counter resets to 0 on any successful read
-- Threshold: 3 consecutive failures triggers `_reconnect()`
-- Backoff sequence: 5 s → 10 s → 30 s (index capped at 2, i.e. 30 s max)
-- `_reconnect_attempts` tracks which backoff slot to use, resets on successful `connect()`
+**`run_async_video_job()`** — branched before `safe_video_path()`:
+- Stream URL path: skips `safe_video_path()`, `is_file()`, and `count_emitted_frames()`
+  (frame count unknown for live streams). Sets `total = 0`, proceeds directly to
+  `set_total_frames_and_running` with `max(0, 1) = 1`.
+- File path: unchanged — existing validation + `count_emitted_frames()` as before.
+- `process_prerecorded_video()` is called with `video_relative_path` in both paths;
+  it handles the stream/file distinction internally.
 
-**HealthStatus mapping**
-SourceStatus has no WARNING variant; UNKNOWN is used as the intermediate state:
-- `consecutive_failures == 0`            → ONLINE
-- `consecutive_failures 1–2`             → UNKNOWN (degraded, reconnect not triggered)
-- `consecutive_failures >= 3`            → RECONNECTING
-- `_cap is None`                         → OFFLINE
+**No changes to:** `processing.py`, `schemas.py`, any router, detection/recognition/alert
+pipeline, `_safe_video_path()`, `VideoFileSource`.
 
-**Capability properties**
-- `supports_live` → True
-- `supports_historical` → False
-- `supports_ptz` → False
-- `get_historical_stream()` → raises NotImplementedError
-
-**Tested URL format**
-http://192.168.1.21:8080/video  (MJPEG from IP Webcam app)
-
-**Source type:** SourceType.ANDROID
-
-**No files touched other than android_source.py**
-- `source_registry.py` already had the ANDROID case and the import — unchanged
-- `__init__.py` already exported AndroidCameraSource — unchanged
-- `base.py`, `rtsp_source.py`, `video_file.py` — not touched
+**Import added:** `FramePacket` imported alongside `VideoFileSource` in
+`process_prerecorded_video()` local imports block.
 
 ---
 
-## Previous session UI changes (still valid)
+## Previous session changes (still valid)
 
-### Administration panel (frontend/src/pages/Administration.tsx)
-- RegisterCameraModal: fixed 422 error — POST body now sends `label` (not `name`)
+### cameras.py — test-connect endpoint
+android/rtsp source types: URL format validation only, no cv2.VideoCapture
+(Colab cannot reach local-network IPs).
 
-### Other UI changes from previous session
-See git log for Administration.tsx, LiveFeed.tsx, Operations.tsx, Overview.tsx,
-AlertDetail.tsx, Layout.tsx, App.tsx, hooks.ts, index.css.
+### AndroidCameraSource (ecoface_lite/input_sources/android_source.py)
+Standalone BaseVideoSource for MJPEG HTTP (IP Webcam app).
+See prior checkpoint for design details.
+
+### Frontend
+- hooks.ts: `useCameras()` maps `c.label ?? c.name` to `name` field
+- Administration.tsx: Promise.allSettled for independent cameras + health fetches;
+  local CameraRow interface uses `label`; debug console.log on load
+- Operations.tsx: local URL validator for RTSP Test button (no API call);
+  camera/rtsp startTracking branches POST to `/videos/process/async`
 
 ## TypeScript
 - tsc --noEmit: 0 errors (last verified previous session)
 
 ## Files changed this session
-ecoface_lite/input_sources/android_source.py  (rewritten — standalone BaseVideoSource)
-frontend/src/pages/Administration.tsx          (label field fix in RegisterCameraModal)
+ecoface_lite/services/video_service.py  (stream URL branching — 4-step fix)

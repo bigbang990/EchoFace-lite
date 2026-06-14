@@ -420,7 +420,7 @@ export function useCameras() {
         setData(
           raw.map((c) => ({
             id: String(c.id ?? ''),
-            name: String(c.name ?? ''),
+            name: String(c.label ?? c.name ?? ''),
             location: String(c.location ?? ''),
             status: (c.status as Camera['status']) ?? 'INACTIVE',
             fps: c.fps != null ? Number(c.fps) : undefined,
