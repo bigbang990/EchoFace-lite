@@ -110,12 +110,41 @@ async def update_camera_health(
 
 @router.post("/{camera_id}/test-connect", status_code=200)
 async def test_connect(camera_id: int, db: DbSession) -> dict:
-    """Attempt a live connection to the source and return health status."""
+    """Test camera connectivity.
+
+    Network sources (android, rtsp): validates URL format only.
+    Colab cannot reach local-network IPs — real connection is established from
+    the edge device, not the cloud backend.
+
+    File sources: checks that the path exists on the server filesystem.
+    """
     result = await db.execute(select(Camera).where(Camera.id == camera_id))
     camera = result.scalar_one_or_none()
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found")
 
+    stype = camera.source_type or "file"
+
+    # ── Network sources: URL validation only, no cv2.VideoCapture ──────── #
+    if stype in ("android", "rtsp"):
+        url = camera.stream_url or ""
+        valid_schemes = ("http://", "https://", "rtsp://")
+        if not url or not any(url.startswith(s) for s in valid_schemes):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Invalid stream URL for {stype} source: '{url}'. "
+                    "Expected http://, https://, or rtsp:// scheme."
+                ),
+            )
+        return {
+            "camera_id": camera_id,
+            "success": True,
+            "message": "URL format valid. Connection will be established from the edge device.",
+            "note": "Local network cameras are accessed from the frontend — not from the cloud backend.",
+        }
+
+    # ── File (and other) sources: live connect on the server ───────────── #
     registry = get_source_registry()
     try:
         source = registry.build_source(camera)
@@ -126,7 +155,6 @@ async def test_connect(camera_id: int, db: DbSession) -> dict:
     health = source.health_check()
     source.disconnect()
 
-    # Persist the result
     camera.status = health.status.value
     if connected:
         camera.last_seen = datetime.now(timezone.utc)
