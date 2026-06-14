@@ -123,6 +123,31 @@ API surface added:
 - Fix: `back_populates="zone_obj"` to match `Camera.zone_obj` relationship name.
 - Committed in same branch before checkpoint.
 
+## Camera topology + capability metadata (pre-Phase 3 addition)
+
+### DB — 7 new columns on `cameras` (all nullable or defaulted)
+| Column | Type | Default | Used in |
+|---|---|---|---|
+| `direction` | VARCHAR(64) | NULL | deployment notes, future map view |
+| `overlap_group` | VARCHAR(128) | NULL | Phase 10 Correlation Engine |
+| `supports_live` | BOOLEAN | True | health monitor, scheduler |
+| `supports_historical` | BOOLEAN | False | Phase 4 VSL feasibility gate |
+| `supports_ptz` | BOOLEAN | False | Phase 5 NVR integration |
+| `retention_days` | INTEGER | NULL | Phase 4 historical search eligibility |
+| `trust_level` | VARCHAR(32) | 'medium' | Phase 11 investigation reports |
+
+### BaseVideoSource capability properties (with correct defaults per subclass)
+- `supports_live` → True (all sources)
+- `supports_historical` → False (base); **True in VideoFileSource** (files support seek)
+- `supports_ptz` → False (all VSL Phase 1-3 sources)
+- `RTSPSource.supports_historical` = False (live streams; NVR override is Phase 5)
+- Registry can gate `get_historical_stream()` at source level before NotImplementedError
+
+### Deferred as agreed
+- `overlap_group` stored now, dedup logic in Phase 10 Correlation Engine
+- `trust_level` stored now, report rendering in Phase 11
+- `retention_days` stored now, feasibility gate query in Phase 4 VSL
+
 ## VSL Phase 3 prerequisites (next)
 - `AndroidCameraSource` — connects via IP Webcam or RTSP app (same RTSPSource interface)
 - Multi-source frame scheduler — round-robin or priority-based frame pull
