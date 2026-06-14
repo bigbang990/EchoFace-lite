@@ -19,6 +19,7 @@ from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
 from ecoface_lite.db.session import get_session_factory
 from ecoface_lite.services import processing_status_service
+from ecoface_lite.services.alert_session_engine import get_alert_session_engine
 
 if TYPE_CHECKING:
     import numpy as np
@@ -168,7 +169,7 @@ async def process_prerecorded_video(
 
     from sqlalchemy import select as _select
 
-    from ecoface_lite.db.models import DetectionEvent, Sighting, incident_persons
+    from ecoface_lite.db.models import DetectionEvent, Incident, incident_persons
 
     video_path = _safe_video_path(settings, video_relative_path)
     if not video_path.is_file():
@@ -178,14 +179,16 @@ async def process_prerecorded_video(
     if not gallery:
         raise HTTPException(status_code=400, detail="No enrolled persons in gallery")
 
-    source = VideoFileSource(video_path, settings.video_frame_skip)
+    alert_engine = get_alert_session_engine()
+    video_source = VideoFileSource(video_path, settings.video_frame_skip)
     alerts = 0
+    new_sessions = 0
     emitted_count = 0
     job_diagnostics = VideoJobDiagnostics(job_id=job_id)
     preview_writer = VideoPreviewWriter(settings, job_id)
-    last_event_frame_by_person: dict[int, int] = {}
+    last_sighting_frame_by_person: dict[int, int] = {}  # controls sighting write frequency
     started_at = perf_counter()
-    for packet in source.frames():
+    for packet in video_source.frames():
         emitted_count += 1
         job_diagnostics.frames_processed = emitted_count
         inference_frame = _resize_for_inference(packet.bgr, settings.video_inference_width)
@@ -213,19 +216,16 @@ async def process_prerecorded_video(
                 continue
             if not m.should_alert:
                 continue
-            previous = last_event_frame_by_person.get(m.person_id)
+            # Rate-limit sighting writes: one DB write per video_event_dedupe_frames frames.
+            # The alert session tracks last_seen_at in memory between writes.
+            previous = last_sighting_frame_by_person.get(m.person_id)
             if previous is not None and packet.index - previous < settings.video_event_dedupe_frames:
                 job_diagnostics.duplicate_suppressions += 1
                 metrics.increment("duplicate_alerts_suppressed")
-                logger.info(
-                    "Duplicate alert suppressed job_id=%s person_id=%s frame_index=%s previous_frame=%s",
-                    job_id,
-                    m.person_id,
-                    packet.index,
-                    previous,
-                )
                 continue
-            last_event_frame_by_person[m.person_id] = packet.index
+            last_sighting_frame_by_person[m.person_id] = packet.index
+
+            # Save face crop snapshot
             name = f"{uuid.uuid4().hex}.jpg"
             snap_path = settings.resolved_snapshots_dir() / name
             _ih, _iw = inference_frame.shape[:2]
@@ -241,6 +241,8 @@ async def process_prerecorded_video(
             ]
             cv2.imwrite(str(snap_path), _face_crop)
             rel_snap = str(Path("data/snapshots") / name)
+
+            # Audit log: one DetectionEvent per written frame (source of truth for raw detections)
             det = DetectionEvent(
                 person_id=m.person_id,
                 confidence=m.confidence,
@@ -251,16 +253,32 @@ async def process_prerecorded_video(
                 snapshot_path=rel_snap,
             )
             session.add(det)
-            await session.flush()  # assign det.id before linking to incidents
+            await session.flush()  # assign det.id
+
+            # Only fire alerts for OPEN, non-paused incidents — never match against closed cases
             inc_rows = await session.execute(
-                _select(incident_persons.c.incident_id).where(
-                    incident_persons.c.person_id == m.person_id
-                )
+                _select(incident_persons.c.incident_id)
+                .join(Incident, Incident.id == incident_persons.c.incident_id)
+                .where(incident_persons.c.person_id == m.person_id)
+                .where(Incident.status == "open")
+                .where(Incident.is_paused == False)
             )
             for (inc_id,) in inc_rows.all():
-                session.add(Sighting(incident_id=inc_id, detection_id=det.id))
+                alert, _sighting = await alert_engine.record_match(
+                    session,
+                    incident_id=inc_id,
+                    person_id=m.person_id,
+                    camera_id=None,  # populated by VSL Phase 1 when source carries camera metadata
+                    confidence=m.confidence,
+                    detection_id=det.id,
+                    frame_index=m.frame_index,
+                    snapshot_path=rel_snap,
+                    source="live",
+                )
+                if alert is not None and alert.sighting_count == 1:
+                    new_sessions += 1
             alerts += 1
-            job_diagnostics.alerts_created = alerts
+            job_diagnostics.alerts_created = new_sessions
             metrics.increment("detection_events_created")
         if job_id:
             await _persist_progress_if_needed(

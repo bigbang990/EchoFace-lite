@@ -149,6 +149,27 @@ class IncidentOut(BaseModel):
     person_count: int = 0
     alert_count: int = 0
     pending_alert_count: int = 0
+    # Closure fields — null on open incidents
+    closing_reason: str | None = None
+    closing_summary: str | None = None
+    closed_by: str | None = None
+    closed_at: datetime | None = None
+    evidence_paths: list[str] = []
+
+    @field_validator("evidence_paths", mode="before")
+    @classmethod
+    def _decode_evidence(cls, v: object) -> list[str]:
+        if v is None or v == "":
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                parsed = _json.loads(v)
+                return parsed if isinstance(parsed, list) else []
+            except Exception:
+                return []
+        return []
 
 
 class IncidentCreate(BaseModel):
@@ -163,6 +184,12 @@ class IncidentStatusUpdate(BaseModel):
 
 class IncidentPauseUpdate(BaseModel):
     is_paused: bool
+
+
+class IncidentCloseRequest(BaseModel):
+    reason: str = Field(pattern="^(person_found_safe|person_found_deceased|case_withdrawn|duplicate_case|other)$")
+    summary: str = Field(min_length=1, max_length=4000)
+    closed_by: str | None = Field(default=None, max_length=128)
 
 
 class SightingOut(BaseModel):
@@ -199,3 +226,46 @@ class IncidentPersonOut(BaseModel):
     incident_id: int
     person_id: int
     person_name: str
+
+
+class AlertOut(BaseModel):
+    """Operator-facing alert session — one per continuous presence.
+
+    level follows Phase 11 promotion ladder: sighting → candidate → verified → critical.
+    source is "live" or "historical" (VSL Phase 4).
+    zone_id is populated by VSL Phase 2 for cross-camera clustering (Phase 10).
+    sightings list is only populated when fetching a single alert (detail view).
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    incident_id: int
+    person_id: int
+    camera_id: int | None
+    zone_id: str | None
+    status: str
+    level: str
+    source: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    sighting_count: int
+    operator_notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    # enriched fields (populated by endpoint)
+    person_name: str | None = None
+    camera_label: str | None = None
+    incident_status: str | None = None
+    sightings: list[SightingOut] = []
+
+
+class AlertStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(open|closed|confirmed|rejected)$")
+
+
+class AlertLevelUpdate(BaseModel):
+    level: str = Field(pattern="^(sighting|candidate|verified|critical)$")
+
+
+class AlertNoteCreate(BaseModel):
+    note: str = Field(min_length=1, max_length=4000)

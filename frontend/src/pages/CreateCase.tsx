@@ -31,6 +31,18 @@ interface PhotoWarning {
   reasons: string[]
 }
 
+interface EnrollmentConflict {
+  conflict: true
+  person_id: number
+  person_name: string
+  incident_id: number
+  incident_ref: string
+  incident_title: string
+  incident_status: string
+  incident_opened_at: string
+  similarity: number
+}
+
 const PROC_STEPS: ProcStep[] = [
   { label: 'Analyzing reference photos',   status: 'idle', detail: '' },
   { label: 'Creating face embeddings',      status: 'idle', detail: '' },
@@ -61,6 +73,8 @@ export default function CreateCase() {
 
   const [procSteps, setProcSteps] = useState<ProcStep[]>(PROC_STEPS.map((s) => ({ ...s })))
   const [photoWarning, setPhotoWarning] = useState<PhotoWarning | null>(null)
+  const [enrollConflict, setEnrollConflict] = useState<EnrollmentConflict | null>(null)
+  const [conflictConfirmText, setConflictConfirmText] = useState('')
   // Refs survive async continuations without stale-closure issues
   const personIdRef = useRef<string>('')
   const incidentIdRef = useRef<string>('')
@@ -101,10 +115,12 @@ export default function CreateCase() {
   }
 
   // REAL step 1: enroll person with first photo
-  const runProcessing = async () => {
+  const runProcessing = async (force = false) => {
     personIdRef.current = ''
     incidentIdRef.current = ''
     setPhotoWarning(null)
+    setEnrollConflict(null)
+    setConflictConfirmText('')
     setProcSteps(PROC_STEPS.map((s) => ({ ...s })))
 
     // Step 0: first photo → create person + embedding
@@ -116,11 +132,20 @@ export default function CreateCase() {
       `Age: ${form.age || 'unknown'}, Gender: ${form.gender}. ${form.description}`
     )
     if (form.photos.length > 0) pForm.append('image', form.photos[0])
+    if (force) pForm.append('force_create', 'true')
 
     let personId: string
     try {
       const pRes = await fetch(`${incUrl}/persons`, { method: 'POST', body: pForm })
       if (!pRes.ok) {
+        if (pRes.status === 409) {
+          const errData = await pRes.json().catch(() => null)
+          if (errData?.detail?.conflict) {
+            setEnrollConflict(errData.detail as EnrollmentConflict)
+            updateStep(0, 'fail', 'Identity conflict — person may already be in an active case')
+            return
+          }
+        }
         const errText = await pRes.text().catch(() => pRes.statusText)
         updateStep(0, 'fail', `Enrollment failed: ${errText}`)
         return
@@ -460,6 +485,77 @@ export default function CreateCase() {
                   </div>
                 ))}
               </div>
+
+              {/* Active Case Conflict */}
+              {enrollConflict && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-5 bg-red-500/8 border border-red-500/30 rounded-lg p-4"
+                >
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle size={15} className="text-red-400 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold text-red-300 mb-1">
+                        Active Case Conflict
+                      </div>
+                      <p className="text-[11px] text-gray-300 mb-0.5">
+                        <span className="text-white font-medium">{enrollConflict.person_name}</span>
+                        {' '}is already enrolled in{' '}
+                        <span className="text-white font-medium">{enrollConflict.incident_ref}</span>
+                        {' '}with a {Math.round(enrollConflict.similarity * 100)}% identity match.
+                      </p>
+                      <p className="text-[10px] text-gray-500 mb-3">
+                        {enrollConflict.incident_title} · {enrollConflict.incident_status.toUpperCase()} · opened{' '}
+                        {new Date(enrollConflict.incident_opened_at).toLocaleDateString('en-GB', {
+                          day: '2-digit', month: 'short', year: 'numeric',
+                        })}
+                      </p>
+
+                      <div className="flex gap-2 mb-4">
+                        <button
+                          onClick={() => navigate(`/cases/${enrollConflict.incident_id}`)}
+                          className="px-3 py-1.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 rounded text-[11px] font-medium hover:bg-cyan-500/20 transition-colors"
+                        >
+                          View Case
+                        </button>
+                        <button
+                          onClick={() => navigate(`/cases/${enrollConflict.incident_id}`)}
+                          className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-gray-300 rounded text-[11px] font-medium hover:bg-gray-700 transition-colors"
+                        >
+                          Add Photos to Existing
+                        </button>
+                      </div>
+
+                      <div className="border-t border-red-500/20 pt-3">
+                        <p className="text-[10px] text-gray-600 mb-2">
+                          To create a separate case anyway, type{' '}
+                          <span className="text-gray-400 font-mono">CREATE DUPLICATE</span> below:
+                        </p>
+                        <div className="flex gap-2">
+                          <input
+                            value={conflictConfirmText}
+                            onChange={e => setConflictConfirmText(e.target.value)}
+                            placeholder="CREATE DUPLICATE"
+                            className="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-[11px] font-mono text-gray-200 outline-none focus:border-red-500/50 placeholder-gray-700"
+                          />
+                          <button
+                            disabled={conflictConfirmText !== 'CREATE DUPLICATE'}
+                            onClick={() => {
+                              setEnrollConflict(null)
+                              setConflictConfirmText('')
+                              void runProcessing(true)
+                            }}
+                            className="px-3 py-1.5 bg-red-900/30 border border-red-700/40 text-red-400 rounded text-[11px] font-medium hover:bg-red-900/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            Create Anyway
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
 
               {/* Photo quality warning — agent confirmation required */}
               {photoWarning && (

@@ -500,6 +500,70 @@ export function useVideoJob(jobId: string | null) {
   return { progress, previewUrl, error }
 }
 
+// ── useAlert ──────────────────────────────────────────────────────────────────
+
+/** Minimal shape of GET /api/v1/alerts/:id response for Phase 8 dashboard use. */
+export interface AlertApiData {
+  id: number
+  incident_id: number
+  person_id: number
+  camera_id: number | null
+  status: string
+  level: string
+  source: string
+  first_seen_at: string
+  last_seen_at: string
+  sighting_count: number
+  operator_notes: string | null
+  created_at: string
+  updated_at: string
+  person_name: string | null
+  camera_label: string | null
+  incident_status: string | null
+  sightings: Array<{
+    id: number
+    confidence: number | null
+    frame_index: number | null
+    snapshot_path: string | null
+    status: string
+    source: string
+    created_at: string
+  }>
+}
+
+export function useAlert(alertId: string | undefined) {
+  const { accessMode, incUrl } = useAppStore()
+  const [alert, setAlert] = useState<AlertApiData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    if (!alertId) return
+    if (accessMode === 'MOCK') {
+      setLoading(false)
+      return
+    }
+    try {
+      const client = createApiClient(incUrl)
+      const data = await client.get<AlertApiData>(`/alerts/${alertId}`)
+      setAlert(data)
+      setError(null)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }, [alertId, accessMode, incUrl])
+
+  useEffect(() => {
+    setLoading(true)
+    setAlert(null)
+    load()
+  }, [load])
+
+  return { alert, loading, error, refetch: load }
+}
+
 // ── useHealthCheck ────────────────────────────────────────────────────────────
 
 export function useHealthCheck(url: string) {

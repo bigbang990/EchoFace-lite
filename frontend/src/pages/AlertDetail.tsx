@@ -1,4 +1,6 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
+
+const CONFIDENCE_FLOOR = 0.65  // mirrors ALERT_MIN_CONFIDENCE_FLOOR on the backend
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -6,7 +8,7 @@ import {
   XCircle, AlertTriangle, MapPin, User, Send, ChevronRight,
   ExternalLink, RefreshCw, Loader2,
 } from 'lucide-react'
-import { useIncidentDetail } from '../api/hooks'
+import { useIncidentDetail, useAlert } from '../api/hooks'
 import { useAppStore } from '../store/appStore'
 import ImageZoomModal from '../components/ImageZoomModal'
 import type { Sighting } from '../types'
@@ -110,11 +112,21 @@ export default function AlertDetail() {
   const navigate = useNavigate()
   const { accessMode, incUrl } = useAppStore()
   const { incident, persons, sightings, loading, error, refetch } = useIncidentDetail(incidentId)
+  const { alert: alertData, refetch: refetchAlert } = useAlert(sightingId)
   const backendBase = incUrl.replace(/\/api\/v1\/?$/, '')
 
   const [note, setNote] = useState('')
   const [notes, setNotes] = useState<string[]>([])
   const [localStatus, setLocalStatus] = useState<Sighting['status'] | null>(null)
+
+  // Seed notes from persisted operator_notes on first load
+  useEffect(() => {
+    if (!alertData?.operator_notes) return
+    const lines = alertData.operator_notes
+      .split('\n')
+      .filter(l => l.trim().length > 0)
+    setNotes(lines)
+  }, [alertData?.operator_notes])
   const [saving, setSaving] = useState(false)
   const [zoomImages, setZoomImages] = useState<Array<{ src: string; alt: string }> | null>(null)
   const [zoomIdx, setZoomIdx] = useState(0)
@@ -149,6 +161,7 @@ export default function AlertDetail() {
   }, [personRecord, backendBase])
 
   const effectiveStatus = localStatus ?? sighting?.status ?? 'PENDING'
+  const caseClosed = incident?.status === 'CLOSED' || alertData?.incident_status === 'closed'
   const badge = statusBadge(effectiveStatus)
   const snapUrl = sighting?.snapshot_path ? buildUrl(sighting.snapshot_path, backendBase) : null
   const pct = sighting ? Math.round(sighting.confidence * 100) : 0
@@ -185,10 +198,22 @@ export default function AlertDetail() {
     setSaving(false)
   }
 
-  const addNote = () => {
-    if (!note.trim()) return
-    setNotes(prev => [...prev, note.trim()])
+  const addNote = async () => {
+    if (!note.trim() || !sightingId) return
+    const text = note.trim()
     setNote('')
+    if (accessMode !== 'MOCK') {
+      await fetch(`${incUrl}/alerts/${sightingId}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': '1' },
+        body: JSON.stringify({ note: text }),
+      }).catch(console.error)
+      await refetchAlert()
+    } else {
+      // MOCK: optimistic local append with fake timestamp
+      const stamp = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+      setNotes(prev => [...prev, `[${stamp}] ${text}`])
+    }
   }
 
   const openZoom = (images: Array<{ src: string; alt: string }>, idx: number) => {
@@ -257,7 +282,13 @@ export default function AlertDetail() {
 
         <div className="flex-1" />
 
-        {effectiveStatus === 'PENDING' && (
+        {caseClosed && (
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-gray-500 border border-gray-700 px-2 py-1 rounded flex-shrink-0">
+            CASE CLOSED — READ ONLY
+          </div>
+        )}
+
+        {!caseClosed && effectiveStatus === 'PENDING' && (
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={doConfirm}
@@ -480,24 +511,30 @@ export default function AlertDetail() {
                 </div>
               )}
 
-              <div className="flex gap-2">
-                <input
-                  value={note}
-                  onChange={e => setNote(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && addNote()}
-                  placeholder="Add forensic note…"
-                  className="flex-1 bg-gray-900 border border-gray-700 focus:border-cyan-600/50 rounded px-3 py-2 text-xs text-gray-300 outline-none placeholder-gray-700"
-                />
-                <button
-                  onClick={addNote}
-                  disabled={!note.trim()}
-                  className="px-3 py-2 bg-gray-800 border border-gray-700 text-gray-400 rounded text-xs hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-30 disabled:pointer-events-none flex-shrink-0"
-                >
-                  <Send size={12} />
-                </button>
-              </div>
+              {caseClosed ? (
+                <div className="text-[10px] font-mono text-gray-600 py-2">
+                  Case closed — notes locked
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    value={note}
+                    onChange={e => setNote(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addNote()}
+                    placeholder="Add forensic note…"
+                    className="flex-1 bg-gray-900 border border-gray-700 focus:border-cyan-600/50 rounded px-3 py-2 text-xs text-gray-300 outline-none placeholder-gray-700"
+                  />
+                  <button
+                    onClick={addNote}
+                    disabled={!note.trim()}
+                    className="px-3 py-2 bg-gray-800 border border-gray-700 text-gray-400 rounded text-xs hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-30 disabled:pointer-events-none flex-shrink-0"
+                  >
+                    <Send size={12} />
+                  </button>
+                </div>
+              )}
               <div className="text-[9px] font-mono text-gray-700 mt-1.5">
-                Notes are session-local and not persisted to the database.
+                Notes are appended with a UTC timestamp and saved to the case record.
               </div>
             </div>
           </div>
@@ -510,12 +547,28 @@ export default function AlertDetail() {
             <span className="text-gray-700">{personHistory.length}</span>
           </div>
 
-          {/* Summary counts */}
+          {/* Summary counts — sourced from GET /alerts/:id when available */}
           <div className="grid grid-cols-3 gap-1 mb-4">
             {[
-              { label: 'TOTAL', value: personHistory.length, cls: 'text-gray-400' },
-              { label: 'CONF', value: personHistory.filter(s => s.status === 'CONFIRMED').length, cls: 'text-emerald-400' },
-              { label: 'REJ', value: personHistory.filter(s => s.status === 'REJECTED').length, cls: 'text-red-400' },
+              {
+                label: 'TOTAL',
+                value: alertData?.sighting_count ?? personHistory.length,
+                cls: 'text-gray-400',
+              },
+              {
+                label: 'VALID',
+                value: alertData
+                  ? alertData.sightings.filter(s => (s.confidence ?? 0) >= CONFIDENCE_FLOOR).length
+                  : personHistory.filter(s => s.status === 'CONFIRMED').length,
+                cls: 'text-emerald-400',
+              },
+              {
+                label: 'LOW',
+                value: alertData
+                  ? alertData.sightings.filter(s => (s.confidence ?? 0) < CONFIDENCE_FLOOR).length
+                  : personHistory.filter(s => s.status === 'REJECTED').length,
+                cls: 'text-amber-400',
+              },
             ].map(({ label, value, cls }) => (
               <div key={label} className="bg-gray-900 border border-gray-800 rounded p-2 text-center">
                 <div className={`text-sm font-mono font-bold ${cls}`}>{value}</div>

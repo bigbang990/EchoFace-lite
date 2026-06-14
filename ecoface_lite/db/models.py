@@ -132,9 +132,16 @@ class Incident(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
     operator_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     is_paused: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Closure fields — populated atomically by POST /incidents/{id}/close
+    closing_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    closing_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closed_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    evidence_paths: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of uploaded file paths
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     sightings: Mapped[list["Sighting"]] = relationship(back_populates="incident", cascade="all, delete-orphan")
+    alerts: Mapped[list["Alert"]] = relationship(back_populates="incident", cascade="all, delete-orphan")
     persons: Mapped[list["Person"]] = relationship(
         "Person",
         secondary=incident_persons,
@@ -148,9 +155,46 @@ class Sighting(Base):
     incident_id: Mapped[int] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False)
     detection_id: Mapped[int | None] = mapped_column(ForeignKey("detection_events.id", ondelete="SET NULL"), nullable=True)
     camera_id: Mapped[int | None] = mapped_column(ForeignKey("cameras.id", ondelete="SET NULL"), nullable=True)
+    # Phase 8: alert session fields
+    alert_id: Mapped[int | None] = mapped_column(ForeignKey("alerts.id", ondelete="SET NULL"), nullable=True, index=True)
+    person_id: Mapped[int | None] = mapped_column(ForeignKey("persons.id", ondelete="SET NULL"), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    frame_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    snapshot_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, server_default="live", default="live")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending", default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     incident: Mapped[Incident] = relationship(back_populates="sightings")
     camera: Mapped[Camera | None] = relationship(back_populates="sightings")
     detection: Mapped["DetectionEvent | None"] = relationship()
+    alert: Mapped["Alert | None"] = relationship(back_populates="sightings")
+    person: Mapped["Person | None"] = relationship()
+
+
+class Alert(Base):
+    """One Alert per continuous presence session (incident × person × camera).
+
+    Phase 10 will cluster across cameras using zone_id.
+    Phase 11 will promote level: sighting → candidate → verified → critical.
+    VSL Phase 4 sets source="historical" for footage-search alerts.
+    """
+    __tablename__ = "alerts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    incident_id: Mapped[int] = mapped_column(ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False, index=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey("persons.id", ondelete="CASCADE"), nullable=False, index=True)
+    camera_id: Mapped[int | None] = mapped_column(ForeignKey("cameras.id", ondelete="SET NULL"), nullable=True)
+    zone_id: Mapped[str | None] = mapped_column(String(128), nullable=True)  # Phase 10 cross-camera clustering
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
+    level: Mapped[str] = mapped_column(String(32), nullable=False, default="sighting")  # Phase 11 promotion
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="live")  # VSL Phase 4
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sighting_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    operator_notes: Mapped[str | None] = mapped_column(Text, nullable=True)  # append-only timestamped lines
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    incident: Mapped["Incident"] = relationship(back_populates="alerts")
+    person: Mapped["Person"] = relationship()
+    camera: Mapped["Camera | None"] = relationship()
+    sightings: Mapped[list["Sighting"]] = relationship(back_populates="alert")

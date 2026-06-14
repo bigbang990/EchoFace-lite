@@ -383,6 +383,21 @@ class Settings(BaseSettings):
     video_event_dedupe_frames: int = Field(default=30, ge=0, alias="VIDEO_EVENT_DEDUPE_FRAMES")
     video_worker_queue_size: int = Field(default=8, ge=1, alias="VIDEO_WORKER_QUEUE_SIZE")
     live_event_dedupe_seconds: int = Field(default=10, ge=0, alias="LIVE_EVENT_DEDUPE_SECONDS")
+
+    # ── Phase 8: Alert Session Engine ────────────────────────────────────────
+    # Gap threshold: silence longer than this closes the current session → new Alert on next match.
+    alert_session_gap_seconds: int = Field(default=60, ge=1, alias="ALERT_SESSION_GAP_SECONDS")
+    # On restart, rebuild in-memory registry from Alerts still open within this window.
+    # Must be >= alert_session_gap_seconds / 60 or sessions within their gap window
+    # will not be rebuilt after a restart and will re-open as new Alerts on the next match.
+    alert_session_rebuild_minutes: int = Field(default=10, ge=1, alias="ALERT_SESSION_REBUILD_MINUTES")
+    # Minimum confidence to open or extend an alert session.
+    # Matches below this floor write a sighting row for audit but produce no Alert.
+    # Sits above validator_cutoff (noise) but below strong-match threshold.
+    alert_min_confidence_floor: float = Field(default=0.65, ge=0.0, le=1.0, alias="ALERT_MIN_CONFIDENCE_FLOOR")
+    # Cosine similarity threshold for flagging a new enrollment as matching an existing person
+    # in an open incident. Prevents accidental duplicate case creation.
+    enrollment_conflict_threshold: float = Field(default=0.65, ge=0.0, le=1.0, alias="ENROLLMENT_CONFLICT_THRESHOLD")
     max_image_mb: int = Field(default=10, ge=1, alias="MAX_IMAGE_MB")
 
     @field_validator(

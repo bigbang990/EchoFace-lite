@@ -1,7 +1,193 @@
-# Checkpoint — 2026-06-14 — Phase A session 7: hardware_backend_type fix + ngrok fix
+# Checkpoint — 2026-06-14 — Phase 8.7 complete: Enrollment Conflict Detection
 
 ## Phase
-Frontend v1.8 — hardware_backend_type display fixed; ngrok connectivity fixed
+Phase 8.7 — Enrollment Conflict Detection (complete)
+
+## Changes this session (Phase 8.6 — Case Lifecycle Integrity)
+
+### Fix 1 — Pipeline gallery gate (video_service.py)
+- `inc_rows` query at the per-frame match loop now JOINs `Incident` and filters
+  `.where(Incident.status == "open").where(Incident.is_paused == False)`
+- Previously the gallery load was gated but the per-incident alert dispatch was not —
+  a person linked to both an open and a closed incident would fire `record_match()`
+  for the closed incident. This is the root cause of "Alerts Firing on Closed Incidents".
+
+### Fix 2 — Confidence floor verification (no code change)
+- `FrameMatch.confidence` is the ArcFace recognizer score; detector confidence is
+  separate in `FaceDebugTrace.detector_confidence`. The floor is comparing the right value.
+- Alert #9 at 48% was created before Phase 8.5 was deployed (pre-fix artifact).
+
+### Fix 3 — Case closure modal + DB (backend + frontend)
+**DB (`ecoface_lite/db/models.py`):**
+- 5 new columns on `Incident`: `closing_reason VARCHAR(64)`, `closing_summary TEXT`,
+  `closed_by VARCHAR(128)`, `closed_at DATETIME`, `evidence_paths TEXT` (JSON list)
+
+**Migrations (`ecoface_lite/db/session.py`):**
+- 5 `ALTER TABLE incidents ADD COLUMN` patches
+
+**Schemas (`ecoface_lite/api/schemas.py`):**
+- `IncidentCloseRequest`: `reason` (enum pattern), `summary` (required), `closed_by` (optional)
+- `IncidentOut`: new closure fields + `evidence_paths: list[str]` with JSON `@field_validator`
+- `AlertOut`: `incident_status: str | None` enriched field
+
+**Alert engine (`ecoface_lite/services/alert_session_engine.py`):**
+- `evict_incident(incident_id)` — removes all sessions for a closing incident from
+  the in-memory registry without requiring a DB call
+
+**Incidents router (`ecoface_lite/api/routers/incidents.py`):**
+- `POST /incidents/{id}/close` — requires reason + summary; atomically:
+  sets status="closed", writes closure metadata, bulk-closes open alerts via SQL UPDATE,
+  evicts sessions from the alert engine registry
+- `POST /incidents/{id}/evidence` — multipart file upload; saves to
+  `data/evidence/{incident_id}/`, appends paths to `evidence_paths` JSON column
+- `_incident_out()` passes all 5 closure fields through
+
+**Frontend (`frontend/src/components/CaseCloseModal.tsx`) — NEW:**
+- Modal with: reason dropdown (required), summary textarea (required, 4000 chars),
+  closed_by text (optional), evidence file picker (optional, multi-file)
+- On submit: uploads evidence files first (if any), then POST /incidents/{id}/close
+- MOCK mode: simulates 600ms delay then calls onClosed()
+
+**Frontend (`frontend/src/pages/CaseWorkspace.tsx`):**
+- "Resolve & Close" button now opens `CaseCloseModal` instead of calling `patchStatus` directly
+- `handleCaseClosed()`: closes modal, sets local status, appends timeline entry, refetches
+
+### Fix 4 — Read-only enforcement on closed cases (backend + frontend)
+**Backend (`ecoface_lite/api/routers/alerts.py`):**
+- `append_alert_note`: loads `Alert.incident` via `selectinload`; returns 409 if
+  `alert.incident.status == "closed"` — "Case is closed — notes cannot be appended"
+- `update_alert_status`: same guard — "Case is closed — alert status cannot be changed"
+- `get_alert`: loads `Alert.incident` and passes `incident_status` to `_alert_out`
+- `_alert_out`: accepts and passes through `incident_status` parameter
+
+**Frontend (`frontend/src/api/hooks.ts`):**
+- `AlertApiData`: added `incident_status: string | null`
+
+**Frontend (`frontend/src/pages/AlertDetail.tsx`):**
+- `caseClosed = incident?.status === 'CLOSED' || alertData?.incident_status === 'closed'`
+- CONFIRM MATCH / REJECT buttons hidden when `caseClosed`
+- "CASE CLOSED — READ ONLY" chip shown in header instead
+- Note input and submit button replaced with "Case closed — notes locked" text
+
+## Changes this session (Phase 8.7 — Enrollment Conflict Detection)
+
+### Fix 1 — Pre-enrollment identity check (backend)
+- `ecoface_lite/core/config.py` — `enrollment_conflict_threshold: float = 0.65` (env: `ENROLLMENT_CONFLICT_THRESHOLD`)
+- `ecoface_lite/services/person_service.py`:
+  - `EnrollmentConflictError` dataclass exception: fields `person_id`, `person_name`, `incident_id`,
+    `incident_ref`, `incident_title`, `incident_status`, `incident_opened_at`, `similarity`
+  - `_check_identity_conflict(session, new_embedding, threshold)`: JOINs FaceEmbedding → Person →
+    incident_persons → Incident; filters open non-paused incidents; computes ArcFace cosine sim
+    (dot product of L2-normalized vectors); raises `EnrollmentConflictError` if `best_sim >= threshold`
+  - `create_person_from_image()`: added `skip_conflict_check: bool = False`; conflict check fires
+    after embedding generation unless `skip_conflict_check=True`
+- `ecoface_lite/api/routers/persons.py`:
+  - `create_person` endpoint: added `force_create: bool = Form(default=False)` parameter
+  - Passes `skip_conflict_check=force_create` to `create_person_from_image()`
+  - Catches `EnrollmentConflictError` → HTTP 409 with structured dict detail:
+    `conflict`, `person_id`, `person_name`, `incident_id`, `incident_ref`, `incident_title`,
+    `incident_status`, `incident_opened_at` (ISO string), `similarity` (4 dp)
+
+### Fix 2 — Gallery eviction verification (no code change)
+- Finding: no persistent in-memory face embedding gallery exists.
+  `load_gallery()` and `load_named_gallery()` in `video_service.py` both query the DB fresh on
+  every video job / live-test call. The OPEN-incident filter was already present in the gallery
+  loader; there is nothing to evict.
+- The alert session engine IS in-memory and IS correctly evicted by `evict_incident()` (Phase 8.6)
+  before the HTTP response returns. Ordering: DB commit → engine evict → HTTP 200.
+
+### Fix 3 — Active Case Conflict UX in enrollment flow (frontend)
+- `frontend/src/pages/CreateCase.tsx`:
+  - `EnrollmentConflict` interface (mirrors 409 detail dict)
+  - States: `enrollConflict: EnrollmentConflict | null`, `conflictConfirmText: string`
+  - `runProcessing(force = false)`: clears conflict on fresh run; appends `force_create=true` form
+    field when `force=true`; on HTTP 409 parses `errData.detail` and sets `enrollConflict`
+  - "Active Case Conflict" card (replaces generic photo warning): shows matched person name +
+    incident ref + similarity % + incident title + status + opened date
+  - Three CTA options:
+    - "View Case" → `navigate('/cases/{incident_id}')`
+    - "Add Photos to Existing" → `navigate('/cases/{incident_id}')`
+    - "Create Anyway" section with typed confirmation (`conflictConfirmText === "CREATE DUPLICATE"`)
+      that enables a button calling `runProcessing(true)`
+
+## Changes this session (Phase 8.5 cleanup sprint)
+
+### Fix 2 — Reference photo validation gate
+- `ecoface_lite/ai_engine/pipeline.py` — `count_enrollment_faces()` added; does not alter state
+- `ecoface_lite/services/person_service.py` — `_validate_enrollment_image()` helper;
+  called before `enroll_reference_embedding` in both `create_person_from_image()` and
+  `add_photos_to_person()`; 0 faces → 400 "No face detected"; >1 face → 400 "Multiple faces detected"
+
+### Fix 1 — Confidence floor
+- `ecoface_lite/core/config.py` — `alert_min_confidence_floor: float = 0.65` (ALERT_MIN_CONFIDENCE_FLOOR)
+- `ecoface_lite/services/alert_session_engine.py` — below-floor: write Sighting with alert_id=None, return (None, sighting)
+
+### Fix 3 — Operator notes persistence
+- `ecoface_lite/db/models.py` — `operator_notes TEXT` column on Alert
+- `ecoface_lite/db/session.py` — schema patch: `ALTER TABLE alerts ADD COLUMN operator_notes TEXT`
+- `ecoface_lite/api/schemas.py` — `AlertNoteCreate`, `AlertOut.operator_notes` added
+- `ecoface_lite/api/routers/alerts.py` — `POST /alerts/{id}/notes` append-only with UTC timestamp
+  format: `[YYYY-MM-DD HH:MM:SS UTC] note text\n`
+
+### Fix 4 — Detection history wired to real sighting count (frontend only)
+- `frontend/src/api/hooks.ts` — `AlertApiData` interface + `useAlert()` hook
+- `frontend/src/pages/AlertDetail.tsx` — TOTAL/VALID/LOW counts from `alertData`;
+  VALID = sightings with confidence ≥ 0.65, LOW = confidence < 0.65;
+  `addNote()` async → POST /api/v1/alerts/{id}/notes, refetches after success;
+  notes seeded from `alertData.operator_notes` on load
+
+### TypeScript build fix
+- `frontend/src/api/client.ts:12` — typed `extraHeaders` as `Record<string, string>` to
+  eliminate the `{ 'ngrok-skip-browser-warning'?: undefined }` union that broke `HeadersInit`
+
+## Changes this session (Phase 8 implementation)
+
+### New file: `ecoface_lite/services/alert_session_engine.py`
+- `AlertSessionEngine` class with `asyncio.Lock`-guarded in-memory registry
+- Registry key: `(incident_id, person_id, camera_id)` — one session per presence per camera
+- `record_match()` — opens new Alert on first match or after gap/zone-change, appends Sighting every call
+- `rebuild_from_db()` — restores open sessions from DB on restart (lookback window configurable)
+- `close_all()` — graceful shutdown hook
+- `get_alert_session_engine()` — process-lifetime singleton
+
+### New file: `ecoface_lite/api/routers/alerts.py`
+- `GET /api/v1/incidents/{id}/alerts` — list alerts with optional status/level/source filters
+- `GET /api/v1/alerts/{id}` — single alert with full sighting list
+- `PATCH /api/v1/alerts/{id}/status` — operator status update
+- `PATCH /api/v1/alerts/{id}/level` — operator level promotion (Phase 11 ladder)
+
+### DB models — `ecoface_lite/db/models.py`
+- `Alert` model added: incident_id, person_id, camera_id, zone_id (Phase 10),
+  status, level (Phase 11), source (VSL Phase 4), first_seen_at, last_seen_at,
+  sighting_count, timestamps
+- `Sighting` updated: added alert_id, person_id, confidence, frame_index,
+  snapshot_path, source columns
+- `Incident.alerts` relationship added
+
+### DB migration — `ecoface_lite/db/session.py`
+- `CREATE TABLE IF NOT EXISTS alerts` with all Phase 8 columns
+- `ALTER TABLE sightings ADD COLUMN` for all 6 new Sighting fields
+- Indexes on alerts.incident_id, alerts.person_id, sightings.alert_id
+
+### Config — `ecoface_lite/core/config.py`
+- `alert_session_gap_seconds: int = 60` (ALERT_SESSION_GAP_SECONDS)
+- `alert_session_rebuild_minutes: int = 10` (ALERT_SESSION_REBUILD_MINUTES)
+
+### `ecoface_lite/services/video_service.py`
+- `get_alert_session_engine` imported and wired into `process_prerecorded_video`
+- Per-frame loop now calls `engine.record_match()` per incident per match
+- DetectionEvent still created as audit trail; Sighting created by engine with alert_id link
+- Frame-dedupe logic renamed to `last_sighting_frame_by_person` — controls write frequency,
+  not alert creation (alert session handles presence continuity)
+- `alerts` counter now tracks `new_sessions` (sighting_count == 1)
+
+### `ecoface_lite/api/main.py`
+- `alerts` router imported and included at `/api/v1`
+- `rebuild_from_db()` called in lifespan after `init_db()` — registry warm on startup
+
+### `ecoface_lite/api/schemas.py`
+- `AlertOut` added with all Phase 8 fields + future-scoped zone_id, level, source
+- `AlertStatusUpdate`, `AlertLevelUpdate` added
 
 ## Changes this session (session 7)
 

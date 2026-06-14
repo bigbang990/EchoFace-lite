@@ -25,6 +25,7 @@ async def create_person(
     display_name: str = Form(...),
     notes: str | None = Form(default=None),
     image: UploadFile = File(...),
+    force_create: bool = Form(default=False),
 ) -> PersonEnrollOut:
     settings = get_settings()
     raw = await image.read()
@@ -39,7 +40,20 @@ async def create_person(
             original_filename=image.filename or "upload.jpg",
             display_name=display_name,
             notes=notes,
+            skip_conflict_check=force_create,
         )
+    except person_service.EnrollmentConflictError as e:
+        raise HTTPException(status_code=409, detail={
+            "conflict": True,
+            "person_id": e.person_id,
+            "person_name": e.person_name,
+            "incident_id": e.incident_id,
+            "incident_ref": e.incident_ref,
+            "incident_title": e.incident_title,
+            "incident_status": e.incident_status,
+            "incident_opened_at": e.incident_opened_at.isoformat() if e.incident_opened_at else None,
+            "similarity": round(e.similarity, 4),
+        }) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return PersonEnrollOut(person=PersonOut.model_validate(person), deduplicated=deduplicated)

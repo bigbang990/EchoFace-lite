@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import Timeline from '../components/Timeline'
 import ImageZoomModal from '../components/ImageZoomModal'
+import CaseCloseModal from '../components/CaseCloseModal'
 import { useIncidentDetail } from '../api/hooks'
 import { useAppStore } from '../store/appStore'
 import type { IncidentStatus, TimelineEntry } from '../types'
@@ -92,6 +93,7 @@ export default function CaseWorkspace() {
   const [localStatus, setLocalStatus] = useState<IncidentStatus | null>(null)
   const [comment, setComment] = useState('')
   const [photosOpen, setPhotosOpen] = useState(false)
+  const [showCloseModal, setShowCloseModal] = useState(false)
   const [zoomState, setZoomState] = useState<{ images: Array<{ src: string; alt: string }>; startIndex: number } | null>(null)
 
   const backendBase = incUrl.replace(/\/api\/v1\/?$/, '')
@@ -244,9 +246,9 @@ export default function CaseWorkspace() {
     await refetch()
   }
 
-  const closeCase = () => {
+  const handleCaseClosed = () => {
+    setShowCloseModal(false)
     setLocalStatus('CLOSED')
-    void patchStatus('closed')
     setExtraEntries((prev) => {
       const next = [
         ...prev,
@@ -260,6 +262,7 @@ export default function CaseWorkspace() {
       persistNotes(next)
       return next
     })
+    void refetch()
   }
 
   if (loading) {
@@ -454,7 +457,7 @@ export default function CaseWorkspace() {
                   <ActionBtn icon={PauseCircle} label="Stop Tracking" onClick={pauseTracking} variant="warn" />
                 )}
                 {(currentStatus === 'OPEN' || currentStatus === 'TRACKING') && (
-                  <ActionBtn icon={CheckCircle2} label="Resolve & Close" onClick={closeCase} variant="success" />
+                  <ActionBtn icon={CheckCircle2} label="Resolve & Close" onClick={() => setShowCloseModal(true)} variant="success" />
                 )}
                 {(currentStatus === 'RESOLVED' || currentStatus === 'CLOSED') && (
                   <div className="text-center text-[11px] font-mono text-gray-600 py-3">Case is resolved</div>
@@ -485,6 +488,14 @@ export default function CaseWorkspace() {
         isOpen={!!zoomState}
         onClose={() => setZoomState(null)}
       />
+      {showCloseModal && incident && (
+        <CaseCloseModal
+          incidentId={Number(incident.id)}
+          incidentRef={incident.ref ?? `INC-${incident.id}`}
+          onCancel={() => setShowCloseModal(false)}
+          onClosed={handleCaseClosed}
+        />
+      )}
     </div>
   )
 }

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,9 +17,39 @@ from ecoface_lite.core.logging import get_logger
 from ecoface_lite.db.models import FaceEmbedding, Person
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from ecoface_lite.ai_engine.pipeline import RecognitionPipeline
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class EnrollmentConflictError(Exception):
+    """Raised when a new enrollment closely matches a person already in an open incident."""
+    person_id: int
+    person_name: str
+    incident_id: int
+    incident_ref: str
+    incident_title: str
+    incident_status: str
+    incident_opened_at: datetime
+    similarity: float
+
+
+def _validate_enrollment_image(pipeline: "RecognitionPipeline", image: "np.ndarray") -> None:
+    """Raise ValueError with a specific message if the image is unsuitable for enrollment.
+
+    Checks are ordered cheapest-first:
+      0 faces  → reject (no signal)
+      >1 faces → reject (ambiguous identity — operator must crop to one face)
+    Quality gate happens inside enroll_reference_embedding after this passes.
+    """
+    n = pipeline.count_enrollment_faces(image)
+    if n == 0:
+        raise ValueError("No face detected in reference photo")
+    if n > 1:
+        raise ValueError(f"Multiple faces detected ({n}) — crop to one face per photo")
 
 
 def sha256_hex(file_bytes: bytes) -> str:
@@ -40,6 +72,60 @@ async def _find_person_by_ingest_hash(session: AsyncSession, digest: str) -> Per
     return r2.scalar_one_or_none()
 
 
+async def _check_identity_conflict(
+    session: AsyncSession,
+    new_embedding: "np.ndarray",
+    threshold: float,
+) -> None:
+    """Raise EnrollmentConflictError if the embedding matches a person in an open incident.
+
+    ArcFace embeddings are L2-normalised so cosine similarity == dot product.
+    Only checks persons currently linked to at least one open, non-paused incident.
+    """
+    import numpy as np
+
+    from ecoface_lite.db.models import Incident, incident_persons
+
+    rows = (await session.execute(
+        select(
+            FaceEmbedding.person_id,
+            FaceEmbedding.embedding,
+            Person.display_name,
+            Incident.id.label("incident_id"),
+            Incident.title.label("incident_title"),
+            Incident.status.label("incident_status"),
+            Incident.created_at.label("incident_opened_at"),
+        )
+        .join(Person, Person.id == FaceEmbedding.person_id)
+        .join(incident_persons, incident_persons.c.person_id == Person.id)
+        .join(Incident, Incident.id == incident_persons.c.incident_id)
+        .where(Incident.status == "open")
+        .where(Incident.is_paused == False)
+    )).all()
+
+    best_sim = 0.0
+    best_row = None
+    for row in rows:
+        vec = np.frombuffer(row.embedding, dtype=np.float32)
+        sim = float(np.dot(new_embedding, vec))
+        if sim > best_sim:
+            best_sim = sim
+            best_row = row
+
+    if best_sim >= threshold and best_row is not None:
+        inc_id = int(best_row.incident_id)
+        raise EnrollmentConflictError(
+            person_id=int(best_row.person_id),
+            person_name=str(best_row.display_name),
+            incident_id=inc_id,
+            incident_ref=f"INC-{inc_id:03d}",
+            incident_title=str(best_row.incident_title),
+            incident_status=str(best_row.incident_status),
+            incident_opened_at=best_row.incident_opened_at,
+            similarity=best_sim,
+        )
+
+
 async def list_persons(session: AsyncSession) -> list[Person]:
     result = await session.execute(select(Person).order_by(Person.id.desc()))
     return list(result.scalars().all())
@@ -54,6 +140,7 @@ async def create_person_from_image(
     original_filename: str,
     display_name: str,
     notes: str | None,
+    skip_conflict_check: bool = False,
 ) -> tuple[Person, bool]:
     """Create a person + embedding, or return an existing person when bytes match a prior upload.
 
@@ -78,9 +165,17 @@ async def create_person_from_image(
     buf = np.frombuffer(file_bytes, dtype=np.uint8)
     image = cv2.imdecode(buf, cv2.IMREAD_COLOR)
     if image is None:
-        raise ValueError("Could not decode image bytes")
+        raise ValueError("Invalid or corrupted image file")
 
-    embedding = pipeline.enroll_reference_embedding(image)
+    _validate_enrollment_image(pipeline, image)
+    try:
+        embedding = pipeline.enroll_reference_embedding(image)
+    except ValueError:
+        raise  # quality rejection — already has a specific message
+
+    if not skip_conflict_check:
+        await _check_identity_conflict(session, embedding, settings.enrollment_conflict_threshold)
+
     rel_upload = str(Path("data/uploads") / stored_name)
 
     person = Person(
@@ -157,10 +252,11 @@ async def add_photos_to_person(
         image = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         if image is None:
             rejected += 1
-            reasons.append(f"{filename}: could not decode image")
+            reasons.append(f"{filename}: invalid or corrupted image file")
             continue
 
         try:
+            _validate_enrollment_image(pipeline, image)
             embedding = pipeline.enroll_reference_embedding(image)
         except ValueError as exc:
             rejected += 1

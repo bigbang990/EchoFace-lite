@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from ecoface_lite.api.deps import DbSession
 from ecoface_lite.api.schemas import (
+    IncidentCloseRequest,
     IncidentCreate,
     IncidentOut,
     IncidentPersonOut,
@@ -16,7 +17,7 @@ from ecoface_lite.api.schemas import (
     SightingOut,
     SightingStatusUpdate,
 )
-from ecoface_lite.db.models import DetectionEvent, Incident, Person, Sighting, incident_persons
+from ecoface_lite.db.models import Alert, DetectionEvent, Incident, Person, Sighting, incident_persons
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
@@ -40,6 +41,11 @@ def _incident_out(inc: Incident, person_count: int = 0, alert_count: int = 0, pe
         person_count=person_count,
         alert_count=alert_count,
         pending_alert_count=pending_alert_count,
+        closing_reason=inc.closing_reason,
+        closing_summary=inc.closing_summary,
+        closed_by=inc.closed_by,
+        closed_at=inc.closed_at,
+        evidence_paths=inc.evidence_paths,
     )
 
 
@@ -292,3 +298,108 @@ async def list_incident_persons(incident_id: int, db: DbSession) -> list[PersonO
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
     return [PersonOut.model_validate(p) for p in incident.persons]
+
+
+@router.post("/{incident_id}/close", response_model=IncidentOut)
+async def close_incident(
+    incident_id: int,
+    body: IncidentCloseRequest,
+    db: DbSession,
+) -> IncidentOut:
+    """Close a case. Requires a reason and a closing summary.
+
+    Side effects (atomic):
+    - incident.status → "closed"
+    - All open alerts for this incident are set to status "closed"
+    - In-memory alert engine sessions for this incident are evicted
+    - Closure metadata (reason, summary, closed_by, closed_at) persisted
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import update
+
+    from ecoface_lite.services.alert_session_engine import get_alert_session_engine
+
+    result = await db.execute(select(Incident).where(Incident.id == incident_id))
+    incident = result.scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    if incident.status == "closed":
+        raise HTTPException(status_code=409, detail="Incident is already closed")
+
+    now = datetime.now(tz=timezone.utc)
+    incident.status = "closed"
+    incident.is_paused = False
+    incident.closing_reason = body.reason
+    incident.closing_summary = body.summary
+    incident.closed_by = body.closed_by
+    incident.closed_at = now
+    incident.updated_at = now
+
+    # Close all open alert sessions for this incident
+    await db.execute(
+        update(Alert)
+        .where(Alert.incident_id == incident_id, Alert.status == "open")
+        .values(status="closed", updated_at=now)
+    )
+
+    await db.commit()
+
+    # Evict from in-memory registry so no new sightings attach to these sessions
+    await get_alert_session_engine().evict_incident(incident_id)
+
+    pc = await _count_persons(db, [incident_id])
+    sc = await _count_sightings(db, [incident_id])
+    psc = await _count_pending_sightings(db, [incident_id])
+    return _incident_out(incident, pc.get(incident_id, 0), sc.get(incident_id, 0), psc.get(incident_id, 0))
+
+
+@router.post("/{incident_id}/evidence", response_model=IncidentOut)
+async def upload_incident_evidence(
+    incident_id: int,
+    db: DbSession,
+    files: list["UploadFile"],
+) -> IncidentOut:
+    """Upload evidence files to an incident (call before or during closure).
+
+    Files are saved to data/evidence/{incident_id}/ and paths appended to
+    incident.evidence_paths (JSON list). Can be called on open or closed incidents.
+    """
+    import json as _json
+    import uuid as _uuid
+    from pathlib import Path as _Path
+
+    from ecoface_lite.core.config import get_settings
+
+    result = await db.execute(select(Incident).where(Incident.id == incident_id))
+    incident = result.scalar_one_or_none()
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    settings = get_settings()
+    evidence_dir = settings.data_dir / "evidence" / str(incident_id)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    existing: list[str] = []
+    if incident.evidence_paths:
+        try:
+            existing = _json.loads(incident.evidence_paths)
+        except Exception:
+            existing = []
+
+    for f in files:
+        suffix = _Path(f.filename or "").suffix.lower() or ".bin"
+        name = f"{_uuid.uuid4().hex}{suffix}"
+        dest = evidence_dir / name
+        with dest.open("wb") as fh:
+            while chunk := await f.read(1024 * 1024):
+                fh.write(chunk)
+        existing.append(str(_Path("data/evidence") / str(incident_id) / name))
+
+    incident.evidence_paths = _json.dumps(existing)
+    await db.commit()
+
+    pc = await _count_persons(db, [incident_id])
+    sc = await _count_sightings(db, [incident_id])
+    psc = await _count_pending_sightings(db, [incident_id])
+    return _incident_out(incident, pc.get(incident_id, 0), sc.get(incident_id, 0), psc.get(incident_id, 0))
