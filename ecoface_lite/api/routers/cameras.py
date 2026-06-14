@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from ecoface_lite.api.deps import DbSession
 from ecoface_lite.api.schemas import CameraCreate, CameraHealthUpdate, CameraOut
-from ecoface_lite.db.models import Camera
+from ecoface_lite.db.models import Camera, Zone
 from ecoface_lite.input_sources.source_registry import get_source_registry
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
@@ -20,12 +20,17 @@ class _CameraActiveUpdate(BaseModel):
 
 @router.post("", response_model=CameraOut, status_code=201)
 async def create_camera(body: CameraCreate, db: DbSession) -> CameraOut:
+    if body.zone_id is not None:
+        result = await db.execute(select(Zone).where(Zone.id == body.zone_id))
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Zone not found")
     camera = Camera(
         label=body.label,
         stream_url=body.stream_url,
         location=body.location,
         source_type=body.source_type,
         zone=body.zone,
+        zone_id=body.zone_id,
         status="unknown",
     )
     db.add(camera)
@@ -116,6 +121,22 @@ async def test_connect(camera_id: int, db: DbSession) -> dict:
         "status": health.status.value,
         "error": health.error,
     }
+
+
+@router.get("/health-summary", response_model=dict)
+async def health_summary(db: DbSession) -> dict:
+    """Aggregate camera health counts for the dashboard panel (VSL Phase 2)."""
+    result = await db.execute(select(Camera))
+    cameras = result.scalars().all()
+    counts: dict[str, int] = {"total": 0, "online": 0, "offline": 0, "reconnecting": 0, "unknown": 0}
+    for cam in cameras:
+        counts["total"] += 1
+        status = cam.status or "unknown"
+        if status in counts:
+            counts[status] += 1
+        else:
+            counts["unknown"] += 1
+    return counts
 
 
 @router.delete("/{camera_id}", status_code=204)

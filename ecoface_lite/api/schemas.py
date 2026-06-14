@@ -117,6 +117,38 @@ class PersonPhotoAddRequest(BaseModel):
     person_id: int
 
 
+# ── VSL Phase 2: Location hierarchy ──────────────────────────────────────────
+
+class SiteCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class SiteOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    description: str | None
+    created_at: datetime
+
+
+class ZoneCreate(BaseModel):
+    site_id: int
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class ZoneOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    site_id: int
+    name: str
+    description: str | None
+    created_at: datetime
+
+
+# ── Cameras ──────────────────────────────────────────────────────────────────
+
 class CameraOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -130,6 +162,8 @@ class CameraOut(BaseModel):
     zone: str | None
     status: str
     last_seen: datetime | None
+    # VSL Phase 2
+    zone_id: int | None
     created_at: datetime
 
 
@@ -140,6 +174,8 @@ class CameraCreate(BaseModel):
     # VSL Phase 1
     source_type: str = Field(default="file", pattern=r"^(file|rtsp|android)$")
     zone: str | None = Field(default=None, max_length=255)
+    # VSL Phase 2
+    zone_id: int | None = Field(default=None)
 
 
 class CameraHealthUpdate(BaseModel):

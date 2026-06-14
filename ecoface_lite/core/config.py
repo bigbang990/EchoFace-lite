@@ -400,6 +400,13 @@ class Settings(BaseSettings):
     enrollment_conflict_threshold: float = Field(default=0.65, ge=0.0, le=1.0, alias="ENROLLMENT_CONFLICT_THRESHOLD")
     max_image_mb: int = Field(default=10, ge=1, alias="MAX_IMAGE_MB")
 
+    # ── VSL Phase 2: Health Monitor ───────────────────────────────────────────
+    # Background task polls every registered active camera on this interval.
+    # Kept low on Colab (60s) to surface camera drops quickly without
+    # adding per-frame overhead. Must NOT be called from the frame pipeline.
+    health_monitor_enabled: bool = Field(default=True, alias="HEALTH_MONITOR_ENABLED")
+    health_monitor_interval_seconds: int = Field(default=60, ge=5, alias="HEALTH_MONITOR_INTERVAL_SECONDS")
+
     @field_validator(
         "data_dir",
         "uploads_dir",

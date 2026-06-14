@@ -107,6 +107,12 @@ async def _sqlite_apply_schema_patches() -> None:
             "ALTER TABLE cameras ADD COLUMN zone VARCHAR(255)",
             "ALTER TABLE cameras ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'unknown'",
             "ALTER TABLE cameras ADD COLUMN last_seen DATETIME",
+            # VSL Phase 2: location hierarchy
+            "CREATE TABLE IF NOT EXISTS sites (id INTEGER PRIMARY KEY AUTOINCREMENT, name VARCHAR(255) NOT NULL UNIQUE, description TEXT, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))",
+            "CREATE TABLE IF NOT EXISTS zones (id INTEGER PRIMARY KEY AUTOINCREMENT, site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE, name VARCHAR(255) NOT NULL, description TEXT, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))",
+            "CREATE INDEX IF NOT EXISTS ix_zones_site_id ON zones(site_id)",
+            "ALTER TABLE cameras ADD COLUMN zone_id INTEGER REFERENCES zones(id) ON DELETE SET NULL",
+            "CREATE INDEX IF NOT EXISTS ix_cameras_zone_id ON cameras(zone_id)",
         ):
             try:
                 await conn.execute(text(stmt))

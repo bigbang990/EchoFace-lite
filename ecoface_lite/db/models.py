@@ -113,6 +113,39 @@ class ProcessingStatus(Base):
     )
 
 
+class Site(Base):
+    """Physical deployment site (e.g. 'Main Campus', 'Airport Terminal 1').
+
+    Sits at the top of the location hierarchy: Site → Zone → Camera.
+    Country/State/District are reserved for VSL Phase 5 NVR integration;
+    dissertation demo only requires Site and Zone.
+    """
+    __tablename__ = "sites"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    zones: Mapped[list["Zone"]] = relationship(back_populates="site", cascade="all, delete-orphan")
+
+
+class Zone(Base):
+    """Named area within a site (e.g. 'Main Entrance', 'Parking Lot A').
+
+    Zone-aware alert clustering is introduced in Phase 10; VSL Phase 2 only
+    establishes the schema so every camera carries zone context from day one.
+    """
+    __tablename__ = "zones"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    site: Mapped[Site] = relationship(back_populates="zones")
+    cameras: Mapped[list["Camera"]] = relationship(back_populates="zone")
+
+
 class Camera(Base):
     __tablename__ = "cameras"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -122,11 +155,14 @@ class Camera(Base):
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     # VSL Phase 1: source abstraction fields
     source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="file", server_default="file")
-    zone: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    zone: Mapped[str | None] = mapped_column(String(255), nullable=True)  # free-text fallback; use zone_id when possible
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown", server_default="unknown")
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # VSL Phase 2: normalized zone FK (nullable — existing cameras migrated gradually)
+    zone_id: Mapped[int | None] = mapped_column(ForeignKey("zones.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     sightings: Mapped[list["Sighting"]] = relationship(back_populates="camera")
+    zone_obj: Mapped["Zone | None"] = relationship("Zone", back_populates="cameras", foreign_keys=[zone_id])
 
 
 class Incident(Base):
