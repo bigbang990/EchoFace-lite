@@ -120,6 +120,11 @@ class Camera(Base):
     stream_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     location: Mapped[str | None] = mapped_column(String(512), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    # VSL Phase 1: source abstraction fields
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="file", server_default="file")
+    zone: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown", server_default="unknown")
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     sightings: Mapped[list["Sighting"]] = relationship(back_populates="camera")
 

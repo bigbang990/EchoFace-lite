@@ -102,6 +102,11 @@ async def _sqlite_apply_schema_patches() -> None:
             "ALTER TABLE incidents ADD COLUMN closed_by VARCHAR(128)",
             "ALTER TABLE incidents ADD COLUMN closed_at DATETIME",
             "ALTER TABLE incidents ADD COLUMN evidence_paths TEXT",
+            # VSL Phase 1: source abstraction fields on cameras
+            "ALTER TABLE cameras ADD COLUMN source_type VARCHAR(32) NOT NULL DEFAULT 'file'",
+            "ALTER TABLE cameras ADD COLUMN zone VARCHAR(255)",
+            "ALTER TABLE cameras ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'unknown'",
+            "ALTER TABLE cameras ADD COLUMN last_seen DATETIME",
         ):
             try:
                 await conn.execute(text(stmt))

@@ -125,6 +125,11 @@ class CameraOut(BaseModel):
     stream_url: str | None
     location: str | None
     is_active: bool
+    # VSL Phase 1
+    source_type: str
+    zone: str | None
+    status: str
+    last_seen: datetime | None
     created_at: datetime
 
 
@@ -132,6 +137,14 @@ class CameraCreate(BaseModel):
     label: str = Field(min_length=1, max_length=255)
     stream_url: str | None = Field(default=None, max_length=1024)
     location: str | None = Field(default=None, max_length=512)
+    # VSL Phase 1
+    source_type: str = Field(default="file", pattern=r"^(file|rtsp|android)$")
+    zone: str | None = Field(default=None, max_length=255)
+
+
+class CameraHealthUpdate(BaseModel):
+    status: str = Field(pattern=r"^(online|offline|reconnecting|unknown)$")
+    last_seen: datetime | None = None
 
 
 class IncidentOut(BaseModel):
