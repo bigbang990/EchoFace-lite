@@ -101,6 +101,28 @@ API surface added:
   GET  /api/v1/cameras/health-summary
 ```
 
+## Smoke test results (VSL Phase 2 verification)
+
+### Smoke test 1 — health monitor concurrent isolation (PASSED)
+- 50 frames processed concurrently with health monitor running
+- Max inter-frame gap: 0.11ms — zero event loop contention detected
+- Health monitor fired 20 times during pipeline run (correct asyncio scheduling)
+- cam-2 failure (connection refused) did NOT affect cam-1 or cam-3 polling
+- All 3 cameras polled per pass regardless of individual failures
+
+### Smoke test 2 — zone/site cascade + Camera SET NULL (PASSED)
+- Delete Zone -> Camera survives, zone_id=NULL (SET NULL confirmed)
+- Delete Site -> Zone cascade-deleted (ON DELETE CASCADE confirmed)
+- Delete Site -> Camera survives, zone_id=NULL (double SET NULL chain confirmed)
+- Camera re-assignable to new zone after SET NULL (no orphan state)
+
+### ORM bug caught by smoke test 2
+- `Zone.cameras` had `back_populates="zone"` — this pointed to the free-text
+  column `Camera.zone`, not to a relationship. SQLAlchemy raised InvalidRequestError
+  at mapper init time.
+- Fix: `back_populates="zone_obj"` to match `Camera.zone_obj` relationship name.
+- Committed in same branch before checkpoint.
+
 ## VSL Phase 3 prerequisites (next)
 - `AndroidCameraSource` — connects via IP Webcam or RTSP app (same RTSPSource interface)
 - Multi-source frame scheduler — round-robin or priority-based frame pull
