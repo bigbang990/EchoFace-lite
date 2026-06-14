@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ecoface_lite.core.logging import get_logger
+from ecoface_lite.input_sources.android_source import AndroidCameraSource
 from ecoface_lite.input_sources.base import BaseVideoSource, SourceType
 from ecoface_lite.input_sources.rtsp_source import RTSPSource
 from ecoface_lite.input_sources.video_file import VideoFileSource
@@ -33,16 +34,27 @@ class SourceRegistry:
         zone = getattr(camera, "zone", None)
         location = camera.location
 
-        if stype in (SourceType.RTSP.value, SourceType.ANDROID.value):
+        if stype == SourceType.ANDROID.value:
             if not camera.stream_url:
-                raise ValueError(f"Camera {camera.id} has source_type '{stype}' but no stream_url")
+                raise ValueError(f"Camera {camera.id} has source_type 'android' but no stream_url")
+            return AndroidCameraSource(
+                source_id=source_id,
+                name=name,
+                stream_url=camera.stream_url,
+                zone=zone,
+                location=location,
+            )
+
+        if stype == SourceType.RTSP.value:
+            if not camera.stream_url:
+                raise ValueError(f"Camera {camera.id} has source_type 'rtsp' but no stream_url")
             return RTSPSource(
                 source_id=source_id,
                 name=name,
                 stream_url=camera.stream_url,
                 zone=zone,
                 location=location,
-                source_type=SourceType(stype),
+                source_type=SourceType.RTSP,
             )
 
         # Default: file source (source_type == "file" or legacy rows with no type)

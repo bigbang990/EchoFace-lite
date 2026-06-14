@@ -400,6 +400,14 @@ class Settings(BaseSettings):
     enrollment_conflict_threshold: float = Field(default=0.65, ge=0.0, le=1.0, alias="ENROLLMENT_CONFLICT_THRESHOLD")
     max_image_mb: int = Field(default=10, ge=1, alias="MAX_IMAGE_MB")
 
+    # ── VSL Phase 3: Multi-source scheduler ──────────────────────────────────
+    # Feature flag: off by default. Flip to True only after 3 consecutive green
+    # GPU regression runs (per CLAUDE.md VSL Phase 3 hard stops). When False,
+    # the single-source pipeline continues using frames() iterator unchanged.
+    use_vsl_frame_path: bool = Field(default=False, alias="USE_VSL_FRAME_PATH")
+    # Rolling window size (frames) for per-source FPS measurement.
+    scheduler_fps_window: int = Field(default=30, ge=5, alias="SCHEDULER_FPS_WINDOW")
+
     # ── VSL Phase 2: Health Monitor ───────────────────────────────────────────
     # Background task polls every registered active camera on this interval.
     # Kept low on Colab (60s) to surface camera drops quickly without

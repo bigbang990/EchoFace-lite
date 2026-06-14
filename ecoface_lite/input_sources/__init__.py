@@ -1,3 +1,4 @@
+from ecoface_lite.input_sources.android_source import AndroidCameraSource
 from ecoface_lite.input_sources.base import (
     BaseVideoSource,
     CameraMetadata,
@@ -11,6 +12,8 @@ from ecoface_lite.input_sources.source_registry import SourceRegistry, get_sourc
 from ecoface_lite.input_sources.video_file import FramePacket, VideoFileSource, VideoSource
 
 __all__ = [
+    # VSL Phase 3
+    "AndroidCameraSource",
     # VSL Phase 1 abstractions
     "BaseVideoSource",
     "Frame",
