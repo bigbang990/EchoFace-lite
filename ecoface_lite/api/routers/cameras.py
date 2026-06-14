@@ -31,6 +31,13 @@ async def create_camera(body: CameraCreate, db: DbSession) -> CameraOut:
         source_type=body.source_type,
         zone=body.zone,
         zone_id=body.zone_id,
+        direction=body.direction,
+        overlap_group=body.overlap_group,
+        supports_live=body.supports_live,
+        supports_historical=body.supports_historical,
+        supports_ptz=body.supports_ptz,
+        retention_days=body.retention_days,
+        trust_level=body.trust_level,
         status="unknown",
     )
     db.add(camera)

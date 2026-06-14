@@ -128,6 +128,15 @@ class VideoFileSource(VideoSource, BaseVideoSource):
         )
 
     # ------------------------------------------------------------------ #
+    #  Capability properties                                              #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def supports_historical(self) -> bool:
+        """File sources support historical playback via get_historical_stream() (VSL Phase 4)."""
+        return True
+
+    # ------------------------------------------------------------------ #
     #  Legacy iterator (backward compat — existing pipeline callers)       #
     # ------------------------------------------------------------------ #
 

@@ -140,6 +140,14 @@ class RTSPSource(BaseVideoSource):
         )
 
     # ------------------------------------------------------------------ #
+    #  Capability properties (live streams don't support historical)      #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def supports_historical(self) -> bool:
+        return False  # RTSP/Android live streams have no on-source history (NVR does — VSL Phase 5)
+
+    # ------------------------------------------------------------------ #
     #  Reconnect helper (called by health monitor in VSL Phase 2)         #
     # ------------------------------------------------------------------ #
 

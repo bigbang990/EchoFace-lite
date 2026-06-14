@@ -113,6 +113,14 @@ async def _sqlite_apply_schema_patches() -> None:
             "CREATE INDEX IF NOT EXISTS ix_zones_site_id ON zones(site_id)",
             "ALTER TABLE cameras ADD COLUMN zone_id INTEGER REFERENCES zones(id) ON DELETE SET NULL",
             "CREATE INDEX IF NOT EXISTS ix_cameras_zone_id ON cameras(zone_id)",
+            # VSL Phase 2: camera topology + capability metadata
+            "ALTER TABLE cameras ADD COLUMN direction VARCHAR(64)",
+            "ALTER TABLE cameras ADD COLUMN overlap_group VARCHAR(128)",
+            "ALTER TABLE cameras ADD COLUMN supports_live BOOLEAN NOT NULL DEFAULT 1",
+            "ALTER TABLE cameras ADD COLUMN supports_historical BOOLEAN NOT NULL DEFAULT 0",
+            "ALTER TABLE cameras ADD COLUMN supports_ptz BOOLEAN NOT NULL DEFAULT 0",
+            "ALTER TABLE cameras ADD COLUMN retention_days INTEGER",
+            "ALTER TABLE cameras ADD COLUMN trust_level VARCHAR(32) NOT NULL DEFAULT 'medium'",
         ):
             try:
                 await conn.execute(text(stmt))

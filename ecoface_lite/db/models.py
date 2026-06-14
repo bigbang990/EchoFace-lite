@@ -160,6 +160,14 @@ class Camera(Base):
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # VSL Phase 2: normalized zone FK (nullable — existing cameras migrated gradually)
     zone_id: Mapped[int | None] = mapped_column(ForeignKey("zones.id", ondelete="SET NULL"), nullable=True, index=True)
+    # VSL Phase 2: camera topology + capability metadata
+    direction: Mapped[str | None] = mapped_column(String(64), nullable=True)        # "North", "South-East" etc.
+    overlap_group: Mapped[str | None] = mapped_column(String(128), nullable=True)   # Phase 10: dedup group key
+    supports_live: Mapped[bool] = mapped_column(default=True, nullable=False, server_default="1")
+    supports_historical: Mapped[bool] = mapped_column(default=False, nullable=False, server_default="0")
+    supports_ptz: Mapped[bool] = mapped_column(default=False, nullable=False, server_default="0")
+    retention_days: Mapped[int | None] = mapped_column(Integer, nullable=True)      # Phase 4: historical search gate
+    trust_level: Mapped[str] = mapped_column(String(32), nullable=False, default="medium", server_default="medium")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     sightings: Mapped[list["Sighting"]] = relationship(back_populates="camera")
     zone_obj: Mapped["Zone | None"] = relationship("Zone", back_populates="cameras", foreign_keys=[zone_id])

@@ -164,6 +164,13 @@ class CameraOut(BaseModel):
     last_seen: datetime | None
     # VSL Phase 2
     zone_id: int | None
+    direction: str | None
+    overlap_group: str | None
+    supports_live: bool
+    supports_historical: bool
+    supports_ptz: bool
+    retention_days: int | None
+    trust_level: str
     created_at: datetime
 
 
@@ -176,6 +183,13 @@ class CameraCreate(BaseModel):
     zone: str | None = Field(default=None, max_length=255)
     # VSL Phase 2
     zone_id: int | None = Field(default=None)
+    direction: str | None = Field(default=None, max_length=64)
+    overlap_group: str | None = Field(default=None, max_length=128)
+    supports_live: bool = Field(default=True)
+    supports_historical: bool = Field(default=False)
+    supports_ptz: bool = Field(default=False)
+    retention_days: int | None = Field(default=None, ge=1)
+    trust_level: str = Field(default="medium", pattern=r"^(high|medium|low)$")
 
 
 class CameraHealthUpdate(BaseModel):

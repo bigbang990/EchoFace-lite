@@ -83,6 +83,25 @@ class BaseVideoSource(ABC):
     def health_check(self) -> HealthStatus:
         """Return current health — called by the health monitor (VSL Phase 2)."""
 
+    # ------------------------------------------------------------------ #
+    #  Capability properties — override per source class.                 #
+    #  The registry gates get_historical_stream() calls using these       #
+    #  before they can reach the NotImplementedError stub.                #
+    # ------------------------------------------------------------------ #
+
+    @property
+    def supports_live(self) -> bool:
+        return True
+
+    @property
+    def supports_historical(self) -> bool:
+        """False until VSL Phase 4 implements get_historical_stream()."""
+        return False
+
+    @property
+    def supports_ptz(self) -> bool:
+        return False
+
     def get_historical_stream(
         self,
         start_time: datetime,
