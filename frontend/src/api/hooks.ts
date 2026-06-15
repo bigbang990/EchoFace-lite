@@ -463,7 +463,6 @@ export function useVideoJob(jobId: string | null) {
     const client = createApiClient(backendUrl)
     const backendBase = backendUrl.replace(/\/api\/v1\/?$/, '')
     let stopped = false
-    let previewUrlSet = false
 
     const poll = async () => {
       if (stopped) return
@@ -484,12 +483,11 @@ export function useVideoJob(jobId: string | null) {
         })
         setError(null)
 
-        // Set preview URL as soon as processing starts — path is deterministic.
-        // LivePreviewImage appends ?t={tick} every 2s for cache-busting while live.
-        if (!previewUrlSet && (s.status === 'processing' || s.status === 'completed')) {
-          previewUrlSet = true
-          setPreviewUrl(`${backendBase}/data/previews/${jobId}/latest.jpg`)
-        }
+        // Always set preview URL when job is active or done.
+        // Uses the no-cache endpoint so browsers receive fresh bytes each poll.
+          if (s.status === 'processing' || s.status === 'completed') {
+            setPreviewUrl(`${backendBase}/api/v1/videos/preview-image/${jobId}`)
+          }
 
         if (s.status === 'completed' || s.status === 'failed') {
           clearInterval(t)

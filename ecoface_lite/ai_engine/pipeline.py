@@ -561,17 +561,17 @@ class RecognitionPipeline:
 
         # ── Phase 3: Emergency Relaxation ────────────────────────────────────
         if emergency_recall_active or self._emergency_rebuild_active or self._governance_lockout_active:
-            # Drop thresholds to absolute minimum to recover recall
-            # Phase 3 linear reduction step: gradually relax
+            # Relax thresholds to recover recall — floor is raised to prevent
+            # non-face objects from passing at near-zero confidence (CPU safety).
             current_conf = self._adaptive_det_confidence
-            target_min_conf = 0.25
+            target_min_conf = 0.45
             if current_conf > target_min_conf:
                 target_conf = max(target_min_conf, current_conf - 0.05)
             else:
                 target_conf = target_min_conf
-                
+
             current_cutoff = self._adaptive_validator_cutoff
-            target_min_cutoff = 0.35
+            target_min_cutoff = 0.50
             if current_cutoff > target_min_cutoff:
                 target_cutoff = max(target_min_cutoff, current_cutoff - 0.05)
             else:

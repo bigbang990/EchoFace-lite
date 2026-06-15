@@ -296,7 +296,11 @@ export default function Operations() {
             )}
             <button
               onClick={() =>
-                window.open('/live-feed', 'echoface-live', 'width=1280,height=720,toolbar=0,menubar=0,location=0')
+                window.open(
+                  `/live-feed${activeJobId ? `?job=${activeJobId}` : ''}`,
+                  'echoface-live',
+                  'width=1280,height=720,toolbar=0,menubar=0,location=0',
+                )
               }
               className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-700 rounded text-xs font-mono text-gray-500 hover:text-cyan-400 hover:border-cyan-700/50 transition-colors"
             >
@@ -563,7 +567,7 @@ export default function Operations() {
               <div className="bg-black min-h-[200px] flex items-center justify-center">
                 {previewUrl ? (
                   /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(previewUrl) ? (
-                    <LivePreviewImage src={previewUrl} isLive={realRunning} />
+                    <LivePreviewImage src={previewUrl} isLive={realJobActive} />
                   ) : (
                     <video
                       key={previewUrl}

@@ -1,4 +1,4 @@
-# Checkpoint — 2026-06-15 — video_service.py stream URL support (VSL Phase 3)
+# Checkpoint — 2026-06-16 — preview no-cache fix + live feed implementation
 
 ## Phase
 VSL Phase 3 — multi-source stream URL routing
@@ -17,62 +17,73 @@ Test suite: 30 tests, 0 failed
 
 ## Changes this session
 
-### video_service.py — stream URL support
+### Bug 1 — Operations page preview never updates during processing
 
-**Problem:** `video_relative_path` was always treated as a filesystem path.
-Stream URLs (`http://`, `https://`, `rtsp://`) failed with "Video file not found" because
-`_safe_video_path()` would resolve the URL against `VIDEOS_DIR`, and `is_file()` returned False.
+**Root cause:** `app.mount("/data/previews", StaticFiles(...))` sends ETag + Last-Modified
+headers. The file on disk was being overwritten by VideoPreviewWriter every frame, but
+StaticFiles served a cached ETag — all 198 polling requests got 304 Not Modified.
 
-**Fix (video_service.py only):**
+**Fix 1a — processing.py:** New endpoint `GET /api/v1/videos/preview-image/{job_id}`.
+Uses `FileResponse` with `Cache-Control: no-store, no-cache, must-revalidate` headers.
+Reads the file fresh on every request, bypassing StaticFiles entirely for previews.
 
-**`_is_stream_url(path: str) -> bool`** — new module-level helper added after `_safe_video_path`.
-Returns True if path starts with `http://`, `https://`, or `rtsp://`.
+**Fix 1b — hooks.ts:** `useVideoJob` now sets `previewUrl` to
+`${backendBase}/api/v1/videos/preview-image/${jobId}` (no-cache endpoint)
+instead of the former `${backendBase}/data/previews/${jobId}/latest.jpg` (StaticFiles).
 
-**`process_prerecorded_video()`** — branched before `_safe_video_path()`:
-- Stream URL path: opens `cv2.VideoCapture(url)` directly, checks `isOpened()`,
-  raises HTTP 422 if connection fails. Frame iteration uses an inline generator
-  (`_make_frame_iter`) that yields `FramePacket` objects compatible with the
-  existing loop body. `_cap.release()` is in the generator's `finally` block.
-- File path: unchanged — `_safe_video_path()` + `is_file()` check as before.
-- `video_path` is set to the URL string for stream paths (used only for logging/return).
-- `VideoFileSource` is NOT used for stream URLs — `path.resolve()` in VideoFileSource
-  mangles URL strings on Windows (pathlib collapses `//` to `/`).
+The `LivePreviewImage` component already appends `?t={tick}` for cache-busting;
+the no-cache headers on the server make this redundant but harmless.
 
-**`run_async_video_job()`** — branched before `safe_video_path()`:
-- Stream URL path: skips `safe_video_path()`, `is_file()`, and `count_emitted_frames()`
-  (frame count unknown for live streams). Sets `total = 0`, proceeds directly to
-  `set_total_frames_and_running` with `max(0, 1) = 1`.
-- File path: unchanged — existing validation + `count_emitted_frames()` as before.
-- `process_prerecorded_video()` is called with `video_relative_path` in both paths;
-  it handles the stream/file distinction internally.
+### Bug 2 — Live Feed popup shows "No active feed" always
 
-**No changes to:** `processing.py`, `schemas.py`, any router, detection/recognition/alert
-pipeline, `_safe_video_path()`, `VideoFileSource`.
+**Root cause:** `LiveFeed.tsx` was a pure static placeholder — no hooks, no API calls,
+no way to know which job was active.
 
-**Import added:** `FramePacket` imported alongside `VideoFileSource` in
-`process_prerecorded_video()` local imports block.
+**Fix 2a — Operations.tsx:** `window.open` now passes `?job={activeJobId}` when a job
+is active: `/live-feed?job=<uuid>`. If no job is active, opens with no param (placeholder).
+
+**Fix 2b — LiveFeed.tsx:** Full implementation replacing the static placeholder:
+- Reads `?job=` from URL search params (`useSearchParams`)
+- Gets `backendUrl` from Zustand appStore (same localStorage as Operations window)
+- Polls `GET /api/v1/videos/processing-status/{jobId}` every 2 s for status/FPS/faces/alerts
+- Polls `GET /api/v1/videos/preview-image/{jobId}?t={tick}` every 2 s for the annotated frame
+- Shows spinner until first frame loads (`onLoad` callback gates visibility)
+- Footer status bar: live dot + status label + FPS + face count + alert count + % complete
+- Shows placeholder when no `?job=` param
+
+### Build
+`tsc && vite build` — 0 TypeScript errors. Pre-existing chunk-size warning only.
+
+---
+
+## Active threshold config (local .env / config.py defaults)
+
+| Field | Value |
+|---|---|
+| `MATCH_CONFIDENCE_THRESHOLD` | 0.68 |
+| `VALIDATOR_MIN_DETECTOR_CONFIDENCE` | 0.70 |
+| `ALERT_MIN_CONFIDENCE_FLOOR` | 0.72 |
+| `ENABLE_EMERGENCY_RECALL_MODE` | False |
+| `ENABLE_ADAPTIVE_LOAD_GOVERNANCE` | False |
+
+Emergency relaxation floor in pipeline.py: `target_min_conf=0.45`, `target_min_cutoff=0.50`.
 
 ---
 
 ## Previous session changes (still valid)
 
-### cameras.py — test-connect endpoint
-android/rtsp source types: URL format validation only, no cv2.VideoCapture
-(Colab cannot reach local-network IPs).
+### embedder.py — re-detection fallback with det_score guard
+Buffalo_l sometimes returns DetectedFace with embedding=None. Re-detect, but reject
+if best.det_score < 0.70 (non-face object guard).
 
-### AndroidCameraSource (ecoface_lite/input_sources/android_source.py)
-Standalone BaseVideoSource for MJPEG HTTP (IP Webcam app).
-See prior checkpoint for design details.
+### video_service.py — stream URL support
+Stream URLs (`http://`, `https://`, `rtsp://`) bypass `_safe_video_path()`.
 
-### Frontend
-- hooks.ts: `useCameras()` maps `c.label ?? c.name` to `name` field
-- Administration.tsx: Promise.allSettled for independent cameras + health fetches;
-  local CameraRow interface uses `label`; debug console.log on load
-- Operations.tsx: local URL validator for RTSP Test button (no API call);
-  camera/rtsp startTracking branches POST to `/videos/process/async`
-
-## TypeScript
-- tsc --noEmit: 0 errors (last verified previous session)
+### cameras.py / AndroidCameraSource
+RTSP test-connect, AndroidCameraSource for MJPEG HTTP (IP Webcam).
 
 ## Files changed this session
-ecoface_lite/services/video_service.py  (stream URL branching — 4-step fix)
+ecoface_lite/api/routers/processing.py   (preview-image no-cache endpoint)
+frontend/src/api/hooks.ts                (previewUrl → no-cache endpoint)
+frontend/src/pages/Operations.tsx        (window.open passes ?job=)
+frontend/src/pages/LiveFeed.tsx          (full implementation replacing placeholder)

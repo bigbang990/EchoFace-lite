@@ -80,6 +80,26 @@ async def get_processing_preview(job_id: str) -> dict[str, str | None]:
     return {"preview_path": relative, "preview_url": f"/{relative.replace(chr(92), '/')}"}
 
 
+@router.get("/preview-image/{job_id}")
+async def get_preview_image(job_id: str):
+    """Serve latest.jpg with no-cache headers so browsers always fetch fresh bytes."""
+    from fastapi.responses import FileResponse
+
+    settings = get_settings()
+    path = settings.resolved_previews_dir() / job_id.strip() / "latest.jpg"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Preview not ready")
+    return FileResponse(
+        str(path),
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
 @router.get("/processing-rejected-faces/{job_id}")
 async def get_processing_rejected_faces(job_id: str, limit: int = 30) -> dict[str, object]:
     settings = get_settings()

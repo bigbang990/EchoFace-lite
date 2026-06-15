@@ -54,7 +54,7 @@ class Settings(BaseSettings):
         alias="DETECTION_CONFIDENCE_THRESHOLD",
     )
     match_confidence_threshold: float = Field(
-        default=0.45,
+        default=0.68,
         alias="MATCH_CONFIDENCE_THRESHOLD",
     )
     preprocessing_enable_clahe: bool = Field(default=True, alias="PREPROCESSING_ENABLE_CLAHE")
@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     detector_overload_face_count: int = Field(default=12, ge=1, alias="DETECTOR_OVERLOAD_FACE_COUNT")
     
     # ── Adaptive Load Governance (Phase 3) ────────────────────────────────────
-    enable_adaptive_load_governance: bool = Field(default=True, alias="ENABLE_ADAPTIVE_LOAD_GOVERNANCE")
+    enable_adaptive_load_governance: bool = Field(default=False, alias="ENABLE_ADAPTIVE_LOAD_GOVERNANCE")
     governance_low_pressure_interval: int = Field(default=8, ge=1, alias="GOVERNANCE_LOW_PRESSURE_INTERVAL")
     governance_medium_pressure_interval: int = Field(default=12, ge=1, alias="GOVERNANCE_MEDIUM_PRESSURE_INTERVAL")
     governance_high_pressure_interval: int = Field(default=16, ge=1, alias="GOVERNANCE_HIGH_PRESSURE_INTERVAL")
@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     governance_min_survival_candidates: int = Field(default=5, ge=1, alias="GOVERNANCE_MIN_SURVIVAL_CANDIDATES")
     governance_candidate_grace_frames: int = Field(default=15, ge=1, alias="GOVERNANCE_CANDIDATE_GRACE_FRAMES")
     governance_candidate_immunity_frames: int = Field(default=20, ge=1, alias="GOVERNANCE_CANDIDATE_IMMUNITY_FRAMES")
-    enable_emergency_recall_mode: bool = Field(default=True, alias="ENABLE_EMERGENCY_RECALL_MODE")
+    enable_emergency_recall_mode: bool = Field(default=False, alias="ENABLE_EMERGENCY_RECALL_MODE")
 
     # ── Adaptive Recall & Degradation (Phase 4) ──────────────────────────────
     enable_adaptive_degradation: bool = Field(default=True, alias="ENABLE_ADAPTIVE_DEGRADATION")
@@ -279,7 +279,7 @@ class Settings(BaseSettings):
     validator_min_brightness: float = Field(default=35.0, ge=0, le=255, alias="VALIDATOR_MIN_BRIGHTNESS")
     validator_max_brightness: float = Field(default=230.0, ge=0, le=255, alias="VALIDATOR_MAX_BRIGHTNESS")
     validator_max_landmark_asymmetry: float = Field(default=0.55, ge=0, le=2, alias="VALIDATOR_MAX_LANDMARK_ASYMMETRY")
-    validator_min_detector_confidence: float = Field(default=0.45, ge=0, le=1, alias="VALIDATOR_MIN_DETECTOR_CONFIDENCE")
+    validator_min_detector_confidence: float = Field(default=0.70, ge=0, le=1, alias="VALIDATOR_MIN_DETECTOR_CONFIDENCE")
     validator_blur_weight: float = Field(default=0.30, ge=0, le=1, alias="VALIDATOR_BLUR_WEIGHT")
     validator_brightness_weight: float = Field(default=0.15, ge=0, le=1, alias="VALIDATOR_BRIGHTNESS_WEIGHT")
     validator_geometry_weight: float = Field(default=0.25, ge=0, le=1, alias="VALIDATOR_GEOMETRY_WEIGHT")
@@ -394,7 +394,7 @@ class Settings(BaseSettings):
     # Minimum confidence to open or extend an alert session.
     # Matches below this floor write a sighting row for audit but produce no Alert.
     # Sits above validator_cutoff (noise) but below strong-match threshold.
-    alert_min_confidence_floor: float = Field(default=0.65, ge=0.0, le=1.0, alias="ALERT_MIN_CONFIDENCE_FLOOR")
+    alert_min_confidence_floor: float = Field(default=0.72, ge=0.0, le=1.0, alias="ALERT_MIN_CONFIDENCE_FLOOR")
     # Cosine similarity threshold for flagging a new enrollment as matching an existing person
     # in an open incident. Prevents accidental duplicate case creation.
     enrollment_conflict_threshold: float = Field(default=0.65, ge=0.0, le=1.0, alias="ENROLLMENT_CONFLICT_THRESHOLD")

@@ -44,11 +44,21 @@ class InsightFaceEmbedder(FaceEmbedder):
         if face.embedding is not None:
             emb = face.embedding.astype(np.float32).ravel()
         else:
+            # buffalo_l occasionally returns a DetectedFace without a pre-computed
+            # embedding (recognition model didn't attach it at detection time).
+            # Re-run on the full frame and take the highest-score face, but guard
+            # against low-quality re-detections (non-face objects, degraded frames).
             self._ensure_app()
             faces = self._app.get(frame_bgr)
             if not faces:
                 raise ValueError("No faces returned by InsightFace for embedding")
             best = max(faces, key=lambda ff: float(getattr(ff, "det_score", 0.0)))
+            best_score = float(getattr(best, "det_score", 0.0))
+            if best.embedding is None or best_score < 0.70:
+                raise ValueError(
+                    f"Re-detection produced low-quality candidate "
+                    f"(det_score={best_score:.3f} < 0.70) — likely a non-face, skipping."
+                )
             emb = np.asarray(best.embedding, dtype=np.float32).ravel()
         norm = float(np.linalg.norm(emb))
         if norm > 0:
