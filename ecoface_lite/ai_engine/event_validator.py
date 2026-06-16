@@ -28,6 +28,9 @@ class EventValidator:
             return EventDecision(False, "track_too_young")
         if recognition.confirmations < self._settings.event_min_stable_frames:
             return EventDecision(False, "insufficient_stable_duration")
+        min_conf = getattr(self._settings, "alert_min_confidence_floor", 0.65)  # config.py default: 0.72
+        if (recognition.smoothed_confidence or 0.0) < min_conf:
+            return EventDecision(False, "below_confidence_floor")
         previous = self._last_event_frame_by_person.get(recognition.person_id)
         if previous is not None and frame_index - previous < self._settings.event_cooldown_frames:
             return EventDecision(False, "cooldown")
