@@ -1,4 +1,4 @@
-# Checkpoint — 2026-06-20 — video decode + job setup timing instrumentation
+# Checkpoint — 2026-06-20 — decode call count + resize timing instrumentation
 
 ## Phase
 VSL Phase 3 — multi-source stream URL routing
@@ -11,6 +11,26 @@ Test suite: 31/31 passed (re-verified this session after instrumentation).
 ---
 
 ## Changes this session
+
+### Instrumentation — decode call count + resize timing (this session)
+
+**Bottleneck audit context (measured data):**
+- video_decode_duration_ms = 21.7ms/call; ~358 emitted frames assumed 1:1 with reads → ~7.77s estimated
+- Remaining unaccounted gap: ~10s of 34.93s total
+- `_resize_for_inference()` confirmed OUTSIDE `total_frame_processing_duration` boundary → genuine gap contributor
+
+**New metrics added:**
+
+| Metric | Type | File:line | Notes |
+|---|---|---|---|
+| `video_decode_call_count` | single observe in `finally` block | `video_file.py:frames()` | Total `cap.read()` calls per job incl. skipped frames + EOF; reveals true decode call count when `video_frame_skip > 1` |
+| `resize_for_inference_duration_ms` | per-emitted-frame observe | `video_service.py:229` (before `process_frame()`) | OUTSIDE `total_frame_processing_duration` — not double-counted |
+
+**Key finding confirmed:** `_resize_for_inference()` at `video_service.py:229` is called BEFORE `pipeline.process_frame()` at line 230. `total_frame_processing_duration` timer wraps `_process_frame_staged()` INSIDE `process_frame()` at `pipeline.py:282-283`. Therefore resize is an unaccounted gap contributor.
+
+**`video_decode_call_count` design note:** Counter increments on every `cap.read()` (including skipped frames and EOF read). With `video_frame_skip=2` and 358 emitted frames, expected count = 717 (716 raw reads + 1 EOF). If count = 359, skip=1 was confirmed. Single `metrics.observe("video_decode_call_count", float(_decode_calls))` in `finally` block → `averages["video_decode_call_count"]` = exact count (1 sample).
+
+---
 
 ### Instrumentation — video decode + job setup timing
 

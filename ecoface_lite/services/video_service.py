@@ -226,7 +226,9 @@ async def process_prerecorded_video(
     for packet in _frame_iter:
         emitted_count += 1
         job_diagnostics.frames_processed = emitted_count
+        _resize_t0 = perf_counter()
         inference_frame = _resize_for_inference(packet.bgr, settings.video_inference_width)
+        metrics.observe("resize_for_inference_duration_ms", (perf_counter() - _resize_t0) * 1000.0)
         frame_matches = pipeline.process_frame(inference_frame, packet.index, gallery)
         _save_rejected_debug_crops(settings, job_id, inference_frame, frame_matches, packet.index, emitted_count)
         if preview_writer.should_write(packet.index):

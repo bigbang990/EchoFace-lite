@@ -212,11 +212,13 @@ class VideoFileSource(VideoSource, BaseVideoSource):
             raise FileNotFoundError(f"Cannot open video: {self._path}")
         idx = 0
         emitted = 0
+        _decode_calls = 0
         try:
             while True:
                 _decode_t0 = perf_counter()
                 ok, frame = cap.read()
                 metrics.observe("video_decode_duration_ms", (perf_counter() - _decode_t0) * 1000.0)
+                _decode_calls += 1
                 if not ok:
                     break
                 if idx % self._frame_skip == 0:
@@ -225,4 +227,5 @@ class VideoFileSource(VideoSource, BaseVideoSource):
                 idx += 1
         finally:
             cap.release()
+            metrics.observe("video_decode_call_count", float(_decode_calls))
             logger.info("Released video capture for %s", self._path)
