@@ -135,7 +135,9 @@ async def _persist_progress_if_needed(
         processed_frames=emitted_count,
         alerts_created=alerts,
     )
+    _commit_t0 = perf_counter()
     await session.commit()
+    metrics.observe("db_commit_duration_ms", (perf_counter() - _commit_t0) * 1000.0)
 
 
 def _resize_for_inference(frame_bgr: "np.ndarray", target_width: int) -> "np.ndarray":
