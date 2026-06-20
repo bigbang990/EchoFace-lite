@@ -9,12 +9,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Generator, Iterator
 
 import cv2
 import numpy as np
 
 from ecoface_lite.core.logging import get_logger
+from ecoface_lite.core.metrics import metrics
 from ecoface_lite.input_sources.base import (
     BaseVideoSource,
     CameraMetadata,
@@ -203,14 +205,18 @@ class VideoFileSource(VideoSource, BaseVideoSource):
     # ------------------------------------------------------------------ #
 
     def frames(self) -> Iterator[FramePacket]:
+        _open_t0 = perf_counter()
         cap = cv2.VideoCapture(str(self._path))
+        metrics.observe("video_open_duration_ms", (perf_counter() - _open_t0) * 1000.0)
         if not cap.isOpened():
             raise FileNotFoundError(f"Cannot open video: {self._path}")
         idx = 0
         emitted = 0
         try:
             while True:
+                _decode_t0 = perf_counter()
                 ok, frame = cap.read()
+                metrics.observe("video_decode_duration_ms", (perf_counter() - _decode_t0) * 1000.0)
                 if not ok:
                     break
                 if idx % self._frame_skip == 0:

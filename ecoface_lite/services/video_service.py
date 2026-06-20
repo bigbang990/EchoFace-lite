@@ -180,6 +180,7 @@ async def process_prerecorded_video(
 
     from ecoface_lite.db.models import DetectionEvent, Incident, incident_persons
 
+    _setup_t0 = perf_counter()
     if _is_stream_url(video_relative_path):
         _cap = cv2.VideoCapture(video_relative_path)
         if not _cap.isOpened():
@@ -221,6 +222,7 @@ async def process_prerecorded_video(
     preview_writer = VideoPreviewWriter(settings, job_id)
     last_sighting_frame_by_person: dict[int, int] = {}  # controls sighting write frequency
     started_at = perf_counter()
+    metrics.observe("job_setup_duration_ms", (started_at - _setup_t0) * 1000.0)
     for packet in _frame_iter:
         emitted_count += 1
         job_diagnostics.frames_processed = emitted_count

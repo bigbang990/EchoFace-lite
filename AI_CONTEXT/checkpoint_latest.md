@@ -1,4 +1,4 @@
-# Checkpoint — 2026-06-20 — FPS label fix + debug-crop I/O reduction
+# Checkpoint — 2026-06-20 — video decode + job setup timing instrumentation
 
 ## Phase
 VSL Phase 3 — multi-source stream URL routing
@@ -6,11 +6,47 @@ Branch: `vsl-phase3-multi-source`
 All prior VSL phases (1–5) intact and verified.
 
 ## Regression baseline metrics
-Test suite: 31/31 passed (re-verified this session after both fixes).
+Test suite: 31/31 passed (re-verified this session after instrumentation).
 
 ---
 
 ## Changes this session
+
+### Instrumentation — video decode + job setup timing
+
+**Bottleneck audit context (measured data, do not re-investigate):**
+- AI pipeline (`_process_frame_staged`): ~16.2s (43% of 37.3s job)
+- Preview writer (`preview_generation_time`): ~1.7s (5%) — cleared
+- Overlay render: ~0.15s — negligible
+- DB commits (`db_commit_duration_ms`): ~0.04s — negligible
+- Unaccounted gap: ~19.2s (51%) — suspected video decode and/or job setup
+
+**New metrics added (all auto-exposed via `/api/v1/observability/metrics` → `averages`):**
+
+| Metric | Type | Where |
+|---|---|---|
+| `video_open_duration_ms` | per-job single observe | `video_file.py:frames()` around `cv2.VideoCapture()` |
+| `video_decode_duration_ms` | per-frame observe (~888 samples/job incl. final failed read) | `video_file.py:frames()` around `cap.read()` |
+| `job_setup_duration_ms` | per-job single observe | `video_service.py:process_prerecorded_video()`, from local imports to `started_at` |
+
+**Files changed:**
+
+| File | Change |
+|---|---|
+| `ecoface_lite/input_sources/video_file.py` | Added `from time import perf_counter` + `from ecoface_lite.core.metrics import metrics`; wrap `cv2.VideoCapture()` and `cap.read()` in `frames()` |
+| `ecoface_lite/services/video_service.py` | `_setup_t0 = perf_counter()` before setup phase; `metrics.observe("job_setup_duration_ms", ...)` reuses `started_at` as end marker |
+
+**Pre-run hypothesis for 19.2s gap:**
+- `video_decode_duration_ms` is the primary suspect. 887 H264 reads × 5–20ms each = 4–18s on CPU; on Drive-mounted storage, the JPEG-compressed `frame_XXXXXX.jpg` persistence (preview writer) is cleared at 1.7s, so this is a pure decode cost.
+- `job_setup_duration_ms` covers gallery load (2 SQL queries + numpy blob deserialization) + `VideoPreviewWriter(mkdir)`. Expected < 500ms.
+- `video_open_duration_ms` expected < 100ms (container header parse).
+- Note: `count_emitted_frames()` in `run_async_video_job` also opens VideoCapture once (NOT timed — it's a pre-flight call separate from the `frames()` iterator). Its cap is opened, reads `CAP_PROP_FRAME_COUNT`, and releases immediately — should be < 50ms.
+
+**Key architectural finding (HARD STOP — do not fix this session):**
+- `get_recognition_pipeline()` at `bootstrap.py:230-235` IS correctly a process-wide singleton — model weights load once. NOT a per-job cost.
+- `load_gallery(session)` at `video_service.py:212` IS called per job inside `process_prerecorded_video`. Gallery is NOT cached between jobs. For small galleries: negligible. For large galleries: could grow.
+
+---
 
 ### FIX 1 — Correct misleading Avg FPS label
 
