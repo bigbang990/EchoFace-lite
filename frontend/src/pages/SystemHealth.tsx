@@ -183,6 +183,38 @@ export default function SystemHealth() {
         </div>
       </div>
 
+      <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-5">
+        <h2 className="text-[10px] font-mono text-gray-600 tracking-widest mb-4">CANDIDATE QUEUE HEALTH</h2>
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            {
+              label: 'MAX QUEUE SIZE SEEN',
+              value: m.max_queue_size_seen.toFixed(0),
+              detail: 'peak since session start',
+              warn: m.max_queue_size_seen >= 12,
+            },
+            {
+              label: 'AVG QUEUE SIZE',
+              value: m.avg_queue_size_seen.toFixed(2),
+              detail: 'mean over all congestion checks',
+              warn: m.avg_queue_size_seen >= 8,
+            },
+            {
+              label: 'QUEUE FULL DURATION',
+              value: `${(m.queue_full_duration_ms / 1000).toFixed(1)}s`,
+              detail: 'cumulative time at cap',
+              warn: m.queue_full_duration_ms > 0,
+            },
+          ].map((tile) => (
+            <div key={tile.label} className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+              <div className="text-[9px] font-mono text-gray-600 tracking-widest mb-2">{tile.label}</div>
+              <div className={`text-2xl font-mono font-bold ${tile.warn ? 'text-amber-400' : 'text-cyan-400'}`}>{tile.value}</div>
+              <div className="text-[10px] font-mono text-gray-700 mt-1">{tile.detail}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-[10px] font-mono text-gray-600 tracking-widest">PLATFORM CONFIG</h2>

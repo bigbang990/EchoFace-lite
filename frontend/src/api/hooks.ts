@@ -348,6 +348,7 @@ export function useSystemMetrics() {
       const backendTypeStr = String(eff.backend_type ?? '')
       const isGpu = backendTypeStr === 'COLAB_GPU' || backendTypeStr === 'REMOTE_GPU'
       const hwType = isGpu ? 1 : Number(avgs.hardware_backend_type ?? raw.hardware_backend_type ?? 0)
+      const ctrs = (raw.counters as Raw | undefined) ?? {}
       const m: SystemMetrics = {
         fps: Number(avgs.average_processing_fps ?? avgs.fps ?? raw.fps ?? raw.average_processing_fps ?? 0),
         detector_latency_ms: Number(
@@ -368,6 +369,9 @@ export function useSystemMetrics() {
         validator_rejection_rate: Number(rates.validator_rejection_rate ?? avgs.validator_rejection_rate ?? raw.validator_rejection_rate ?? 0),
         confirmation_rate: Number(rates.confirmation_rate ?? avgs.confirmation_rate ?? raw.confirmation_rate ?? 0),
         uptime_seconds: Number(raw.uptime_seconds ?? 0),
+        max_queue_size_seen: Number(avgs.max_queue_size_seen ?? 0),
+        avg_queue_size_seen: Number(avgs.avg_queue_size_seen ?? 0),
+        queue_full_duration_ms: Number(ctrs.queue_full_duration_ms ?? 0),
       }
       setData(m)
       setError(null)

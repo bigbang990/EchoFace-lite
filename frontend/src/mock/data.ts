@@ -362,6 +362,9 @@ export const mockSystemMetrics: SystemMetrics = {
   validator_rejection_rate: 0.08,
   confirmation_rate: 0.94,
   uptime_seconds: 86412,
+  max_queue_size_seen: 4,
+  avg_queue_size_seen: 1.3,
+  queue_full_duration_ms: 0,
 }
 
 export const mockFpsHistory: SparkPoint[] = Array.from({ length: 24 }, (_, i) => ({

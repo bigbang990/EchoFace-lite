@@ -1,89 +1,70 @@
-# Checkpoint — 2026-06-16 — preview no-cache fix + live feed implementation
+# Checkpoint — 2026-06-20 — candidate queue health metrics
 
 ## Phase
 VSL Phase 3 — multi-source stream URL routing
 Branch: `vsl-phase3-multi-source`
 All prior VSL phases (1–5) intact and verified.
 
-## Regression baseline metrics (30/30 pass — unchanged)
-identity_switch_rate: 0.000
-stable_matches: green
-confirmation_rate: green
-validator_rejection_rate: green
-bbox_jitter: green
-Test suite: 30 tests, 0 failed
+## Regression baseline metrics
+Test suite: 31/31 passed (carried forward from prior session — no new tests added this session; new metrics are additive observe/increment calls with no branching logic to test separately).
 
 ---
 
 ## Changes this session
 
-### Bug 1 — Operations page preview never updates during processing
+### Task — 3 new candidate queue health metrics
 
-**Root cause:** `app.mount("/data/previews", StaticFiles(...))` sends ETag + Last-Modified
-headers. The file on disk was being overwritten by VideoPreviewWriter every frame, but
-StaticFiles served a cached ETag — all 198 polling requests got 304 Not Modified.
+**What was added (read-only instrumentation, no logic changed):**
 
-**Fix 1a — processing.py:** New endpoint `GET /api/v1/videos/preview-image/{job_id}`.
-Uses `FileResponse` with `Cache-Control: no-store, no-cache, must-revalidate` headers.
-Reads the file fresh on every request, bypassing StaticFiles entirely for previews.
+| Metric | Type | Where read |
+|---|---|---|
+| `max_queue_size_seen` | `metrics.observe` → `averages` | `/observability/metrics`, `/debug/stream-metrics` |
+| `avg_queue_size_seen` | `metrics.observe` → `averages` | `/observability/metrics`, `/debug/stream-metrics` |
+| `queue_full_duration_ms` | `metrics.increment` → `counters` | `/observability/metrics`, `/debug/stream-metrics` |
 
-**Fix 1b — hooks.ts:** `useVideoJob` now sets `previewUrl` to
-`${backendBase}/api/v1/videos/preview-image/${jobId}` (no-cache endpoint)
-instead of the former `${backendBase}/data/previews/${jobId}/latest.jpg` (StaticFiles).
+**Definition:**
+- `max_queue_size_seen` — running peak of `candidate_queue_size` since session start, reset on `metrics.reset()`.
+- `avg_queue_size_seen` — running mean of `candidate_queue_size` across all `_check_congestion` calls (mirrors the averaging semantics already used for `candidate_queue_size`).
+- `queue_full_duration_ms` — cumulative milliseconds the queue has been at or above `governance_max_candidate_queue_size`. Uses entry-time tracking: increments by the inter-call delta each time the queue is still full on successive calls to `_check_congestion`.
 
-The `LivePreviewImage` component already appends `?t={tick}` for cache-busting;
-the no-cache headers on the server make this redundant but harmless.
+**Saturation threshold used:** `self._cfg.governance_max_candidate_queue_size` (config default 25, Colab SERVER_ENV sets 15).
 
-### Bug 2 — Live Feed popup shows "No active feed" always
+### Files changed
 
-**Root cause:** `LiveFeed.tsx` was a pure static placeholder — no hooks, no API calls,
-no way to know which job was active.
+| File | Change |
+|---|---|
+| `ecoface_lite/ai_engine/tracking/track_manager.py` | 2 new instance fields in `__init__`; 18 lines added to `_check_congestion` |
+| `ecoface_lite/api/routers/stream.py` | import `metrics`; 3 new keys in `GET /debug/stream-metrics` response |
+| `dashboard/app.py` | "Candidate Queue Health" panel (3 `st.metric` widgets) added to Observability tab |
+| `frontend/src/types/index.ts` | 3 new fields on `SystemMetrics` interface |
+| `frontend/src/mock/data.ts` | 3 new fields in `mockSystemMetrics` |
+| `frontend/src/api/hooks.ts` | normalize `ctrs.queue_full_duration_ms` + 2 `avgs` fields in `useSystemMetrics` |
+| `frontend/src/pages/SystemHealth.tsx` | "CANDIDATE QUEUE HEALTH" panel (3 tiles) inserted above PLATFORM CONFIG |
 
-**Fix 2a — Operations.tsx:** `window.open` now passes `?job={activeJobId}` when a job
-is active: `/live-feed?job=<uuid>`. If no job is active, opens with no param (placeholder).
-
-**Fix 2b — LiveFeed.tsx:** Full implementation replacing the static placeholder:
-- Reads `?job=` from URL search params (`useSearchParams`)
-- Gets `backendUrl` from Zustand appStore (same localStorage as Operations window)
-- Polls `GET /api/v1/videos/processing-status/{jobId}` every 2 s for status/FPS/faces/alerts
-- Polls `GET /api/v1/videos/preview-image/{jobId}?t={tick}` every 2 s for the annotated frame
-- Shows spinner until first frame loads (`onLoad` callback gates visibility)
-- Footer status bar: live dot + status label + FPS + face count + alert count + % complete
-- Shows placeholder when no `?job=` param
-
-### Build
-`tsc && vite build` — 0 TypeScript errors. Pre-existing chunk-size warning only.
+### Hard stops respected
+- `governance_max_candidate_queue_size` threshold: read-only reference, not modified
+- `RecognitionPipeline`, `ByteTrack`, `EventValidator`: untouched
+- `detection_optimizer.py`, `bootstrap.py`: untouched
+- `candidate_queue_drops` / `candidate_ingestion_rejections`: untouched
+- `load_shedding_active` trigger and naming: untouched
 
 ---
 
-## Active threshold config (local .env / config.py defaults)
+## Previous session — event_validator confidence gate (still valid)
+`ecoface_lite/ai_engine/event_validator.py` confidence floor gate (3 lines).
+`tests/test_event_validator.py` regression test.
+See prior checkpoint detail if needed — not modified this session.
 
+## Previous session — live MJPEG streaming (still valid)
+`ecoface_lite/services/live_camera_session.py`, `ecoface_lite/api/routers/stream.py`,
+stream router registered in `main.py`, `LiveFeed.tsx` minimal `<img>` replacement.
+
+## Active threshold config (.env / config.py defaults)
 | Field | Value |
 |---|---|
 | `MATCH_CONFIDENCE_THRESHOLD` | 0.68 |
 | `VALIDATOR_MIN_DETECTOR_CONFIDENCE` | 0.70 |
 | `ALERT_MIN_CONFIDENCE_FLOOR` | 0.72 |
+| `GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE` | 32 (default) / 15 (Colab SERVER_ENV) |
 | `ENABLE_EMERGENCY_RECALL_MODE` | False |
 | `ENABLE_ADAPTIVE_LOAD_GOVERNANCE` | False |
-
-Emergency relaxation floor in pipeline.py: `target_min_conf=0.45`, `target_min_cutoff=0.50`.
-
----
-
-## Previous session changes (still valid)
-
-### embedder.py — re-detection fallback with det_score guard
-Buffalo_l sometimes returns DetectedFace with embedding=None. Re-detect, but reject
-if best.det_score < 0.70 (non-face object guard).
-
-### video_service.py — stream URL support
-Stream URLs (`http://`, `https://`, `rtsp://`) bypass `_safe_video_path()`.
-
-### cameras.py / AndroidCameraSource
-RTSP test-connect, AndroidCameraSource for MJPEG HTTP (IP Webcam).
-
-## Files changed this session
-ecoface_lite/api/routers/processing.py   (preview-image no-cache endpoint)
-frontend/src/api/hooks.ts                (previewUrl → no-cache endpoint)
-frontend/src/pages/Operations.tsx        (window.open passes ?job=)
-frontend/src/pages/LiveFeed.tsx          (full implementation replacing placeholder)

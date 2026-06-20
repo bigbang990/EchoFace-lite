@@ -695,6 +695,24 @@ with observability_tab:
             b3.metric("Green boxes", counters.get("green_box_count", 0))
             b4.metric("Missed-face estimate", counters.get("detector_missed_face_estimate", 0))
 
+            st.subheader("Candidate Queue Health")
+            q1, q2, q3 = st.columns(3)
+            q1.metric(
+                "Max queue size seen",
+                f"{averages.get('max_queue_size_seen', 0):.0f}",
+                help="Running peak of candidate_queue_size since session start",
+            )
+            q2.metric(
+                "Avg queue size seen",
+                f"{averages.get('avg_queue_size_seen', 0):.2f}",
+                help="Running mean of candidate_queue_size over all congestion checks",
+            )
+            q3.metric(
+                "Queue full duration",
+                f"{counters.get('queue_full_duration_ms', 0) / 1000:.1f}s",
+                help="Cumulative seconds queue has been at or above GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE",
+            )
+
             stats_tab, diag_tab, fps_tab, confidence_tab, logs_tab = st.tabs(
                 [
                     "Processing Statistics",

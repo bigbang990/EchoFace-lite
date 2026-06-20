@@ -81,6 +81,9 @@ class FaceTrackManager:
         self._quality_engine = TrackQualityEngine(self._settings)
         self._current_pressure_band = 0
         self.lockout_mode = False
+        # Queue saturation instrumentation (feeds 3 new session metrics)
+        self._max_queue_size_seen: int = 0
+        self._queue_full_entry_time: float | None = None
 
     @property
     def active_track_count(self) -> int:
@@ -183,7 +186,26 @@ class FaceTrackManager:
         # 1. Candidate queue pressure
         pending_count = len(self._pending)
         metrics.observe("candidate_queue_size", pending_count)
-        
+
+        # max_queue_size_seen — running peak since session start
+        if pending_count > self._max_queue_size_seen:
+            self._max_queue_size_seen = pending_count
+        metrics.observe("max_queue_size_seen", float(self._max_queue_size_seen))
+
+        # avg_queue_size_seen — running mean via observe accumulator
+        metrics.observe("avg_queue_size_seen", float(pending_count))
+
+        # queue_full_duration_ms — cumulative ms queue has been at or above the cap
+        _now = time.monotonic()
+        if pending_count >= self._cfg.governance_max_candidate_queue_size:
+            if self._queue_full_entry_time is not None:
+                _delta_ms = int((_now - self._queue_full_entry_time) * 1000.0)
+                if _delta_ms > 0:
+                    metrics.increment("queue_full_duration_ms", _delta_ms)
+            self._queue_full_entry_time = _now
+        else:
+            self._queue_full_entry_time = None
+
         # 2. Track churn rate (approximate by removed tracks in buffer)
         churn_rate = len(self._removed_buffer)
         metrics.observe("track_churn_rate", churn_rate)

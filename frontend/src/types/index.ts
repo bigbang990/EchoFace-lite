@@ -99,6 +99,9 @@ export interface SystemMetrics {
   validator_rejection_rate: number
   confirmation_rate: number
   uptime_seconds: number
+  max_queue_size_seen: number
+  avg_queue_size_seen: number
+  queue_full_duration_ms: number
 }
 
 export interface SparkPoint {
