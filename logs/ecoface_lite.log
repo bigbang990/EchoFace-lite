@@ -58042,3 +58042,627 @@ WHERE cameras.is_active = 1
 2026-06-20 12:05:19 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
 2026-06-20 12:05:19 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
 2026-06-20 12:05:19 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
+2026-06-20 12:50:37 | INFO | ecoface_lite.db.session | Database engine created for URL scheme: sqlite+aiosqlite
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing <function connect.<locals>.connector at 0x00000181545E1BD0>
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation <function connect.<locals>.connector at 0x00000181545E1BD0> completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method create_function of sqlite3.Connection object at 0x00000181540F6F40>, 'regexp', 2, <function SQLiteDialect_pysqlite.on_connect.<locals>.regexp at 0x00000181545E1750>, deterministic=True)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method create_function of sqlite3.Connection object at 0x00000181540F6F40>, 'regexp', 2, <function SQLiteDialect_pysqlite.on_connect.<locals>.regexp at 0x00000181545E1750>, deterministic=True) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method create_function of sqlite3.Connection object at 0x00000181540F6F40>, 'floor', 1, <built-in function floor>, deterministic=True)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method create_function of sqlite3.Connection object at 0x00000181540F6F40>, 'floor', 1, <built-in function floor>, deterministic=True) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA read_uncommitted', [])
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA read_uncommitted', []) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA foreign_keys=ON', [])
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA foreign_keys=ON', []) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA journal_mode=WAL', [])
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA journal_mode=WAL', []) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA synchronous=NORMAL', [])
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA synchronous=NORMAL', []) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | BEGIN (implicit)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("incident_persons")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("incident_persons")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("incident_persons")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("persons")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("persons")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("persons")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("face_embeddings")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("face_embeddings")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("face_embeddings")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("detection_events")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("detection_events")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("detection_events")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("processing_status")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("processing_status")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("processing_status")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("sites")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("sites")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("sites")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("zones")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("zones")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("zones")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("cameras")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("cameras")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("cameras")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("incidents")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("incidents")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("incidents")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("sightings")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("sightings")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("sightings")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | PRAGMA main.table_info("alerts")
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [raw sql] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("alerts")', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, 'PRAGMA main.table_info("alerts")', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581240>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | COMMIT
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method commit of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method commit of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | BEGIN (implicit)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE persons ADD COLUMN source_image_hash VARCHAR(64)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00084s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'ALTER TABLE persons ADD COLUMN source_image_hash VARCHAR(64)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: source_image_hash
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE face_embeddings ADD COLUMN ingest_sha256 VARCHAR(64)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00127s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581640>, 'ALTER TABLE face_embeddings ADD COLUMN ingest_sha256 VARCHAR(64)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: ingest_sha256
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE processing_status ADD COLUMN alerts_created INTEGER NOT NULL DEFAULT 0
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00098s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545811C0>, 'ALTER TABLE processing_status ADD COLUMN alerts_created INTEGER NOT NULL DEFAULT 0', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: alerts_created
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE processing_status ADD COLUMN avg_fps FLOAT
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00165s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581740>, 'ALTER TABLE processing_status ADD COLUMN avg_fps FLOAT', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: avg_fps
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE processing_status ADD COLUMN avg_confidence FLOAT
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00087s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545817C0>, 'ALTER TABLE processing_status ADD COLUMN avg_confidence FLOAT', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: avg_confidence
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE processing_status ADD COLUMN total_faces_detected INTEGER NOT NULL DEFAULT 0
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00107s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581840>, 'ALTER TABLE processing_status ADD COLUMN total_faces_detected INTEGER NOT NULL DEFAULT 0', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: total_faces_detected
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE processing_status ADD COLUMN total_faces_rejected INTEGER NOT NULL DEFAULT 0
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00091s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545816C0>, 'ALTER TABLE processing_status ADD COLUMN total_faces_rejected INTEGER NOT NULL DEFAULT 0', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: total_faces_rejected
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE processing_status ADD COLUMN blur_rejections INTEGER NOT NULL DEFAULT 0
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00084s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581640>, 'ALTER TABLE processing_status ADD COLUMN blur_rejections INTEGER NOT NULL DEFAULT 0', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: blur_rejections
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE processing_status ADD COLUMN duplicate_suppressions INTEGER NOT NULL DEFAULT 0
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00122s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'ALTER TABLE processing_status ADD COLUMN duplicate_suppressions INTEGER NOT NULL DEFAULT 0', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: duplicate_suppressions
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE processing_status ADD COLUMN processing_duration_seconds FLOAT
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00083s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581940>, 'ALTER TABLE processing_status ADD COLUMN processing_duration_seconds FLOAT', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: processing_duration_seconds
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE processing_status ADD COLUMN camera_id VARCHAR(128)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00088s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545819C0>, 'ALTER TABLE processing_status ADD COLUMN camera_id VARCHAR(128)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: camera_id
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE detection_events ADD COLUMN camera_id VARCHAR(128)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00092s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545818C0>, 'ALTER TABLE detection_events ADD COLUMN camera_id VARCHAR(128)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: camera_id
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE detection_events ADD COLUMN camera_id_int INTEGER REFERENCES cameras(id)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00092s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581A40>, 'ALTER TABLE detection_events ADD COLUMN camera_id_int INTEGER REFERENCES cameras(id)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: camera_id_int
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE TABLE IF NOT EXISTS cameras (id INTEGER PRIMARY KEY AUTOINCREMENT, label VARCHAR(255) NOT NULL, stream_url VARCHAR(1024), location VARCHAR(512), is_active BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00160s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581AC0>, 'CREATE TABLE IF NOT EXISTS cameras (id INTEGER PRIMARY KEY AUTOINCREMENT, label VARCHAR(255) NOT NULL, stream_url VARCHAR(1024), location VARCHAR(512), is_active BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581AC0>, 'CREATE TABLE IF NOT EXISTS cameras (id INTEGER PRIMARY KEY AUTOINCREMENT, label VARCHAR(255) NOT NULL, stream_url VARCHAR(1024), location VARCHAR(512), is_active BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581AC0>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581AC0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE TABLE IF NOT EXISTS incidents (id INTEGER PRIMARY KEY AUTOINCREMENT, title VARCHAR(512) NOT NULL, description TEXT, status VARCHAR(32) NOT NULL DEFAULT 'open', operator_id VARCHAR(128), is_paused BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP), updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP))
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00215s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581AC0>, "CREATE TABLE IF NOT EXISTS incidents (id INTEGER PRIMARY KEY AUTOINCREMENT, title VARCHAR(512) NOT NULL, description TEXT, status VARCHAR(32) NOT NULL DEFAULT 'open', operator_id VARCHAR(128), is_paused BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP), updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP))", ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581AC0>, "CREATE TABLE IF NOT EXISTS incidents (id INTEGER PRIMARY KEY AUTOINCREMENT, title VARCHAR(512) NOT NULL, description TEXT, status VARCHAR(32) NOT NULL DEFAULT 'open', operator_id VARCHAR(128), is_paused BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP), updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP))", ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581AC0>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581AC0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE TABLE IF NOT EXISTS sightings (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, detection_id INTEGER REFERENCES detection_events(id) ON DELETE SET NULL, camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL, notes TEXT, status VARCHAR(32) NOT NULL DEFAULT 'pending', created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00095s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581AC0>, "CREATE TABLE IF NOT EXISTS sightings (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, detection_id INTEGER REFERENCES detection_events(id) ON DELETE SET NULL, camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL, notes TEXT, status VARCHAR(32) NOT NULL DEFAULT 'pending', created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))", ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581AC0>, "CREATE TABLE IF NOT EXISTS sightings (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, detection_id INTEGER REFERENCES detection_events(id) ON DELETE SET NULL, camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL, notes TEXT, status VARCHAR(32) NOT NULL DEFAULT 'pending', created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))", ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581AC0>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581AC0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE sightings ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'pending'
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00144s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581AC0>, "ALTER TABLE sightings ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'pending'", ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: status
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE incidents ADD COLUMN is_paused BOOLEAN NOT NULL DEFAULT 0
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00109s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545813C0>, 'ALTER TABLE incidents ADD COLUMN is_paused BOOLEAN NOT NULL DEFAULT 0', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: is_paused
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE TABLE IF NOT EXISTS incident_persons (incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE, PRIMARY KEY (incident_id, person_id))
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00094s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581B40>, 'CREATE TABLE IF NOT EXISTS incident_persons (incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE, PRIMARY KEY (incident_id, person_id))', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581B40>, 'CREATE TABLE IF NOT EXISTS incident_persons (incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE, PRIMARY KEY (incident_id, person_id))', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581B40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581B40>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE persons ADD COLUMN extra_photo_paths TEXT
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00289s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581B40>, 'ALTER TABLE persons ADD COLUMN extra_photo_paths TEXT', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: extra_photo_paths
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE, camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL, zone_id VARCHAR(128), status VARCHAR(32) NOT NULL DEFAULT 'open', level VARCHAR(32) NOT NULL DEFAULT 'sighting', source VARCHAR(32) NOT NULL DEFAULT 'live', first_seen_at DATETIME NOT NULL, last_seen_at DATETIME NOT NULL, sighting_count INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP), updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP))
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00093s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581A40>, "CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE, camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL, zone_id VARCHAR(128), status VARCHAR(32) NOT NULL DEFAULT 'open', level VARCHAR(32) NOT NULL DEFAULT 'sighting', source VARCHAR(32) NOT NULL DEFAULT 'live', first_seen_at DATETIME NOT NULL, last_seen_at DATETIME NOT NULL, sighting_count INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP), updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP))", ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581A40>, "CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE, camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL, zone_id VARCHAR(128), status VARCHAR(32) NOT NULL DEFAULT 'open', level VARCHAR(32) NOT NULL DEFAULT 'sighting', source VARCHAR(32) NOT NULL DEFAULT 'live', first_seen_at DATETIME NOT NULL, last_seen_at DATETIME NOT NULL, sighting_count INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP), updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP))", ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581A40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581A40>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE sightings ADD COLUMN alert_id INTEGER REFERENCES alerts(id) ON DELETE SET NULL
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00231s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581A40>, 'ALTER TABLE sightings ADD COLUMN alert_id INTEGER REFERENCES alerts(id) ON DELETE SET NULL', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: alert_id
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE sightings ADD COLUMN person_id INTEGER REFERENCES persons(id) ON DELETE SET NULL
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00089s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545818C0>, 'ALTER TABLE sightings ADD COLUMN person_id INTEGER REFERENCES persons(id) ON DELETE SET NULL', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: person_id
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE sightings ADD COLUMN confidence FLOAT
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00103s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545819C0>, 'ALTER TABLE sightings ADD COLUMN confidence FLOAT', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: confidence
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE sightings ADD COLUMN frame_index INTEGER
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00123s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581940>, 'ALTER TABLE sightings ADD COLUMN frame_index INTEGER', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: frame_index
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE sightings ADD COLUMN snapshot_path VARCHAR(1024)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00084s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'ALTER TABLE sightings ADD COLUMN snapshot_path VARCHAR(1024)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: snapshot_path
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE sightings ADD COLUMN source VARCHAR(32) NOT NULL DEFAULT 'live'
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00163s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581240>, "ALTER TABLE sightings ADD COLUMN source VARCHAR(32) NOT NULL DEFAULT 'live'", ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: source
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE INDEX IF NOT EXISTS ix_sightings_alert_id ON sightings(alert_id)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00092s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'CREATE INDEX IF NOT EXISTS ix_sightings_alert_id ON sightings(alert_id)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'CREATE INDEX IF NOT EXISTS ix_sightings_alert_id ON sightings(alert_id)', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545814C0>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545814C0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE INDEX IF NOT EXISTS ix_alerts_incident_id ON alerts(incident_id)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00162s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'CREATE INDEX IF NOT EXISTS ix_alerts_incident_id ON alerts(incident_id)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'CREATE INDEX IF NOT EXISTS ix_alerts_incident_id ON alerts(incident_id)', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545814C0>)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE INDEX IF NOT EXISTS ix_alerts_person_id ON alerts(person_id)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545814C0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00121s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'CREATE INDEX IF NOT EXISTS ix_alerts_person_id ON alerts(person_id)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'CREATE INDEX IF NOT EXISTS ix_alerts_person_id ON alerts(person_id)', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545814C0>)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE alerts ADD COLUMN operator_notes TEXT
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545814C0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00148s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'ALTER TABLE alerts ADD COLUMN operator_notes TEXT', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: operator_notes
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE incidents ADD COLUMN closing_reason VARCHAR(64)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00095s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545819C0>, 'ALTER TABLE incidents ADD COLUMN closing_reason VARCHAR(64)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: closing_reason
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE incidents ADD COLUMN closing_summary TEXT
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00091s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581A40>, 'ALTER TABLE incidents ADD COLUMN closing_summary TEXT', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: closing_summary
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE incidents ADD COLUMN closed_by VARCHAR(128)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00102s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581B40>, 'ALTER TABLE incidents ADD COLUMN closed_by VARCHAR(128)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: closed_by
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE incidents ADD COLUMN closed_at DATETIME
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00367s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545813C0>, 'ALTER TABLE incidents ADD COLUMN closed_at DATETIME', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: closed_at
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE incidents ADD COLUMN evidence_paths TEXT
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00100s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581AC0>, 'ALTER TABLE incidents ADD COLUMN evidence_paths TEXT', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: evidence_paths
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN source_type VARCHAR(32) NOT NULL DEFAULT 'file'
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00088s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545811C0>, "ALTER TABLE cameras ADD COLUMN source_type VARCHAR(32) NOT NULL DEFAULT 'file'", ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: source_type
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN zone VARCHAR(255)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00105s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545816C0>, 'ALTER TABLE cameras ADD COLUMN zone VARCHAR(255)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: zone
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'unknown'
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00093s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581840>, "ALTER TABLE cameras ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'unknown'", ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: status
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN last_seen DATETIME
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00125s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545816C0>, 'ALTER TABLE cameras ADD COLUMN last_seen DATETIME', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: last_seen
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE TABLE IF NOT EXISTS sites (id INTEGER PRIMARY KEY AUTOINCREMENT, name VARCHAR(255) NOT NULL UNIQUE, description TEXT, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00091s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545811C0>, 'CREATE TABLE IF NOT EXISTS sites (id INTEGER PRIMARY KEY AUTOINCREMENT, name VARCHAR(255) NOT NULL UNIQUE, description TEXT, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545811C0>, 'CREATE TABLE IF NOT EXISTS sites (id INTEGER PRIMARY KEY AUTOINCREMENT, name VARCHAR(255) NOT NULL UNIQUE, description TEXT, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545811C0>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545811C0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE TABLE IF NOT EXISTS zones (id INTEGER PRIMARY KEY AUTOINCREMENT, site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE, name VARCHAR(255) NOT NULL, description TEXT, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00193s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545811C0>, 'CREATE TABLE IF NOT EXISTS zones (id INTEGER PRIMARY KEY AUTOINCREMENT, site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE, name VARCHAR(255) NOT NULL, description TEXT, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545811C0>, 'CREATE TABLE IF NOT EXISTS zones (id INTEGER PRIMARY KEY AUTOINCREMENT, site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE, name VARCHAR(255) NOT NULL, description TEXT, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP))', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545811C0>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545811C0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE INDEX IF NOT EXISTS ix_zones_site_id ON zones(site_id)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00147s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545811C0>, 'CREATE INDEX IF NOT EXISTS ix_zones_site_id ON zones(site_id)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545811C0>, 'CREATE INDEX IF NOT EXISTS ix_zones_site_id ON zones(site_id)', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545811C0>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545811C0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN zone_id INTEGER REFERENCES zones(id) ON DELETE SET NULL
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00252s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545811C0>, 'ALTER TABLE cameras ADD COLUMN zone_id INTEGER REFERENCES zones(id) ON DELETE SET NULL', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: zone_id
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE INDEX IF NOT EXISTS ix_cameras_zone_id ON cameras(zone_id)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00090s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581640>, 'CREATE INDEX IF NOT EXISTS ix_cameras_zone_id ON cameras(zone_id)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581640>, 'CREATE INDEX IF NOT EXISTS ix_cameras_zone_id ON cameras(zone_id)', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581640>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154581640>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN direction VARCHAR(64)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00191s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581BC0>, 'ALTER TABLE cameras ADD COLUMN direction VARCHAR(64)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: direction
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN overlap_group VARCHAR(128)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00096s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581A40>, 'ALTER TABLE cameras ADD COLUMN overlap_group VARCHAR(128)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: overlap_group
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN supports_live BOOLEAN NOT NULL DEFAULT 1
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00092s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545818C0>, 'ALTER TABLE cameras ADD COLUMN supports_live BOOLEAN NOT NULL DEFAULT 1', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: supports_live
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN supports_historical BOOLEAN NOT NULL DEFAULT 0
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00160s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545819C0>, 'ALTER TABLE cameras ADD COLUMN supports_historical BOOLEAN NOT NULL DEFAULT 0', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: supports_historical
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN supports_ptz BOOLEAN NOT NULL DEFAULT 0
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00093s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'ALTER TABLE cameras ADD COLUMN supports_ptz BOOLEAN NOT NULL DEFAULT 0', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: supports_ptz
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN retention_days INTEGER
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00141s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581740>, 'ALTER TABLE cameras ADD COLUMN retention_days INTEGER', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: retention_days
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN trust_level VARCHAR(32) NOT NULL DEFAULT 'medium'
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00101s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581C40>, "ALTER TABLE cameras ADD COLUMN trust_level VARCHAR(32) NOT NULL DEFAULT 'medium'", ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: trust_level
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN onvif_host VARCHAR(255)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00099s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545814C0>, 'ALTER TABLE cameras ADD COLUMN onvif_host VARCHAR(255)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: onvif_host
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN onvif_port INTEGER
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00097s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581940>, 'ALTER TABLE cameras ADD COLUMN onvif_port INTEGER', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: onvif_port
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN onvif_username VARCHAR(128)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00100s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545819C0>, 'ALTER TABLE cameras ADD COLUMN onvif_username VARCHAR(128)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: onvif_username
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN onvif_password_enc TEXT
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00097s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154581A40>, 'ALTER TABLE cameras ADD COLUMN onvif_password_enc TEXT', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: onvif_password_enc
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | ALTER TABLE cameras ADD COLUMN dvr_clip_dir VARCHAR(1024)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00097s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545811C0>, 'ALTER TABLE cameras ADD COLUMN dvr_clip_dir VARCHAR(1024)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | returning exception duplicate column name: dvr_clip_dir
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE UNIQUE INDEX IF NOT EXISTS uq_persons_source_image_hash ON persons(source_image_hash) WHERE source_image_hash IS NOT NULL
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00104s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545816C0>, 'CREATE UNIQUE INDEX IF NOT EXISTS uq_persons_source_image_hash ON persons(source_image_hash) WHERE source_image_hash IS NOT NULL', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545816C0>, 'CREATE UNIQUE INDEX IF NOT EXISTS uq_persons_source_image_hash ON persons(source_image_hash) WHERE source_image_hash IS NOT NULL', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545816C0>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545816C0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | CREATE INDEX IF NOT EXISTS ix_face_embeddings_ingest_sha256 ON face_embeddings(ingest_sha256)
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | [generated in 0.00097s] ()
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545816C0>, 'CREATE INDEX IF NOT EXISTS ix_face_embeddings_ingest_sha256 ON face_embeddings(ingest_sha256)', ())
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545816C0>, 'CREATE INDEX IF NOT EXISTS ix_face_embeddings_ingest_sha256 ON face_embeddings(ingest_sha256)', ()) completed
+2026-06-20 12:50:37 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545816C0>)
+2026-06-20 12:50:37 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545816C0>) completed
+2026-06-20 12:50:37 | INFO | sqlalchemy.engine.Engine | COMMIT
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method commit of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method commit of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:38 | INFO | sqlalchemy.engine.Engine | BEGIN (implicit)
+2026-06-20 12:50:38 | INFO | sqlalchemy.engine.Engine | SELECT alerts.id, alerts.incident_id, alerts.person_id, alerts.camera_id, alerts.zone_id, alerts.status, alerts.level, alerts.source, alerts.first_seen_at, alerts.last_seen_at, alerts.sighting_count, alerts.operator_notes, alerts.created_at, alerts.updated_at 
+FROM alerts 
+WHERE alerts.status = ? AND alerts.last_seen_at >= ?
+2026-06-20 12:50:38 | INFO | sqlalchemy.engine.Engine | [generated in 0.00063s] ('open', '2026-06-20 07:10:38.025621')
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545838C0>, 'SELECT alerts.id, alerts.incident_id, alerts.person_id, alerts.camera_id, alerts.zone_id, alerts.status, alerts.level, alerts.source, alerts.first_seen_at, alerts.last_seen_at, alerts.sighting_count, alerts.operator_notes, alerts.created_at, alerts.updated_at \nFROM alerts \nWHERE alerts.status = ? AND alerts.last_seen_at >= ?', ('open', '2026-06-20 07:10:38.025621'))
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x00000181545838C0>, 'SELECT alerts.id, alerts.incident_id, alerts.person_id, alerts.camera_id, alerts.zone_id, alerts.status, alerts.level, alerts.source, alerts.first_seen_at, alerts.last_seen_at, alerts.sighting_count, alerts.operator_notes, alerts.created_at, alerts.updated_at \nFROM alerts \nWHERE alerts.status = ? AND alerts.last_seen_at >= ?', ('open', '2026-06-20 07:10:38.025621')) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x00000181545838C0>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x00000181545838C0>) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545838C0>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x00000181545838C0>) completed
+2026-06-20 12:50:38 | INFO | sqlalchemy.engine.Engine | ROLLBACK
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:38 | INFO | ecoface_lite.api.main | Application startup complete (version=0.1.0)
+2026-06-20 12:50:38 | INFO | ecoface_lite.services.health_monitor | Health monitor started — interval=60s, monitoring active cameras
+2026-06-20 12:50:38 | INFO | sqlalchemy.engine.Engine | BEGIN (implicit)
+2026-06-20 12:50:38 | INFO | sqlalchemy.engine.Engine | SELECT cameras.id, cameras.label, cameras.stream_url, cameras.location, cameras.is_active, cameras.source_type, cameras.zone, cameras.status, cameras.last_seen, cameras.zone_id, cameras.direction, cameras.overlap_group, cameras.supports_live, cameras.supports_historical, cameras.supports_ptz, cameras.retention_days, cameras.trust_level, cameras.onvif_host, cameras.onvif_port, cameras.onvif_username, cameras.onvif_password_enc, cameras.dvr_clip_dir, cameras.created_at 
+FROM cameras 
+WHERE cameras.is_active = 1
+2026-06-20 12:50:38 | INFO | sqlalchemy.engine.Engine | [generated in 0.00052s] ()
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method cursor of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154734D40>, 'SELECT cameras.id, cameras.label, cameras.stream_url, cameras.location, cameras.is_active, cameras.source_type, cameras.zone, cameras.status, cameras.last_seen, cameras.zone_id, cameras.direction, cameras.overlap_group, cameras.supports_live, cameras.supports_historical, cameras.supports_ptz, cameras.retention_days, cameras.trust_level, cameras.onvif_host, cameras.onvif_port, cameras.onvif_username, cameras.onvif_password_enc, cameras.dvr_clip_dir, cameras.created_at \nFROM cameras \nWHERE cameras.is_active = 1', ())
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method execute of sqlite3.Cursor object at 0x0000018154734D40>, 'SELECT cameras.id, cameras.label, cameras.stream_url, cameras.location, cameras.is_active, cameras.source_type, cameras.zone, cameras.status, cameras.last_seen, cameras.zone_id, cameras.direction, cameras.overlap_group, cameras.supports_live, cameras.supports_historical, cameras.supports_ptz, cameras.retention_days, cameras.trust_level, cameras.onvif_host, cameras.onvif_port, cameras.onvif_username, cameras.onvif_password_enc, cameras.dvr_clip_dir, cameras.created_at \nFROM cameras \nWHERE cameras.is_active = 1', ()) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154734D40>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method fetchall of sqlite3.Cursor object at 0x0000018154734D40>) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154734D40>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Cursor object at 0x0000018154734D40>) completed
+2026-06-20 12:50:38 | INFO | httpx | HTTP Request: GET http://testserver/api/v1/health "HTTP/1.1 200 OK"
+2026-06-20 12:50:38 | INFO | sqlalchemy.engine.Engine | ROLLBACK
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:38 | INFO | ecoface_lite.api.main | Application shutdown
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:38 | ERROR | sqlalchemy.pool.impl.AsyncAdaptedQueuePool | Exception during reset or similar
+Traceback (most recent call last):
+  File "C:\Users\Novoik\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 986, in _finalize_fairy
+    fairy._reset(
+  File "C:\Users\Novoik\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\pool\base.py", line 1441, in _reset
+    pool._dialect.do_rollback(self)
+  File "C:\Users\Novoik\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\engine\default.py", line 712, in do_rollback
+    dbapi_connection.rollback()
+  File "C:\Users\Novoik\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\dialects\sqlite\aiosqlite.py", line 307, in rollback
+    self.await_(self._connection.rollback())
+  File "C:\Users\Novoik\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+  File "C:\Users\Novoik\AppData\Local\Programs\Python\Python310\lib\site-packages\sqlalchemy\util\_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+  File "C:\Users\Novoik\AppData\Local\Programs\Python\Python310\lib\site-packages\aiosqlite\core.py", line 197, in rollback
+    await self._execute(self._conn.rollback)
+  File "C:\Users\Novoik\AppData\Local\Programs\Python\Python310\lib\site-packages\aiosqlite\core.py", line 160, in _execute
+    return await future
+asyncio.exceptions.CancelledError
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method rollback of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing functools.partial(<built-in method close of sqlite3.Connection object at 0x00000181540F6F40>)
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation functools.partial(<built-in method close of sqlite3.Connection object at 0x00000181540F6F40>) completed
+2026-06-20 12:50:38 | DEBUG | aiosqlite | executing <function Connection.stop.<locals>.close_and_stop at 0x00000181546FBAC0>
+2026-06-20 12:50:38 | DEBUG | aiosqlite | operation <function Connection.stop.<locals>.close_and_stop at 0x00000181546FBAC0> completed
+2026-06-20 12:50:38 | INFO | ecoface_lite.ai_engine.pipeline | Detection observability initialized at F:\Joydeb-Data\EchoFace_Eng1.0.1\logs\detection_metrics
+2026-06-20 12:50:38 | INFO | ecoface_lite.ai_engine.pipeline | GOVERNANCE [CPU]: interval_ceiling=3 frames  detector_budget=2000ms  (CPU: 400–1200ms/cycle is normal — budget violation only fires above 2000ms)
+2026-06-20 12:50:38 | WARNING | ecoface_lite.ai_engine.pipeline | GOVERNANCE gap enforced: adaptive_conf 0.450 < cutoff 0.700 + gap 0.05 → raised to 0.750
+2026-06-20 12:50:38 | WARNING | ecoface_lite.ai_engine.pipeline | GOVERNANCE gap enforced: adaptive_conf 0.450 < cutoff 0.700 + gap 0.05 → raised to 0.750
+2026-06-20 12:50:38 | WARNING | ecoface_lite.ai_engine.pipeline | GOVERNANCE gap enforced: adaptive_conf 0.450 < cutoff 0.700 + gap 0.05 → raised to 0.750
+2026-06-20 12:50:38 | WARNING | ecoface_lite.ai_engine.pipeline | GOVERNANCE gap enforced: adaptive_conf 0.450 < cutoff 0.700 + gap 0.05 → raised to 0.750
+2026-06-20 12:50:38 | INFO | ecoface_lite.ai_engine.pipeline | GOVERNANCE: Pressure band transitioned 0 -> 2
+2026-06-20 12:50:38 | WARNING | ecoface_lite.ai_engine.pipeline | GOVERNANCE gap enforced: adaptive_conf 0.300 < cutoff 0.450 + gap 0.05 → raised to 0.500
+2026-06-20 12:50:38 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
+2026-06-20 12:50:38 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 candidate->lost frame=2 reason=unmatched
+2026-06-20 12:50:38 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
+2026-06-20 12:50:38 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 coarse->confirmed frame=1 reason=recovered
+2026-06-20 12:50:38 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
+2026-06-20 12:50:38 | INFO | ecoface_lite.ai_engine.pipeline | Detection observability initialized at F:\Joydeb-Data\EchoFace_Eng1.0.1\logs\detection_metrics
+2026-06-20 12:50:38 | INFO | ecoface_lite.ai_engine.pipeline | GOVERNANCE [CPU]: interval_ceiling=3 frames  detector_budget=2000ms  (CPU: 400–1200ms/cycle is normal — budget violation only fires above 2000ms)
+2026-06-20 12:50:39 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
+2026-06-20 12:50:39 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
+2026-06-20 12:50:39 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
+2026-06-20 12:50:39 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
+2026-06-20 12:50:39 | DEBUG | ecoface_lite.ai_engine.tracking.track_manager | track_state_transition id=track_1 new->candidate frame=0 reason=instant_fast_confirm
