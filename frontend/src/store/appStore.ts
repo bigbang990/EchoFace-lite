@@ -9,7 +9,7 @@ export interface BackendEntry {
 
 export const BACKENDS: BackendEntry[] = [
   { name: 'Local CPU', url: 'http://127.0.0.1:8000/api/v1', type: 'local' },
-  { name: 'Colab GPU', url: 'https://inn-calendars-huge-helen.trycloudflare.com//api/v1', type: 'remote' },
+  { name: 'Colab GPU', url: 'https://mall-tail-sapphire-subsection.trycloudflare.com/api/v1', type: 'remote' },
 ]
 
 // Single-server: INC routes live on the same server as the engine.

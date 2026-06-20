@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from ecoface_lite import __version__
-from ecoface_lite.api.routers import alerts, cameras, detections, experimental, health, historical, incidents, live_test, nvr, observability, persons, processing, sites, zones
+from ecoface_lite.api.routers import alerts, cameras, detections, experimental, health, historical, incidents, live_test, nvr, observability, persons, processing, sites, stream, zones
 from ecoface_lite.core.config import get_settings
 from ecoface_lite.core.logging import get_logger, setup_logging
 from ecoface_lite.db.session import init_db
@@ -89,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(incidents.router, prefix="/api/v1")
     app.include_router(historical.router, prefix="/api/v1")
     app.include_router(alerts.router, prefix="/api/v1")
+    app.include_router(stream.router, prefix="/api/v1")
     app.mount("/data/previews", StaticFiles(directory=settings.resolved_previews_dir()), name="previews")
     app.mount("/data/snapshots", StaticFiles(directory=settings.resolved_snapshots_dir()), name="snapshots")
     app.mount("/data/debug/rejected_faces", StaticFiles(directory=settings.resolved_rejected_faces_dir()), name="rejected_faces")

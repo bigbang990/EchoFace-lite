@@ -1,7 +1,32 @@
-"""Construct AI stack with shared heavy models (single FaceAnalysis instance)."""
+"""Construct AI stack with shared heavy models (single FaceAnalysis instance).
+
+Threshold bug note
+------------------
+Prior to this fix, build_recognition_pipeline() contained three lines that
+silently overrode .env-configured thresholds with platform defaults on every
+startup:
+
+    settings.detection_confidence_threshold = PLATFORM["conf_threshold"]  # BUG
+    settings.validator_strict_cutoff        = PLATFORM["validator_cutoff"] # BUG
+    settings.insightface_ctx_id             = PLATFORM["ctx_id"]           # BUG
+
+This meant local CPU always ran at 0.35/0.40 regardless of .env, making
+every local-vs-Colab comparison invalid.  Those lines have been removed.
+Thresholds are now owned exclusively by Settings/.env.
+
+ONNX preservation note
+----------------------
+The "onnx" detector branch is reserved for future paid GPU infra (A100/H100)
+where onnxruntime-gpu is available.  It is NOT implemented yet, but the branch
+is kept so switching to it only requires DETECTOR_PROVIDER=onnx in .env — no
+code changes.  The embedder (ArcFace/InsightFace) is never affected by detector
+selection.
+"""
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any
 
 from ecoface_lite.ai_engine.detector import FaceDetector, InsightFaceDetector
@@ -78,75 +103,108 @@ def _create_face_analysis(settings: Settings) -> Any:
     return app
 
 
+def _resolve_detector_provider() -> str:
+    """Return the active detector provider name from the environment.
+
+    Reads DETECTOR_PROVIDER env var, normalised to lowercase.
+    Falls back to the value platform_bootstrap detected (itself defaulting
+    to "scrfd" when the var is unset).  Isolated here so the selection logic
+    is testable without building the full pipeline.
+    """
+    return os.environ.get(
+        "DETECTOR_PROVIDER",
+        PLATFORM.get("detector_provider", "scrfd"),
+    ).lower().strip()
+
+
 def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionPipeline:
     settings = settings or get_settings()
-    # Apply hardware-detected threshold overrides.
-    # PLATFORM is module-level (evaluated once at import).  These two fields are
-    # set by PLATFORM so GPU Colab gets 0.45/0.55 and CPU dev gets 0.35/0.40
-    # regardless of what the .env file says — the .env values remain the fallback
-    # for every other field.
-    settings.detection_confidence_threshold = PLATFORM["conf_threshold"]
-    settings.validator_strict_cutoff        = PLATFORM["validator_cutoff"]
-    settings.insightface_ctx_id             = PLATFORM["ctx_id"]
+
+    # Log the actual .env-sourced threshold values so startup logs confirm
+    # they are being respected (no silent platform overrides any more).
     logger.info(
-        "Platform threshold overrides applied: "
+        "Pipeline thresholds from .env/Settings — "
         "detection_confidence_threshold=%.2f  "
         "validator_strict_cutoff=%.2f  "
+        "match_confidence_threshold=%.2f  "
         "insightface_ctx_id=%d  "
         "(backend=%s)",
         settings.detection_confidence_threshold,
         settings.validator_strict_cutoff,
+        settings.match_confidence_threshold,
         settings.insightface_ctx_id,
         PLATFORM["backend"],
     )
+
     # Perform startup validation
     try:
         from ecoface_lite.ai_engine.tracking.tracked_face import TrackedFace
         from ecoface_lite.ai_engine.tracking.track_manager import FaceTrackManager
         from ecoface_lite.ai_engine.pipeline import RecognitionPipeline
         from ecoface_lite.core.runtime_config import EffectiveRuntimeConfig
-        
+
         logger.info("=== PIPELINE IMPORT VALIDATION PASSED ===")
     except Exception as e:
         logger.error("!!! PIPELINE IMPORT VALIDATION FAILED: %s !!!", e)
         raise RuntimeError(f"Startup validation failed: {e}") from e
 
-    import os as _os
-    _provider = _os.environ.get(
-        "DETECTOR_PROVIDER",
-        PLATFORM.get("detector_provider", "scrfd")
-    ).lower()
-
+    provider = _resolve_detector_provider()
     face_app = None
 
-    if _provider == "yolo":
-        from ecoface_lite.ai_engine.detection.detectors\
-            .yolov8_detector import YOLOv8FaceDetector
-        from pathlib import Path as _Path
-        _weights = (
-            _Path(__file__).resolve().parent.parent.parent
-            / "weights" / "yolov8n-face.pt"
+    if provider == "yolo":
+        from ecoface_lite.ai_engine.detection.detectors.yolov8_detector import YOLOv8FaceDetector
+        weights = (
+            Path(__file__).resolve().parent.parent.parent / "weights" / "yolov8n-face.pt"
         )
-        detector = YOLOv8FaceDetector(
-            weights_path=_weights,
-            det_size=PLATFORM["det_size"]
+        if not weights.is_file():
+            raise FileNotFoundError(
+                f"YOLOv8 weights not found at {weights}. "
+                "Download with:\n"
+                "  wget -P weights/ "
+                "https://github.com/akanametov/yolov8-face/releases/download/v0.0.0/yolov8n-face.pt"
+            )
+        detector: FaceDetector = YOLOv8FaceDetector(
+            weights_path=weights,
+            det_size=PLATFORM["det_size"],
         )
-        logger.info("Detector: YOLOv8-face (PyTorch GPU)")
-    else:
+        logger.info("Detector: YOLOv8-face (PyTorch) weights=%s", weights)
+
+    elif provider == "onnx":
+        # Reserved for future paid GPU infra (A100/H100) with onnxruntime-gpu.
+        # Not yet implemented — fall back to SCRFD with a clear warning so the
+        # operator knows the chosen provider was not honoured.
+        logger.warning(
+            "DETECTOR_PROVIDER=onnx is reserved for future GPU infra "
+            "and is not yet implemented. Falling back to SCRFD (InsightFace). "
+            "Switch to onnxruntime-gpu and implement OnnxFaceDetector before "
+            "setting this provider in production."
+        )
         face_app = _create_face_analysis(settings)
-        detector: FaceDetector = InsightFaceDetector(
+        detector = InsightFaceDetector(
+            model_name=settings.insightface_model_name,
+            ctx_id=settings.insightface_ctx_id,
+            face_app=face_app,
+        )
+        logger.info("Detector: SCRFD (InsightFace) [onnx fallback]")
+
+    else:
+        # Default: SCRFD via InsightFace buffalo_l
+        face_app = _create_face_analysis(settings)
+        detector = InsightFaceDetector(
             model_name=settings.insightface_model_name,
             ctx_id=settings.insightface_ctx_id,
             face_app=face_app,
         )
         logger.info("Detector: SCRFD (InsightFace)")
+
+    # Embedder is always ArcFace/InsightFace regardless of detector selection.
     embedder: FaceEmbedder = InsightFaceEmbedder(
         model_name=settings.insightface_model_name,
         ctx_id=settings.insightface_ctx_id,
         face_app=face_app,
     )
     matcher = FaceMatcher()
-    
+
     # Compile effective runtime configuration
     runtime_state = get_runtime_state()
     effective_config = EffectiveRuntimeConfig.compile(
@@ -154,15 +212,15 @@ def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionP
         overrides=runtime_state.get_overrides(),
         cpu_protection_state=runtime_state.get_cpu_protection_state(),
         backend_type=runtime_state.get_backend_type(),
-        experiment_session_id=runtime_state.get_experiment_session_id()
+        experiment_session_id=runtime_state.get_experiment_session_id(),
     )
-    
+
     return RecognitionPipeline(
-        settings=settings, 
-        detector=detector, 
-        embedder=embedder, 
+        settings=settings,
+        detector=detector,
+        embedder=embedder,
         matcher=matcher,
-        effective_config=effective_config
+        effective_config=effective_config,
     )
 
 

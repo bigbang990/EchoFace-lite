@@ -21,7 +21,7 @@ BACKENDS: dict[str, BackendEntry] = {
         "type": "local",
     },
     "Colab GPU": {
-        "url": "https://a84a-136-118-99-101.ngrok-free.app/api/v1",
+        "url": "https://investigate-poly-hon-proposition.trycloudflare.com/api/v1",
         "type": "remote",
     },
 }

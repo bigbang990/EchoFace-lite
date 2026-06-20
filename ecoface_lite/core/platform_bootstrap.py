@@ -15,18 +15,25 @@ Keys returned
     backend               str   "CPU" or "GPU"
     ctx_id                int   -1 (CPU) / 0 (GPU)
     providers             list  ONNX Runtime execution providers in priority order
-    det_size              tuple (320, 320) CPU / (640, 640) GPU
+    det_size              tuple (320, 320) — identical for CPU and GPU for cross-env parity
     det_interval          int   6 CPU / 3 GPU
-    conf_threshold        float 0.35 CPU / 0.45 GPU
-    validator_cutoff      float 0.40 CPU / 0.55 GPU
+    detector_provider     str   value of DETECTOR_PROVIDER env var (default "scrfd")
     detector_budget_ms    int   5000 CPU / 150 GPU
     max_track_survival_ms int   6000 CPU / 3000 GPU  — hard ceiling on LOST/COARSE TTL
     interval_ceiling      int   12 CPU / 8 GPU
+
+What this file does NOT control
+--------------------------------
+    Detection and match thresholds (detection_confidence_threshold,
+    validator_strict_cutoff, match_confidence_threshold, etc.) are owned
+    exclusively by Settings / .env.  This file must never set or override them.
+    See the threshold bug note in ecoface_lite/ai_engine/bootstrap.py.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +51,7 @@ def detect_platform() -> dict:
     dict
         Plain dict with the keys documented in the module docstring.
         Same object is returned on every call after the first.
+        Thresholds are NOT included — they live in Settings only.
     """
     global _PLATFORM_CACHE
     if _PLATFORM_CACHE is not None:
@@ -63,35 +71,36 @@ def detect_platform() -> dict:
     except ImportError:
         logger.debug("torch not installed — skipping CUDA device check, assuming CPU")
 
+    # ── Step 2: Detector provider (env var takes precedence over default) ─────
+    detector_provider = os.environ.get("DETECTOR_PROVIDER", "scrfd").lower().strip()
+
     # ── Build platform dict ───────────────────────────────────────────────────
+    # det_size is (320, 320) on both backends for cross-environment parity.
+    # Thresholds are intentionally absent — owned by Settings/.env only.
     if cuda_available:
         _PLATFORM_CACHE = {
-            "backend":            "GPU",
-            "ctx_id":             0,
-            "providers":          ["CUDAExecutionProvider", "CPUExecutionProvider"],
-            "det_size":           (640, 640),
-            "det_interval":       3,
-            "conf_threshold":     0.45,
-            "validator_cutoff":   0.55,
+            "backend":               "GPU",
+            "ctx_id":                0,
+            "providers":             ["CUDAExecutionProvider", "CPUExecutionProvider"],
+            "det_size":              (320, 320),
+            "det_interval":          3,
+            "detector_provider":     detector_provider,
             "detector_budget_ms":    150,
             "max_track_survival_ms": 3000,
             "interval_ceiling":      8,
-            "detector_provider":     "scrfd",
         }
         logger.info("EchoFace backend=GPU/CUDA — production mode, %s", gpu_name)
     else:
         _PLATFORM_CACHE = {
-            "backend":            "CPU",
-            "ctx_id":             -1,
-            "providers":          ["CPUExecutionProvider"],
-            "det_size":           (320, 320),
-            "det_interval":       6,
-            "conf_threshold":     0.35,
-            "validator_cutoff":   0.40,
+            "backend":               "CPU",
+            "ctx_id":                -1,
+            "providers":             ["CPUExecutionProvider"],
+            "det_size":              (320, 320),
+            "det_interval":          6,
+            "detector_provider":     detector_provider,
             "detector_budget_ms":    5000,
             "max_track_survival_ms": 6000,
             "interval_ceiling":      12,
-            "detector_provider":     "scrfd",
         }
         logger.info("EchoFace backend=CPU — development mode, not real-time")
 
