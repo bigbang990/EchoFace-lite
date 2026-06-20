@@ -350,7 +350,8 @@ export function useSystemMetrics() {
       const hwType = isGpu ? 1 : Number(avgs.hardware_backend_type ?? raw.hardware_backend_type ?? 0)
       const ctrs = (raw.counters as Raw | undefined) ?? {}
       const m: SystemMetrics = {
-        fps: Number(avgs.average_processing_fps ?? avgs.fps ?? raw.fps ?? raw.average_processing_fps ?? 0),
+        fps: Number(avgs.avg_fps_wall_clock ?? 0),
+        ai_fps: Number(avgs.average_processing_fps ?? avgs.fps ?? raw.fps ?? raw.average_processing_fps ?? 0),
         detector_latency_ms: Number(
           avgs.detector_effective_frame_cost_ms ??
           avgs.detector_runtime_per_cycle_ms ??
@@ -379,7 +380,7 @@ export function useSystemMetrics() {
       if (now - lastHistoryTs.current > 60_000) {
         lastHistoryTs.current = now
         const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        setFpsHistory((prev) => [...prev.slice(-23), { t, v: Math.round(m.fps) }])
+        setFpsHistory((prev) => [...prev.slice(-23), { t, v: Math.round(m.ai_fps) }])
       }
     } catch (e) {
       if (!cancelledRef.current) setError((e as Error).message)

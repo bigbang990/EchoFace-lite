@@ -28,6 +28,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_job_crop_counts: dict[str | None, int] = {}
+_CROP_SAVE_HARD_CAP = 200
+
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
 
@@ -330,6 +333,7 @@ async def process_prerecorded_video(
     duration = perf_counter() - started_at
     metrics.observe("video_job_duration", duration)
     metrics.observe("average_processing_fps", emitted_count / duration if duration > 0 else 0.0)
+    metrics.observe("avg_fps_wall_clock", emitted_count / duration if duration > 0 else 0.0)
     metrics.observe("alerts_per_video", alerts)
     logger.info(
         "Processed video %s alerts=%s frames=%s duration=%.3fs fps=%.3f job_id=%s",
@@ -383,12 +387,16 @@ def _save_rejected_debug_crops(
 ) -> None:
     if emitted_count % max(1, settings.rejected_face_snapshot_interval) != 0:
         return
+    if _job_crop_counts.get(job_id, 0) >= _CROP_SAVE_HARD_CAP:
+        return
     import cv2
 
     target_dir = settings.resolved_rejected_faces_dir() / (job_id or "sync")
     target_dir.mkdir(parents=True, exist_ok=True)
     h, w = frame_bgr.shape[:2]
     for idx, match in enumerate(matches):
+        if _job_crop_counts.get(job_id, 0) >= _CROP_SAVE_HARD_CAP:
+            break
         if match.face is None or match.trace is None or match.trace.state != "yellow":
             continue
         x1 = max(0, min(w - 1, int(match.face.bbox.x1)))
@@ -417,6 +425,7 @@ def _save_rejected_debug_crops(
             encoding="utf-8",
         )
         metrics.increment("rejected_face_snapshots_saved")
+        _job_crop_counts[job_id] = _job_crop_counts.get(job_id, 0) + 1
 
 
 async def start_async_video_job_record(session: AsyncSession, *, video_relative_path: str) -> str:

@@ -20,7 +20,7 @@ def _default_project_root() -> Path:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).resolve().parents[2] / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -379,7 +379,7 @@ class Settings(BaseSettings):
     video_inference_width: int = Field(default=640, ge=160, alias="VIDEO_INFERENCE_WIDTH")
     video_progress_interval: int = Field(default=10, ge=1, alias="VIDEO_PROGRESS_INTERVAL")
     video_preview_interval: int = Field(default=1, ge=1, alias="VIDEO_PREVIEW_INTERVAL")
-    rejected_face_snapshot_interval: int = Field(default=10, ge=1, alias="REJECTED_FACE_SNAPSHOT_INTERVAL")
+    rejected_face_snapshot_interval: int = Field(default=100, ge=1, alias="REJECTED_FACE_SNAPSHOT_INTERVAL")
     video_event_dedupe_frames: int = Field(default=30, ge=0, alias="VIDEO_EVENT_DEDUPE_FRAMES")
     video_worker_queue_size: int = Field(default=8, ge=1, alias="VIDEO_WORKER_QUEUE_SIZE")
     live_event_dedupe_seconds: int = Field(default=10, ge=0, alias="LIVE_EVENT_DEDUPE_SECONDS")
@@ -481,4 +481,15 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Cached settings singleton for import-time reuse (e.g. logging, DB)."""
-    return Settings()
+    s = Settings()
+    import logging as _logging
+    _logging.getLogger(__name__).info(
+        "Settings loaded — detection_confidence_threshold=%.2f  "
+        "validator_strict_cutoff=%.2f  match_confidence_threshold=%.2f  "
+        "env_file=%s",
+        s.detection_confidence_threshold,
+        s.validator_strict_cutoff,
+        s.match_confidence_threshold,
+        str(Path(__file__).resolve().parents[2] / ".env"),
+    )
+    return s

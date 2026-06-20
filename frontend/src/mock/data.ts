@@ -349,7 +349,8 @@ export const mockActivityFeed: ActivityEvent[] = [
 ]
 
 export const mockSystemMetrics: SystemMetrics = {
-  fps: 81.4,
+  fps: 0.81,
+  ai_fps: 37.4,
   detector_latency_ms: 13.2,
   gpu_status: 'OK',
   hardware_backend_type: 1,

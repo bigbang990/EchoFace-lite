@@ -108,9 +108,10 @@ export default function SystemHealth() {
         <StatusBlock label="Memory"      value={`${(m.memory_mb / 1024).toFixed(1)} GB`} sub={`${m.memory_mb} MB`} ok={m.memory_mb < 6000} Icon={Layers} />
       </div>
 
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-5 gap-3 mb-6">
         {[
-          { label: 'AVG FPS',          value: m.fps.toFixed(1),              Icon: BarChart2, color: 'text-cyan-400',  detail: 'frames / sec' },
+          { label: 'AVG FPS',          value: m.fps.toFixed(3),              Icon: BarChart2, color: 'text-cyan-400',  detail: 'end-to-end wall-clock' },
+          { label: 'AI FPS',           value: m.ai_fps.toFixed(1),           Icon: BarChart2, color: 'text-cyan-400',  detail: 'AI pipeline only' },
           { label: 'DETECTOR LATENCY', value: `${m.detector_latency_ms}ms`,  Icon: Timer,     color: 'text-cyan-400',  detail: 'det_size=(320,320)' },
           { label: 'ACTIVE TRACKS',    value: m.active_tracks,               Icon: Layers,    color: 'text-cyan-400',  detail: 'identities in-frame' },
           { label: 'QUEUE DEPTH',      value: m.queue_depth,                 Icon: Activity,  color: m.queue_depth > 10 ? 'text-amber-400' : 'text-cyan-400', detail: 'frames pending' },
@@ -164,9 +165,9 @@ export default function SystemHealth() {
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-[10px] font-mono text-gray-600 tracking-widest">
-            FPS HISTORY {isLive ? '— LIVE' : '— 24H SAMPLE'}
+            AI PIPELINE FPS HISTORY {isLive ? '— LIVE' : '— 24H SAMPLE'}
           </h2>
-          <span className="text-[10px] font-mono text-gray-700">avg {m.fps.toFixed(1)} fps</span>
+          <span className="text-[10px] font-mono text-gray-700">avg {m.ai_fps.toFixed(1)} fps</span>
         </div>
         <div className="h-40">
           <ResponsiveContainer width="100%" height="100%">

@@ -87,6 +87,7 @@ export interface TimelineEntry {
 
 export interface SystemMetrics {
   fps: number
+  ai_fps: number
   detector_latency_ms: number
   gpu_status: 'OK' | 'DEGRADED' | 'UNAVAILABLE'
   hardware_backend_type: number
