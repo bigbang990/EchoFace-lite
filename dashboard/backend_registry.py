@@ -21,9 +21,9 @@ BACKENDS: dict[str, BackendEntry] = {
         "type": "local",
     },
     "Colab GPU": {
-        "url": "https://inspections-wages-tubes-molecules.trycloudflare.com/api/v1",
+        "url": "https://jul-nation-residence-san.trycloudflare.com/api/v1",
         "type": "remote",
     },
 }
 
-DEFAULT_BACKEND = "Local CPU"
+DEFAULT_BACKEND = "Local CPU"   

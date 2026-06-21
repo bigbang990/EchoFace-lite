@@ -1,3 +1,46 @@
+# Checkpoint — 2026-06-21 — embedding bottleneck fix (fast-path recognition)
+
+## Phase
+Embedding speed fix — eliminate full-frame re-detection on every embed_face() call.
+Branch: `main`
+Previous session work (confirmation queue profiler, bottleneck instrumentation) still valid below.
+
+## Changes this session
+
+### Embedding bottleneck fix
+
+**Root cause (profiled):** `InsightFaceEmbedder.embed_face()` was calling `self._app.get(frame_bgr)` on every call — full InsightFace detection+recognition across the entire frame — because YOLO never populates `face.embedding`. 6 calls × ~10.9s each = ~64% of total job wall-clock time. Also hardcoded `CPUExecutionProvider` in the lazy-build fallback path.
+
+**What was changed:**
+
+| File | Change |
+|---|---|
+| `ecoface_lite/ai_engine/embedder.py` | Task 1: replace hardcoded `CPUExecutionProvider` with `_PLATFORM["providers"]` from `detect_platform()`. Task 3: fast path using `self._app.models["recognition"].get(frame_bgr, fake_face)` directly when `face.landmarks` is not None. Task 4: `metrics.increment("embedder_full_frame_fallback")` + WARNING log on slow fallback path. |
+| `ecoface_lite/ai_engine/bootstrap.py` | Task 2: YOLO branch now calls `face_app = _create_face_analysis(settings)` after building the detector — shared GPU-capable InsightFace app injected into `InsightFaceEmbedder` exactly like SCRFD/onnx branches already do. |
+
+**Fast path logic (embedder.py):**
+- `face.embedding` pre-populated → return immediately (unchanged)
+- `face.landmarks` available + `rec_model` loaded → call `ArcFaceONNX.get(frame_bgr, SimpleNamespace(kps=face.landmarks.points))` directly. No re-detection. Expected: tens of ms vs ~10.9s.
+- Fallback (landmarks None or rec_model missing) → original `self._app.get(frame_bgr)` full-frame path, with `metrics.increment("embedder_full_frame_fallback")` + WARNING log.
+
+**New metric:**
+- `embedder_full_frame_fallback` (counter) — visible at `/api/v1/observability/metrics` → `counters`. Should stay at/near zero in production once YOLO keypoints are confirmed populated.
+
+**Verified locally:**
+- `python -c "from ecoface_lite.ai_engine.embedder import InsightFaceEmbedder"` → OK
+- 31/31 tests pass (pytest tests/ -x -q)
+- Throwaway mock-spy script confirmed: `rec_model.get()` called once, `app.get()` never called, output L2-normalised (norm=1.0).
+
+**Hard stops respected:**
+- `RecognitionPipeline`, `TrackManager`, ByteTrack, alert engine, DB models: untouched
+- `YOLOv8FaceDetector` internals: read-only, untouched
+- `embed_face(frame_bgr, face: DetectedFace) -> np.ndarray` public contract: unchanged
+- Full-frame fallback path kept (not removed), now guarded by landmarks check
+
+**Not yet validated on Colab GPU — next step:** soak run to confirm `embedding_generation_duration` drops from ~10.9s/call to sub-100ms/call, and `embedder_full_frame_fallback` counter stays at/near zero.
+
+---
+
 # Checkpoint — 2026-06-21 — confirmation queue profiler
 
 ## Phase

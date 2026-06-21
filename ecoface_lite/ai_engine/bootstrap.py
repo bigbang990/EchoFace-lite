@@ -168,6 +168,9 @@ def build_recognition_pipeline(settings: Settings | None = None) -> RecognitionP
             det_size=PLATFORM["det_size"],
         )
         logger.info("Detector: YOLOv8-face (PyTorch) weights=%s", weights)
+        # Build a shared GPU-capable InsightFace app for recognition-only inference.
+        # YOLO handles detection; this app is used solely by InsightFaceEmbedder.
+        face_app = _create_face_analysis(settings)
 
     elif provider == "onnx":
         # Reserved for future paid GPU infra (A100/H100) with onnxruntime-gpu.
