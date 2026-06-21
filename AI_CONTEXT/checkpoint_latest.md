@@ -1,4 +1,4 @@
-# Checkpoint — 2026-06-20 — decode call count + resize timing instrumentation
+# Checkpoint — 2026-06-21 — confirmation queue profiler
 
 ## Phase
 VSL Phase 3 — multi-source stream URL routing
@@ -6,7 +6,55 @@ Branch: `vsl-phase3-multi-source`
 All prior VSL phases (1–5) intact and verified.
 
 ## Regression baseline metrics
-Test suite: 31/31 passed (re-verified this session after instrumentation).
+Test suite: 7/7 passed (test_tracking.py — re-verified this session).
+
+---
+
+## Changes this session
+
+### Confirmation queue profiler (this session)
+
+New toggleable monkey-patch instrumentation for confirmation-queue methods.
+Zero runtime cost when disabled — only imported if `ENABLE_CONFIRMATION_PROFILING=true`.
+
+**New files:**
+
+| File | Purpose |
+|---|---|
+| `ecoface_lite/diagnostics/__init__.py` | Empty — makes `diagnostics` a proper Python package |
+| `ecoface_lite/diagnostics/confirmation_profiler.py` | `install_confirmation_profiler(cls, dump_path, dump_interval_calls=200)` |
+
+**Modified files:**
+
+| File | Change |
+|---|---|
+| `ecoface_lite/api/main.py` | `import os` added; 5-line profiler activation block in `lifespan()` after `await init_db()` |
+
+**Env vars:**
+
+| Var | Default | Effect |
+|---|---|---|
+| `ENABLE_CONFIRMATION_PROFILING` | `""` (off) | Set `"true"` to activate profiler |
+| `CONFIRMATION_PROFILE_DUMP_PATH` | `data/logs/confirmation_profile.json` | Atomic-write dump target |
+
+**Profiler behaviour:**
+- Wraps `_admit_or_queue_pending`, `_decay_pending`, `_best_match` on `FaceTrackManager` class
+- `_admit_or_queue_pending`: records `duration_ms`, `pending_len_at_entry`, `spurious_match_count` (bbox_iou ≥ temporal_min_track_iou AND centroid distance > 40px)
+- `_decay_pending`: records `duration_ms`, `pending_len_at_entry`
+- `_best_match`: records `duration_ms`
+- Stats accumulate for full process lifetime (never cleared after dump)
+- Atomic dump every `dump_interval_calls` total calls via `.tmp` + `os.replace`
+- Idempotent: module-level `_profiler_installed` flag + `cls._profiler_installed` attribute check
+- Defensive: wrapper exceptions → `logger.warning()`, fall through to original method
+
+**Hard stops respected:**
+- No logic changes to `_admit_or_queue_pending`, `_decay_pending`, `_best_match`
+- No changes to `RecognitionPipeline`, alert engine, DB models
+- No new dependencies
+
+**Not yet tested on Colab GPU — next step is a soak run with `ENABLE_CONFIRMATION_PROFILING=true`**
+
+---
 
 ---
 
@@ -176,3 +224,23 @@ stream router registered in `main.py`, `LiveFeed.tsx` minimal `<img>` replacemen
 | `GOVERNANCE_MAX_CANDIDATE_QUEUE_SIZE` | 32 (default) / 15 (Colab SERVER_ENV) |
 | `ENABLE_EMERGENCY_RECALL_MODE` | False |
 | `ENABLE_ADAPTIVE_LOAD_GOVERNANCE` | False |
+
+## Resolution-cap experiment (Jun 2026) — CLOSED, negative result
+DETECTOR_MAX_INPUT_PIXELS swept 409600 → 2073600 (5x) on crowd video 
+(498be8fd80624e69ac7c6441a6c43b2d.mp4, 150 frames). avg_face_size flat 
+at 51.5px implied width across entire range — zero effect. 
+DETECTOR_MAX_INPUT_PIXELS is NOT the lever for small-face rejections.
+
+NEXT: check settings.video_inference_width in config.py and 
+_resize_for_inference() in video_service.py — this earlier resize step 
+runs BEFORE the detector pipeline and may be the actual resolution 
+ceiling, independent of DETECTOR_MAX_INPUT_PIXELS. One grep, not a 
+re-sweep.
+
+Track-state cross-job leak (negative avg_track_lifetime): FIXED via 
+reset_session() in pipeline.py + track_manager.py + video_service.py. 
+Verified clean across 3-video soak sequence in same session.
+
+Standalone pipeline construction (bypassing FastAPI startup) runs 
+detector on CPU, not GPU — ~300x slower than production. Valid for 
+face-size/rejection-count comparisons, NOT valid for speed/FPS numbers.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -34,6 +35,12 @@ async def lifespan(app: FastAPI):
     settings.resolved_rejected_faces_dir().mkdir(parents=True, exist_ok=True)
     settings.resolved_log_dir().mkdir(parents=True, exist_ok=True)
     await init_db()
+    if os.environ.get("ENABLE_CONFIRMATION_PROFILING", "").lower() == "true":
+        from ecoface_lite.diagnostics.confirmation_profiler import install_confirmation_profiler
+        from ecoface_lite.ai_engine.tracking.track_manager import FaceTrackManager
+        _dump_path = os.environ.get("CONFIRMATION_PROFILE_DUMP_PATH", "data/logs/confirmation_profile.json")
+        install_confirmation_profiler(FaceTrackManager, _dump_path)
+        logger.info("Confirmation queue profiler installed, dumping to %s", _dump_path)
     # Restore in-memory alert sessions that were open before this restart
     from ecoface_lite.db.session import get_session_factory
     from ecoface_lite.services.alert_session_engine import get_alert_session_engine
