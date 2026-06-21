@@ -198,6 +198,12 @@ class RecognitionPipeline:
     def _track_manager(self):
         return self._recognition_session.track_manager
 
+    def reset_session(self) -> None:
+        """Reset per-job state before processing a new video. The pipeline
+        is a process-wide singleton — call this at the start of every video
+        job, or track state from the previous video leaks into the next one."""
+        self._recognition_session._track_manager.reset()
+
     def flush_metrics(self) -> None:
         """Flush detection metrics to disk (call before shutdown)."""
         if self._detection_metrics:

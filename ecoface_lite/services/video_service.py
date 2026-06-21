@@ -221,6 +221,7 @@ async def process_prerecorded_video(
     job_diagnostics = VideoJobDiagnostics(job_id=job_id)
     preview_writer = VideoPreviewWriter(settings, job_id)
     last_sighting_frame_by_person: dict[int, int] = {}  # controls sighting write frequency
+    pipeline.reset_session()
     started_at = perf_counter()
     metrics.observe("job_setup_duration_ms", (started_at - _setup_t0) * 1000.0)
     for packet in _frame_iter:

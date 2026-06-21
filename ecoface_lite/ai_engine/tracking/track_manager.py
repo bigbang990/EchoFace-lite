@@ -85,6 +85,14 @@ class FaceTrackManager:
         self._max_queue_size_seen: int = 0
         self._queue_full_entry_time: float | None = None
 
+    def reset(self) -> None:
+        """Clear all track state. Must be called at the start of every new
+        video job — FaceTrackManager is owned by the process-wide pipeline
+        singleton and otherwise persists across jobs, leaking stale tracks
+        (and corrupting visibility_age / avg_track_lifetime) into the next
+        video."""
+        self._tracks.clear()
+
     @property
     def active_track_count(self) -> int:
         return sum(
