@@ -43,9 +43,11 @@ from ecoface_lite.core.config import Settings
 from ecoface_lite.core.runtime_config import EffectiveRuntimeConfig
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
+from ecoface_lite.core.platform_bootstrap import detect_platform as _detect_platform
 from ecoface_lite.core.validator import FaceValidator, ValidationTier, ValidationResult
 
 logger = get_logger(__name__)
+_PLATFORM = _detect_platform()
 
 
 class LegacyDetectorWrapper(BaseDetector):
@@ -348,8 +350,8 @@ class RecognitionPipeline:
         # ── Step 4 & 6: Regression Guardrails ────────────────────────────────
         
         # 1. FPS Check
-        if current_fps < 8.0:
-            msg = f"FPS < 8 (Current: {current_fps:.2f})"
+        if current_fps < 6.0:
+            msg = f"FPS < 6 (Current: {current_fps:.2f})"
             logger.warning(
                 "REGRESSION WARNING: %s. "
                 "Probable Root Cause: System resource exhaustion or high-resolution input. "
@@ -987,6 +989,7 @@ class RecognitionPipeline:
         )
         bumped = min(self._settings.detector_interval_frames + 2, 16)
         self._dynamic_detector_interval = min(bumped, hw_max_interval)
+        self._dynamic_detector_interval = min(self._dynamic_detector_interval, _PLATFORM.get("interval_ceiling", 4))
         metrics.increment("detector_queue_stall_count")
 
         logger.warning(

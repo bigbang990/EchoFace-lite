@@ -60,7 +60,7 @@ class YOLOv8FaceDetector(BaseDetector):
         frame_bgr: np.ndarray,
         config: DetectionConfig | None = None,
     ) -> list[DetectedFace]:
-        results = self._model(frame_bgr, verbose=False)
+        results = self._model(frame_bgr, imgsz=self._det_size[0], verbose=False)
         r = results[0]
 
         if r.boxes is None or len(r.boxes) == 0:
