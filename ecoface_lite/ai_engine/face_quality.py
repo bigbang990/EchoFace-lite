@@ -25,7 +25,13 @@ class FaceQualityAssessor:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    def assess(self, frame_bgr: np.ndarray, face: DetectedFace) -> FaceQualityResult:
+    def assess(
+        self,
+        frame_bgr: np.ndarray,
+        face: DetectedFace,
+        *,
+        enrollment_mode: bool = False,
+    ) -> FaceQualityResult:
         if face.det_score < self._settings.detection_confidence_threshold:
             return FaceQualityResult(False, 0.0, reason="low_detection_confidence")
         geometry = compute_face_geometry(face, frame_bgr.shape)
@@ -41,6 +47,8 @@ class FaceQualityAssessor:
             min_size = self._settings.face_quality_small_face_size
         elif blur_score < self._settings.face_quality_min_blur_score:
             min_size = self._settings.face_quality_blurry_face_size
+        if enrollment_mode:
+            min_size = min_size // 2
         quality_score = self.quality_score(blur_score, brightness_score, contrast_score, width, height)
         metrics.observe("face_blur_score", blur_score)
         metrics.observe("face_brightness_score", brightness_score)

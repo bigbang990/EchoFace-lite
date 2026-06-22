@@ -254,13 +254,15 @@ class RecognitionPipeline:
         """Get event timeline statistics."""
         return self._experiment_coordinator.get_event_timeline_statistics()
 
-    def enroll_reference_embedding(self, frame_bgr: np.ndarray) -> np.ndarray:
+    def enroll_reference_embedding(
+        self, frame_bgr: np.ndarray, *, enrollment_mode: bool = False
+    ) -> np.ndarray:
         prepared = self._preprocessor.process(frame_bgr)
         faces = self._detector.detect(prepared.bgr)
         if not faces:
             raise ValueError("No face detected for enrollment")
         best = max(faces, key=lambda f: f.det_score)
-        quality = self._quality_assessor.assess(prepared.bgr, best)
+        quality = self._quality_assessor.assess(prepared.bgr, best, enrollment_mode=enrollment_mode)
         if not quality.accepted:
             raise ValueError(f"Face quality rejected for enrollment: {quality.reason}")
         return self._embedder.embed_face(prepared.bgr, best)

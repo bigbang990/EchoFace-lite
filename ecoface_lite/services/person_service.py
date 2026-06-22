@@ -141,6 +141,7 @@ async def create_person_from_image(
     display_name: str,
     notes: str | None,
     skip_conflict_check: bool = False,
+    force_enroll: bool = False,
 ) -> tuple[Person, bool]:
     """Create a person + embedding, or return an existing person when bytes match a prior upload.
 
@@ -169,7 +170,7 @@ async def create_person_from_image(
 
     _validate_enrollment_image(pipeline, image)
     try:
-        embedding = pipeline.enroll_reference_embedding(image)
+        embedding = pipeline.enroll_reference_embedding(image, enrollment_mode=force_enroll)
     except ValueError:
         raise  # quality rejection — already has a specific message
 
@@ -208,6 +209,7 @@ async def add_photos_to_person(
     person_id: int,
     files: list[bytes],
     filenames: list[str],
+    force_enroll: bool = False,
 ) -> tuple[int, int, list[str]]:
     """Enroll additional reference photos for an existing person.
 
@@ -257,7 +259,7 @@ async def add_photos_to_person(
 
         try:
             _validate_enrollment_image(pipeline, image)
-            embedding = pipeline.enroll_reference_embedding(image)
+            embedding = pipeline.enroll_reference_embedding(image, enrollment_mode=force_enroll)
         except ValueError as exc:
             rejected += 1
             reasons.append(f"{filename}: {exc}")

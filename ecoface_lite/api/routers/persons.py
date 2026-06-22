@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import select
 
 from ecoface_lite.api.deps import DbSession, RecognitionPipelineDep
@@ -26,6 +26,7 @@ async def create_person(
     notes: str | None = Form(default=None),
     image: UploadFile = File(...),
     force_create: bool = Form(default=False),
+    force_enroll: bool = Query(default=False),
 ) -> PersonEnrollOut:
     settings = get_settings()
     raw = await image.read()
@@ -41,6 +42,7 @@ async def create_person(
             display_name=display_name,
             notes=notes,
             skip_conflict_check=force_create,
+            force_enroll=force_enroll,
         )
     except person_service.EnrollmentConflictError as e:
         raise HTTPException(status_code=409, detail={
@@ -65,6 +67,7 @@ async def add_person_photos(
     db: DbSession,
     pipeline: RecognitionPipelineDep,
     images: list[UploadFile] = File(...),
+    force_enroll: bool = Query(default=False),
 ) -> PersonEnrollMultiOut:
     settings = get_settings()
 
@@ -83,7 +86,7 @@ async def add_person_photos(
         filenames.append(image.filename or "upload.jpg")
 
     accepted, rejected, reasons = await person_service.add_photos_to_person(
-        db, pipeline, settings, person_id, raw_files, filenames
+        db, pipeline, settings, person_id, raw_files, filenames, force_enroll=force_enroll
     )
     await db.refresh(person)
     return PersonEnrollMultiOut(
