@@ -14,7 +14,17 @@ aiosqlite>=0.19.0,<0.21.0
 # AI / CV
 numpy>=1.24.0,<2.1.0
 opencv-python-headless>=4.8.0,<4.11.0
-onnxruntime>=1.16.0,<1.20.0
+# ─────────────────────────────────────────────────────────────
+# ONNX Runtime — install environment-specifically, NOT here.
+#
+# InsightFace pulls onnxruntime in as a transitive dependency,
+# so pinning it here would silently downgrade GPU installs.
+#
+#   Colab / GPU:  pip install onnxruntime-gpu==1.19.2
+#   Local / CPU:  pip install onnxruntime==1.19.2
+#
+# The Colab startup notebook handles this automatically.
+# ─────────────────────────────────────────────────────────────
 insightface>=0.7.3,<0.8.0
 gdown>=4.7.0,<6.0.0
 
