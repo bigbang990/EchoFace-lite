@@ -15,7 +15,7 @@ Keys returned
     backend               str   "CPU" or "GPU"
     ctx_id                int   -1 (CPU) / 0 (GPU)
     providers             list  ONNX Runtime execution providers in priority order
-    det_size              tuple (320, 320) — identical for CPU and GPU for cross-env parity
+    det_size              tuple (640, 640) GPU / (320, 320) CPU
     det_interval          int   6 CPU / 3 GPU
     detector_provider     str   value of DETECTOR_PROVIDER env var (default "scrfd")
     detector_budget_ms    int   5000 CPU / 150 GPU
@@ -75,14 +75,15 @@ def detect_platform() -> dict:
     detector_provider = os.environ.get("DETECTOR_PROVIDER", "scrfd").lower().strip()
 
     # ── Build platform dict ───────────────────────────────────────────────────
-    # det_size is (320, 320) on both backends for cross-environment parity.
+    # GPU: det_size=(640,640) — standard SCRFD operating point, aligns with _resize_for_inference(640).
+    # CPU: det_size=(320,320) — intentional; 640px at 400-800ms/cycle is too slow for CPU.
     # Thresholds are intentionally absent — owned by Settings/.env only.
     if cuda_available:
         _PLATFORM_CACHE = {
             "backend":               "GPU",
             "ctx_id":                0,
             "providers":             ["CUDAExecutionProvider", "CPUExecutionProvider"],
-            "det_size":              (320, 320),
+            "det_size":              (640, 640),
             "det_interval":          3,
             "detector_provider":     detector_provider,
             "detector_budget_ms":    150,
