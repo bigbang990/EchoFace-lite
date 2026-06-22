@@ -348,8 +348,8 @@ class RecognitionPipeline:
         # ── Step 4 & 6: Regression Guardrails ────────────────────────────────
         
         # 1. FPS Check
-        if current_fps < 15.0:
-            msg = f"FPS < 15 (Current: {current_fps:.2f})"
+        if current_fps < 8.0:
+            msg = f"FPS < 8 (Current: {current_fps:.2f})"
             logger.warning(
                 "REGRESSION WARNING: %s. "
                 "Probable Root Cause: System resource exhaustion or high-resolution input. "

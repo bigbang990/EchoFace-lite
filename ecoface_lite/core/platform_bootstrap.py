@@ -20,7 +20,7 @@ Keys returned
     detector_provider     str   value of DETECTOR_PROVIDER env var (default "scrfd")
     detector_budget_ms    int   5000 CPU / 150 GPU
     max_track_survival_ms int   6000 CPU / 3000 GPU  — hard ceiling on LOST/COARSE TTL
-    interval_ceiling      int   12 CPU / 8 GPU
+    interval_ceiling      int   12 CPU / 4 GPU
 
 What this file does NOT control
 --------------------------------
@@ -88,7 +88,7 @@ def detect_platform() -> dict:
             "detector_provider":     detector_provider,
             "detector_budget_ms":    150,
             "max_track_survival_ms": 3000,
-            "interval_ceiling":      8,
+            "interval_ceiling":      4,
         }
         logger.info("EchoFace backend=GPU/CUDA — production mode, %s", gpu_name)
     else:
