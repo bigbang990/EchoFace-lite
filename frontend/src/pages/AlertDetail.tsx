@@ -169,7 +169,7 @@ export default function AlertDetail() {
     if (!sighting) return []
     return sightings
       .filter(s => s.person_id === sighting.person_id)
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
   }, [sightings, sighting])
 
   // Reference photos for the matched person
@@ -191,7 +191,13 @@ export default function AlertDetail() {
   const effectiveStatus = localStatus ?? sighting?.status ?? 'PENDING'
   const caseClosed = incident?.status === 'CLOSED' || alertData?.incident_status === 'closed'
   const badge = statusBadge(effectiveStatus)
-  const snapUrl = sighting?.snapshot_path ? buildUrl(sighting.snapshot_path, backendBase) : null
+  const snapUrl = useMemo(() => {
+    const candidates = (alertData?.sightings ?? [])
+      .filter(s => s.snapshot_path)
+      .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+    const best = candidates[0]
+    return best?.snapshot_path ? buildUrl(best.snapshot_path, backendBase) : null
+  }, [alertData, backendBase])
   const pct = sighting ? Math.round(sighting.confidence * 100) : 0
   const c = confidenceColor(pct)
   const ts = sighting ? fmt(sighting.timestamp) : null
