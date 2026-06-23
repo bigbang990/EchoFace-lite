@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     preprocessing_gamma: float = Field(default=1.2, gt=0, alias="PREPROCESSING_GAMMA")
     preprocessing_enable_denoise: bool = Field(default=False, alias="PREPROCESSING_ENABLE_DENOISE")
     preprocessing_brightness_target: float = Field(default=115.0, ge=0, le=255, alias="PREPROCESSING_BRIGHTNESS_TARGET")
-    preprocessing_max_width: int = Field(default=640, ge=160, alias="PREPROCESSING_MAX_WIDTH")
+    preprocessing_max_width: int = Field(default=1920, ge=160, alias="PREPROCESSING_MAX_WIDTH")
     face_quality_min_blur_score: float = Field(default=45.0, ge=0, alias="FACE_QUALITY_MIN_BLUR_SCORE")
     face_quality_min_face_size: int = Field(default=80, ge=1, alias="FACE_QUALITY_MIN_FACE_SIZE")
     face_quality_small_face_size: int = Field(default=60, ge=1, alias="FACE_QUALITY_SMALL_FACE_SIZE")
@@ -376,7 +376,7 @@ class Settings(BaseSettings):
     export_compress_images: bool = Field(default=True, alias="EXPORT_COMPRESS_IMAGES")
 
     video_frame_skip: int = Field(default=1, ge=1, alias="VIDEO_FRAME_SKIP")
-    video_inference_width: int = Field(default=640, ge=160, alias="VIDEO_INFERENCE_WIDTH")
+    video_inference_width: int = Field(default=1920, ge=160, alias="VIDEO_INFERENCE_WIDTH")
     video_progress_interval: int = Field(default=10, ge=1, alias="VIDEO_PROGRESS_INTERVAL")
     video_preview_interval: int = Field(default=1, ge=1, alias="VIDEO_PREVIEW_INTERVAL")
     rejected_face_snapshot_interval: int = Field(default=100, ge=1, alias="REJECTED_FACE_SNAPSHOT_INTERVAL")
