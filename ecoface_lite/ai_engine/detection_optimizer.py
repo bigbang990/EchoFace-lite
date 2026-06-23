@@ -10,6 +10,11 @@ from ecoface_lite.ai_engine.detector import DetectedFace
 from ecoface_lite.ai_engine.geometry import compute_face_geometry, scale_face_to_original
 from ecoface_lite.core.config import Settings
 from ecoface_lite.core.metrics import metrics
+from ecoface_lite.core.platform_bootstrap import detect_platform as _detect_platform
+from ecoface_lite.core.logging import get_logger
+
+logger = get_logger(__name__)
+_PLATFORM = _detect_platform()
 
 
 @dataclass(frozen=True)
@@ -110,7 +115,7 @@ class DetectionOptimizer:
         if self._settings.detector_resolution_cap_enabled:
             min_pixels = self._settings.detector_min_input_pixels
             max_pixels = self._settings.detector_max_input_pixels
-            is_gpu = self._settings.insightface_ctx_id >= 0
+            is_gpu = _PLATFORM.get("backend") == "GPU"
 
             # Clamp target pixels within safe bounds.
             # Phase 2E: On CPU, NEVER clamp up — upscaling on CPU adds compute
@@ -120,17 +125,35 @@ class DetectionOptimizer:
                     target_width, initial_height, max_pixels
                 )
                 metrics.increment("resolution_clamped_down_count")
+                _branch = "clamp_down"
             elif requested_pixels < min_pixels and is_gpu:
                 # GPU only: clamp up to ensure minimum anchor coverage
                 final_width, final_height = self._compute_scaled_dims(
                     target_width, initial_height, min_pixels
                 )
                 metrics.increment("resolution_clamped_up_count")
+                _branch = "clamp_up_gpu"
             elif requested_pixels < min_pixels and not is_gpu:
                 # CPU: accept natural resolution, no upscale
                 metrics.increment("resolution_cpu_natural_count")
+                _branch = "natural_cpu"
             else:
                 metrics.increment("resolution_within_safe_band_count")
+                _branch = "safe_band"
+
+            logger.info(
+                "[DET_OPT] prepare_for_detection: is_gpu=%s ctx_id=%d "
+                "max_px=%d min_px=%d frame=(%d,%d) requested=%d branch=%s final_px=%d",
+                is_gpu,
+                self._settings.insightface_ctx_id,
+                max_pixels,
+                min_pixels,
+                enhanced.shape[0],
+                enhanced.shape[1],
+                requested_pixels,
+                _branch,
+                final_width * final_height,
+            )
 
         final_pixels = final_width * final_height
         metrics.observe("adaptive_resolution_final", final_pixels)
@@ -273,10 +296,14 @@ class DetectionOptimizer:
         # Phase 2E: On CPU, never upgrade to medium/large resolution.
         # 416px or 512px at 4+/8+ tracks costs 1200–2000ms on CPU per cycle.
         # Fixed 320px ceiling keeps each cycle at 400–800ms.
-        is_gpu = self._settings.insightface_ctx_id >= 0
+        is_gpu = _PLATFORM.get("backend") == "GPU"
         if not is_gpu:
             cpu_res = self._settings.cpu_detector_resolution
             metrics.observe("track_count", self.active_track_count())
+            logger.info(
+                "[DET_OPT] _select_detector_size: is_gpu=%s tier=cpu size=(%d,%d)",
+                is_gpu, cpu_res, cpu_res,
+            )
             return (cpu_res, cpu_res)
 
         # GPU: existing adaptive logic — upgrade resolution for crowd/density
@@ -286,15 +313,27 @@ class DetectionOptimizer:
         metrics.observe("frame_occupancy_ratio", occupancy)
         if active_tracks >= self._settings.detector_high_track_count or occupancy >= self._settings.detector_high_occupancy_ratio:
             size = (self._settings.detector_large_width, self._settings.detector_large_height)
+            _tier = "large"
         elif active_tracks >= self._settings.detector_medium_track_count or self._last_faces:
             size = (self._settings.detector_medium_width, self._settings.detector_medium_height)
+            _tier = "medium"
         else:
             size = (self._settings.detector_input_width, self._settings.detector_input_height)
+            _tier = "base"
         # Respect DETECTOR_RESOLUTION_CAP_ENABLED — skip ceiling when flag is False
         if not self._settings.detector_resolution_cap_enabled:
+            logger.info(
+                "[DET_OPT] _select_detector_size: is_gpu=%s tier=%s size=%s (cap disabled)",
+                is_gpu, _tier, size,
+            )
             return size
         gpu_res = self._settings.gpu_detector_resolution
-        return (min(size[0], gpu_res), min(size[1], gpu_res))
+        final_size = (min(size[0], gpu_res), min(size[1], gpu_res))
+        logger.info(
+            "[DET_OPT] _select_detector_size: is_gpu=%s tier=%s size=%s gpu_res=%d final=%s tracks=%d",
+            is_gpu, _tier, size, gpu_res, final_size, active_tracks,
+        )
+        return final_size
 
     def _occupancy_ratio(self, frame_shape: tuple[int, ...]) -> float:
         frame_area = max(1, int(frame_shape[0]) * int(frame_shape[1]))
