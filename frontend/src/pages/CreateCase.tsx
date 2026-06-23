@@ -78,6 +78,7 @@ export default function CreateCase() {
   // Refs survive async continuations without stale-closure issues
   const personIdRef = useRef<string>('')
   const incidentIdRef = useRef<string>('')
+  const isSubmittingRef = useRef(false)
 
   const currentIdx = STEPS.indexOf(step)
 
@@ -116,6 +117,8 @@ export default function CreateCase() {
 
   // REAL step 1: enroll person with first photo
   const runProcessing = async (force = false) => {
+    if (isSubmittingRef.current) return
+    isSubmittingRef.current = true
     personIdRef.current = ''
     incidentIdRef.current = ''
     setPhotoWarning(null)
@@ -143,11 +146,13 @@ export default function CreateCase() {
           if (errData?.detail?.conflict) {
             setEnrollConflict(errData.detail as EnrollmentConflict)
             updateStep(0, 'fail', 'Identity conflict — person may already be in an active case')
+            isSubmittingRef.current = false
             return
           }
         }
         const errText = await pRes.text().catch(() => pRes.statusText)
         updateStep(0, 'fail', `Enrollment failed: ${errText}`)
+        isSubmittingRef.current = false
         return
       }
       const pData = await pRes.json()
@@ -155,6 +160,7 @@ export default function CreateCase() {
       personId = String(pData.person?.id ?? pData.id ?? '')
       if (!personId) {
         updateStep(0, 'fail', 'No person ID in response — check backend logs')
+        isSubmittingRef.current = false
         return
       }
       personIdRef.current = personId
@@ -162,6 +168,7 @@ export default function CreateCase() {
       updateStep(0, 'ok', `Face detected · embedding generated${dedup}`)
     } catch (e) {
       updateStep(0, 'fail', (e as Error).message)
+      isSubmittingRef.current = false
       return
     }
 
@@ -218,6 +225,7 @@ export default function CreateCase() {
 
   // REAL steps 2–3: create incident + link person
   const continueCreatingCase = async () => {
+    if (!personIdRef.current) return
     const personId = personIdRef.current
 
     // Step 2: create incident
@@ -238,6 +246,7 @@ export default function CreateCase() {
       if (!incRes.ok) {
         const errText = await incRes.text().catch(() => incRes.statusText)
         updateStep(2, 'fail', `Failed: ${errText}`)
+        isSubmittingRef.current = false
         return
       }
       const incData = await incRes.json()
@@ -247,6 +256,7 @@ export default function CreateCase() {
       updateStep(2, 'ok', `Case created${ref}`)
     } catch (e) {
       updateStep(2, 'fail', (e as Error).message)
+      isSubmittingRef.current = false
       return
     }
 
@@ -259,12 +269,15 @@ export default function CreateCase() {
       )
       if (!linkRes.ok) {
         updateStep(3, 'fail', `Link failed (${linkRes.status}) — person was enrolled but not linked`)
+        isSubmittingRef.current = false
         return
       }
       updateStep(3, 'ok', `${form.name} enrolled · tracking profile active`)
+      isSubmittingRef.current = false
       setTimeout(() => navigate(`/cases/${incidentId}`), 1400)
     } catch (e) {
       updateStep(3, 'fail', (e as Error).message)
+      isSubmittingRef.current = false
     }
   }
 
@@ -607,7 +620,12 @@ export default function CreateCase() {
               {!photoWarning && procSteps.some((s) => s.status === 'fail') && (
                 <div className="mt-5 flex justify-center gap-3">
                   <button
-                    onClick={() => { setProcSteps(PROC_STEPS.map((s) => ({ ...s }))); handleSubmit() }}
+                    onClick={() => {
+                      setProcSteps(PROC_STEPS.map((s) => ({ ...s })))
+                      setPhotoWarning(null)
+                      isSubmittingRef.current = false
+                      void runProcessing()
+                    }}
                     className="px-4 py-2 bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 rounded text-xs hover:bg-cyan-500/25 transition-colors"
                   >
                     Retry
