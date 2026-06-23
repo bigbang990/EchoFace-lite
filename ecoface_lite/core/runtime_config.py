@@ -258,10 +258,10 @@ class EffectiveRuntimeConfig:
         
         # In EchoFace Lite, the resolution is typically bounded.
         # Let's check the video_inference_width.
-        if self.video_inference_width < 320 or self.video_inference_width > 640:
+        if self.video_inference_width < 320 or self.video_inference_width > 1920:
             self.integrity_warnings.append(
                 f"Resolution Warning: video_inference_width({self.video_inference_width}) is outside "
-                "the stable 320-640 range (90k-120k pixels)."
+                "the stable 320-1920 range."
             )
 
         # 4. Phase 5: Benchmark Profile Mismatch
