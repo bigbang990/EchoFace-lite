@@ -41,6 +41,7 @@ class DetectedFace:
     embedding: np.ndarray | None = None  # when detector+recognition run together (InsightFace)
     landmarks: FaceLandmarks | None = None
     temporal_score: float | None = None  # blended score after temporal agreement
+    gender: int | None = None
 
 
 class FaceDetector(ABC):
@@ -86,6 +87,8 @@ class InsightFaceDetector(FaceDetector):
             landmarks = None
             if kps is not None:
                 landmarks = FaceLandmarks(points=np.asarray(kps, dtype=np.float32).reshape(-1, 2)[:5])
+            raw_gender = getattr(f, "gender", None)
+            gender_int = int(raw_gender) if raw_gender is not None else None
             out.append(
                 DetectedFace(
                     bbox=BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2),
@@ -93,6 +96,7 @@ class InsightFaceDetector(FaceDetector):
                     aligned_face=aligned,
                     embedding=emb_arr,
                     landmarks=landmarks,
+                    gender=gender_int,
                 )
             )
         return out

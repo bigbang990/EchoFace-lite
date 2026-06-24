@@ -28,6 +28,9 @@ class Person(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enrolled_gender: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="0=female 1=male — from InsightFace genderage model"
+    )
     source_image_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # SHA-256 hex of uploaded bytes; used for dedupe (partial unique index on SQLite via migration).
     source_image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

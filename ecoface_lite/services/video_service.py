@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re as _re
 import uuid
 import json
 from time import perf_counter
@@ -30,6 +31,17 @@ logger = get_logger(__name__)
 
 _job_crop_counts: dict[str | None, int] = {}
 _CROP_SAVE_HARD_CAP = 200
+
+
+def _parse_gender_from_notes(notes: str | None) -> int | None:
+    if not notes:
+        return None
+    lower = notes.lower()
+    if "gender: female" in lower:
+        return 0
+    if "gender: male" in lower:
+        return 1
+    return None
 
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
@@ -178,7 +190,7 @@ async def process_prerecorded_video(
 
     from sqlalchemy import select as _select
 
-    from ecoface_lite.db.models import DetectionEvent, Incident, incident_persons
+    from ecoface_lite.db.models import DetectionEvent, Incident, Person, incident_persons
 
     _setup_t0 = perf_counter()
     if _is_stream_url(video_relative_path):
@@ -213,6 +225,19 @@ async def process_prerecorded_video(
     gallery = await load_gallery(session)
     if not gallery:
         raise HTTPException(status_code=400, detail="No enrolled persons in gallery")
+
+    # Build gender map and backfill enrolled_gender from notes for existing persons
+    gender_map: dict[int, int | None] = {}
+    person_rows = await session.execute(_select(Person))
+    for person in person_rows.scalars():
+        if person.enrolled_gender is not None:
+            gender_map[person.id] = person.enrolled_gender
+        else:
+            parsed = _parse_gender_from_notes(person.notes)
+            gender_map[person.id] = parsed
+            if parsed is not None:
+                person.enrolled_gender = parsed
+    await session.flush()
 
     alert_engine = get_alert_session_engine()
     alerts = 0
@@ -262,6 +287,17 @@ async def process_prerecorded_video(
                 metrics.increment("duplicate_alerts_suppressed")
                 continue
             last_sighting_frame_by_person[m.person_id] = packet.index
+
+            # Gender gate — reject cross-gender false positives
+            _enrolled_gender = gender_map.get(m.person_id)
+            _detected_gender = m.face.gender if m.face is not None else None
+            if (
+                _detected_gender is not None
+                and _enrolled_gender is not None
+                and _detected_gender != _enrolled_gender
+            ):
+                metrics.increment("gender_gate_rejections")
+                continue
 
             # Save face crop snapshot
             name = f"{uuid.uuid4().hex}.jpg"

@@ -58,6 +58,14 @@ async def create_person(
         }) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    # Extract and store gender from notes at enrollment time
+    if person.enrolled_gender is None and person.notes:
+        lower = (person.notes or "").lower()
+        if "gender: female" in lower:
+            person.enrolled_gender = 0
+        elif "gender: male" in lower:
+            person.enrolled_gender = 1
+        await db.flush()
     return PersonEnrollOut(person=PersonOut.model_validate(person), deduplicated=deduplicated)
 
 
