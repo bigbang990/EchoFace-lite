@@ -192,12 +192,17 @@ export default function AlertDetail() {
   const caseClosed = incident?.status === 'CLOSED' || alertData?.incident_status === 'closed'
   const badge = statusBadge(effectiveStatus)
   const snapUrl = useMemo(() => {
-    const candidates = (alertData?.sightings ?? [])
+    const alertSightings = alertData?.sightings ?? []
+    const candidates = (
+      alertSightings.length > 0
+        ? alertSightings
+        : sightings.filter(s => String(s.person_id) === String(sighting?.person_id))
+    )
       .filter(s => s.snapshot_path)
       .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
     const best = candidates[0]
     return best?.snapshot_path ? buildUrl(best.snapshot_path, backendBase) : null
-  }, [alertData, backendBase])
+  }, [alertData, sightings, sighting, backendBase])
   const pct = sighting ? Math.round(sighting.confidence * 100) : 0
   const c = confidenceColor(pct)
   const ts = sighting ? fmt(sighting.timestamp) : null
