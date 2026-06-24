@@ -83,12 +83,11 @@ class YOLOv8FaceDetector(BaseDetector):
             gender_int = None
             if self._face_app is not None:
                 try:
-                    import types
                     gender_model = self._face_app.models.get("genderage")
                     if gender_model is not None:
-                        fake_face = types.SimpleNamespace(
-                            bbox=np.array([x1, y1, x2, y2], dtype=np.float32)
-                        )
+                        fake_face = {
+                            "bbox": np.array([x1, y1, x2, y2], dtype=np.float32)
+                        }
                         ga = gender_model.get(frame_bgr, fake_face)
                         if ga is not None:
                             gender_int = int(ga[0])
