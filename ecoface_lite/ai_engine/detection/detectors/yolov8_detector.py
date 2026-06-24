@@ -98,6 +98,14 @@ class YOLOv8FaceDetector(BaseDetector):
                         ga = gender_model.get(frame_bgr, fake_face)
                         if ga is not None:
                             gender_int = int(ga[0])
+                            import logging as _lg
+                            _lg.getLogger(__name__).debug(
+                                "genderage: bbox=[%.0f,%.0f,%.0f,%.0f] ga=%s gender_int=%s",
+                                x1, y1, x2, y2, ga, gender_int
+                            )
+                        else:
+                            import logging as _lg
+                            _lg.getLogger(__name__).warning("genderage returned None for bbox=[%.0f,%.0f,%.0f,%.0f]", x1, y1, x2, y2)
                 except Exception as _gender_exc:
                     import logging as _logging
                     _logging.getLogger(__name__).warning(
