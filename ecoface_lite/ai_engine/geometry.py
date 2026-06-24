@@ -49,6 +49,7 @@ def scale_face_to_original(face: DetectedFace, scale: float) -> DetectedFace:
         embedding=face.embedding,
         landmarks=scaled_landmarks,
         temporal_score=face.temporal_score,
+        gender=face.gender,
     )
 
 
