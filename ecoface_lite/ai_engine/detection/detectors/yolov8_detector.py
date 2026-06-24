@@ -91,8 +91,11 @@ class YOLOv8FaceDetector(BaseDetector):
                         ga = gender_model.get(frame_bgr, fake_face)
                         if ga is not None:
                             gender_int = int(ga[0])
-                except Exception:
-                    pass  # non-fatal — gate will skip if None
+                except Exception as _gender_exc:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "genderage inference failed: %s", _gender_exc
+                    )
 
             out.append(
                 DetectedFace(
