@@ -23,7 +23,7 @@ class YOLOv8FaceDetector(BaseDetector):
     — matches FaceLandmarks convention exactly.
     """
 
-    def __init__(self, weights_path: Path, det_size: tuple[int, int]) -> None:
+    def __init__(self, weights_path: Path, det_size: tuple[int, int], face_app=None) -> None:
         weights_path = Path(weights_path)
         if not weights_path.exists():
             raise FileNotFoundError(
@@ -32,6 +32,7 @@ class YOLOv8FaceDetector(BaseDetector):
             )
         self._weights_path = weights_path
         self._det_size = det_size
+        self._face_app = face_app
 
         import torch
         from ultralytics import YOLO
@@ -76,6 +77,24 @@ class YOLOv8FaceDetector(BaseDetector):
                 pts = r.keypoints.xy[i].cpu().numpy().astype("float32")
                 landmarks = FaceLandmarks(points=pts)
 
+            # Run genderage via shared InsightFace app.
+            # Attribute.get() uses face.bbox (not kps) — pass bbox array directly.
+            # ga[0] is np.argmax(pred[:2]): already 0=female or 1=male, not a prob.
+            gender_int = None
+            if self._face_app is not None:
+                try:
+                    import types
+                    gender_model = self._face_app.models.get("genderage")
+                    if gender_model is not None:
+                        fake_face = types.SimpleNamespace(
+                            bbox=np.array([x1, y1, x2, y2], dtype=np.float32)
+                        )
+                        ga = gender_model.get(frame_bgr, fake_face)
+                        if ga is not None:
+                            gender_int = int(ga[0])
+                except Exception:
+                    pass  # non-fatal — gate will skip if None
+
             out.append(
                 DetectedFace(
                     bbox=BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2),
@@ -84,6 +103,7 @@ class YOLOv8FaceDetector(BaseDetector):
                     embedding=None,
                     landmarks=landmarks,
                     temporal_score=None,
+                    gender=gender_int,
                 )
             )
         return out
