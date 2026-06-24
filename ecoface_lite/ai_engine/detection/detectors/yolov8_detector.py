@@ -85,9 +85,16 @@ class YOLOv8FaceDetector(BaseDetector):
                 try:
                     gender_model = self._face_app.models.get("genderage")
                     if gender_model is not None:
-                        fake_face = {
-                            "bbox": np.array([x1, y1, x2, y2], dtype=np.float32)
-                        }
+                        class _FaceProxy(dict):
+                            """Supports both face.bbox and face['key'] = val."""
+                            def __getattr__(self, key):
+                                try:
+                                    return self[key]
+                                except KeyError:
+                                    raise AttributeError(key)
+                        fake_face = _FaceProxy(
+                            bbox=np.array([x1, y1, x2, y2], dtype=np.float32)
+                        )
                         ga = gender_model.get(frame_bgr, fake_face)
                         if ga is not None:
                             gender_int = int(ga[0])
