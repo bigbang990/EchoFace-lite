@@ -219,6 +219,8 @@ class Sighting(Base):
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     frame_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     snapshot_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    blur_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pose_bucket: Mapped[str | None] = mapped_column(String(32), nullable=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False, server_default="live", default="live")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending", default="pending")

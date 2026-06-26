@@ -129,6 +129,9 @@ async def _sqlite_apply_schema_patches() -> None:
             "ALTER TABLE cameras ADD COLUMN dvr_clip_dir VARCHAR(1024)",
             # Gender hard gate
             "ALTER TABLE persons ADD COLUMN enrolled_gender INTEGER",
+            # Sighting quality fields
+            "ALTER TABLE sightings ADD COLUMN blur_score REAL",
+            "ALTER TABLE sightings ADD COLUMN pose_bucket VARCHAR(32)",
         ):
             try:
                 await conn.execute(text(stmt))

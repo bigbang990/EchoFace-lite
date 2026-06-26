@@ -295,6 +295,8 @@ class SightingOut(BaseModel):
     source_name: str | None = None
     frame_index: int | None = None
     snapshot_path: str | None = None
+    blur_score: float | None = None
+    pose_bucket: str | None = None
 
 
 class SightingStatusUpdate(BaseModel):
