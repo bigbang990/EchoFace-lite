@@ -875,6 +875,9 @@ class RecognitionPipeline:
             diagnostics.record("frame", "no_face_detected", frame_index=frame_index)
 
         for face, track in face_track_results:
+            # Store gender in track metadata on first detection
+            if face.gender is not None and track.metadata.get("gender") is None:
+                track.metadata["gender"] = face.gender
             tier = face_tier.get(id(face), ValidationTier.STRICT_PASS)
             match = self._process_tracked_face(
                 face=face, track=track, prepared=prepared,
