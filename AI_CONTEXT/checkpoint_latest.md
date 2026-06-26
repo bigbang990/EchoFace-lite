@@ -1,7 +1,7 @@
-# Checkpoint — 2026-06-26 — sighting quality fields + crop display fix
+# Checkpoint — 2026-06-27 — alert sightings list fix + source label fix
 
 ## Phase
-Sighting quality fields + crop display fix.
+Alert sightings list fix + source label fix.
 Branch: `vsl-phase3-multi-source`
 
 ## Regression baseline metrics (carried forward)
@@ -14,7 +14,7 @@ Test suite: 7/7 passed (test_tracking.py).
 
 ## Changes this session
 
-### 4 surgical fixes — one commit each
+### 6 surgical fixes across two sessions
 
 | Commit | Files | Problem | Fix |
 |--------|-------|---------|-----|
@@ -22,6 +22,8 @@ Test suite: 7/7 passed (test_tracking.py).
 | `44ddc9c` feat(sightings) | `video_service.py`, `alert_session_engine.py` | Every sighting row had `blur_score=NULL`, `pose_bucket=NULL` | Compute both from face crop at write-time; pass through `record_match()` to both audit and active sightings |
 | `1a14a8d` fix(snapshots) | `video_service.py` | Snapshot crops 73–92 px wide (ArcFace min is 112 px; unreadable in dashboard) | Upscale snapshot copy to 112 px min via `cv2.INTER_CUBIC` before `imwrite`; ArcFace path unaffected |
 | `66a7d16` feat(frontend) | `types/index.ts`, `AlertDetail.tsx` | Hero crop selected by confidence only — 0.758-conf back-of-head won over 0.63-conf frontal | Quality composite: `conf + pose_bonus(0.15 if FRONTAL) + blur_bonus(min(blur/500, 0.15))` |
+| `91d02b8` fix(api) | `routers/alerts.py` | `GET /incidents/{id}/alerts` returned `sightings: []` despite `sighting_count >= 1` | Added `selectinload(Alert.sightings)` to list query + `with_sightings=True` to `_alert_out()` call; added `blur_score`/`pose_bucket` to `SightingOut` constructor |
+| `80e900d` fix(pipeline) | `video_service.py` | Batch video sightings stored with `source: "live"` | Changed hardcoded `source="live"` to `source="video"` in `record_match()` call |
 
 ---
 
