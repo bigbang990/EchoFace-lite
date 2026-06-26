@@ -394,7 +394,7 @@ class Settings(BaseSettings):
     # Minimum confidence to open or extend an alert session.
     # Matches below this floor write a sighting row for audit but produce no Alert.
     # Sits above validator_cutoff (noise) but below strong-match threshold.
-    alert_min_confidence_floor: float = Field(default=0.72, ge=0.0, le=1.0, alias="ALERT_MIN_CONFIDENCE_FLOOR")
+    alert_min_confidence_floor: float = Field(default=0.70, ge=0.0, le=1.0, alias="ALERT_MIN_CONFIDENCE_FLOOR")
     # Cosine similarity threshold for flagging a new enrollment as matching an existing person
     # in an open incident. Prevents accidental duplicate case creation.
     enrollment_conflict_threshold: float = Field(default=0.65, ge=0.0, le=1.0, alias="ENROLLMENT_CONFLICT_THRESHOLD")
