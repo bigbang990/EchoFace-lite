@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Upload, X, ArrowRight, ArrowLeft, ExternalLink, AlertTriangle, CheckCircle2, XCircle, Loader2, AlertCircle } from 'lucide-react'
+import { Upload, X, ArrowRight, ArrowLeft, ExternalLink, AlertTriangle, CheckCircle2, XCircle, Loader2, AlertCircle, Eye, RefreshCw } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
 import { nextIncidentRef } from '../mock/data'
 
-type Step = 'person' | 'last-seen' | 'photos' | 'processing' | 'success'
+type Step = 'person' | 'last-seen' | 'photos' | 'validating' | 'processing' | 'success'
 
 interface FormData {
   name: string
@@ -43,6 +43,23 @@ interface EnrollmentConflict {
   similarity: number
 }
 
+interface PhotoValidationResult {
+  index: number
+  filename: string
+  status: 'ok' | 'rejected' | 'outlier'
+  reason: string | null
+  is_outlier: boolean
+  thumbnail_b64: string | null
+}
+
+interface BatchValidationOut {
+  photos: PhotoValidationResult[]
+  valid_count: number
+  rejected_count: number
+  outlier_indices: number[]
+  can_proceed: boolean
+}
+
 const PROC_STEPS: ProcStep[] = [
   { label: 'Analyzing reference photos',   status: 'idle', detail: '' },
   { label: 'Creating face embeddings',      status: 'idle', detail: '' },
@@ -50,7 +67,7 @@ const PROC_STEPS: ProcStep[] = [
   { label: 'Activating tracking profile',   status: 'idle', detail: '' },
 ]
 
-const STEPS: Step[] = ['person', 'last-seen', 'photos', 'processing', 'success']
+const STEPS: Step[] = ['person', 'last-seen', 'photos', 'validating', 'processing', 'success']
 const GENDERS = ['Female', 'Male', 'Non-binary / Other', 'Prefer not to say']
 
 export default function CreateCase() {
@@ -75,7 +92,13 @@ export default function CreateCase() {
   const [photoWarning, setPhotoWarning] = useState<PhotoWarning | null>(null)
   const [enrollConflict, setEnrollConflict] = useState<EnrollmentConflict | null>(null)
   const [conflictConfirmText, setConflictConfirmText] = useState('')
-  // Refs survive async continuations without stale-closure issues
+
+  const [validationResults, setValidationResults] = useState<BatchValidationOut | null>(null)
+  const [validationLoading, setValidationLoading] = useState(false)
+  const [validationError, setValidationError] = useState<string | null>(null)
+  const [operatorApprovedOutliers, setOperatorApprovedOutliers] = useState<Set<number>>(new Set())
+  const [operatorRemovedIndices, setOperatorRemovedIndices] = useState<Set<number>>(new Set())
+
   const personIdRef = useRef<string>('')
   const incidentIdRef = useRef<string>('')
   const isSubmittingRef = useRef(false)
@@ -98,7 +121,90 @@ export default function CreateCase() {
   const updateStep = (idx: number, status: ProcStep['status'], detail: string) =>
     setProcSteps((prev) => prev.map((s, i) => (i === idx ? { ...s, status, detail } : s)))
 
-  // MOCK: fake delays, then success screen
+  const runValidation = async () => {
+    if (form.photos.length === 0) return
+    setValidationLoading(true)
+    setValidationError(null)
+    setValidationResults(null)
+    setOperatorApprovedOutliers(new Set())
+    setOperatorRemovedIndices(new Set())
+    setStep('validating')
+
+    if (accessMode === 'MOCK') {
+      await new Promise(r => setTimeout(r, 1200))
+      const mockResult: BatchValidationOut = {
+        photos: form.photos.map((f, i) => ({
+          index: i, filename: f.name, status: 'ok', reason: null,
+          is_outlier: false, thumbnail_b64: null,
+        })),
+        valid_count: form.photos.length,
+        rejected_count: 0,
+        outlier_indices: [],
+        can_proceed: true,
+      }
+      setValidationResults(mockResult)
+      setValidationLoading(false)
+      return
+    }
+
+    try {
+      const fd = new FormData()
+      for (const photo of form.photos) fd.append('images', photo)
+      const res = await fetch(`${incUrl}/persons/validate-batch`, { method: 'POST', body: fd })
+      if (!res.ok) {
+        const txt = await res.text().catch(() => res.statusText)
+        setValidationError(`Validation failed: ${txt}`)
+        setValidationLoading(false)
+        return
+      }
+      const data = await res.json() as BatchValidationOut
+      setValidationResults(data)
+    } catch (e) {
+      setValidationError((e as Error).message)
+    }
+    setValidationLoading(false)
+  }
+
+  const approvedPhotoIndices = (): number[] => {
+    if (!validationResults) return form.photos.map((_, i) => i)
+    return validationResults.photos
+      .filter(p => {
+        if (operatorRemovedIndices.has(p.index)) return false
+        if (p.status === 'rejected') return false
+        if (p.is_outlier && !operatorApprovedOutliers.has(p.index)) return false
+        return true
+      })
+      .map(p => p.index)
+  }
+
+  const pendingOutliers = (): PhotoValidationResult[] => {
+    if (!validationResults) return []
+    return validationResults.photos.filter(
+      p => p.is_outlier && !operatorApprovedOutliers.has(p.index) && !operatorRemovedIndices.has(p.index)
+    )
+  }
+
+  const canProceedFromValidation = (): boolean => {
+    if (!validationResults) return false
+    if (!validationResults.can_proceed) return false
+    if (pendingOutliers().length > 0) return false
+    return approvedPhotoIndices().length > 0
+  }
+
+  const proceedAfterValidation = () => {
+    const approved = approvedPhotoIndices()
+    const filteredPhotos = form.photos.filter((_, i) => approved.includes(i))
+    update('photos', filteredPhotos)
+    setStep('processing')
+    setProcSteps(PROC_STEPS.map((s) => ({ ...s })))
+    setPhotoWarning(null)
+    if (accessMode === 'MOCK') {
+      runMockProcessing()
+    } else {
+      runProcessing()
+    }
+  }
+
   const runMockProcessing = async () => {
     const details = [
       'Face detected · 1 embedding generated',
@@ -115,7 +221,6 @@ export default function CreateCase() {
     setTimeout(() => setStep('success'), 600)
   }
 
-  // REAL step 1: enroll person with first photo
   const runProcessing = async (force = false) => {
     if (isSubmittingRef.current) return
     isSubmittingRef.current = true
@@ -126,14 +231,10 @@ export default function CreateCase() {
     setConflictConfirmText('')
     setProcSteps(PROC_STEPS.map((s) => ({ ...s })))
 
-    // Step 0: first photo → create person + embedding
     updateStep(0, 'running', '')
     const pForm = new FormData()
     pForm.append('display_name', form.name)
-    pForm.append(
-      'notes',
-      `Age: ${form.age || 'unknown'}, Gender: ${form.gender}. ${form.description}`
-    )
+    pForm.append('notes', `Age: ${form.age || 'unknown'}, Gender: ${form.gender}. ${form.description}`)
     if (form.photos.length > 0) pForm.append('image', form.photos[0])
     if (force) pForm.append('force_create', 'true')
 
@@ -156,7 +257,6 @@ export default function CreateCase() {
         return
       }
       const pData = await pRes.json()
-      // Backend returns PersonEnrollOut = { person: PersonOut, deduplicated: bool }
       personId = String(pData.person?.id ?? pData.id ?? '')
       if (!personId) {
         updateStep(0, 'fail', 'No person ID in response — check backend logs')
@@ -172,28 +272,19 @@ export default function CreateCase() {
       return
     }
 
-    // Step 1: additional photos (one by one for per-photo feedback)
     let totalAccepted = 1
     let totalRejected = 0
     const rejectionReasons: string[] = []
 
     if (form.photos.length > 1) {
-      updateStep(
-        1,
-        'running',
-        `Processing ${form.photos.length - 1} additional photo${form.photos.length > 2 ? 's' : ''}…`
-      )
+      updateStep(1, 'running', `Processing ${form.photos.length - 1} additional photo${form.photos.length > 2 ? 's' : ''}…`)
       for (let i = 1; i < form.photos.length; i++) {
         try {
           const ef = new FormData()
           ef.append('images', form.photos[i])
-          const res = await fetch(`${incUrl}/persons/${personId}/photos`, {
-            method: 'POST',
-            body: ef,
-          })
+          const res = await fetch(`${incUrl}/persons/${personId}/photos`, { method: 'POST', body: ef })
           if (res.ok) {
             const d = await res.json()
-            // PersonEnrollMultiOut = { person, photos_accepted, photos_rejected, rejection_reasons }
             totalAccepted += Number(d.photos_accepted ?? 1)
             const rej = Number(d.photos_rejected ?? 0)
             totalRejected += rej
@@ -201,18 +292,14 @@ export default function CreateCase() {
               rejectionReasons.push(...(d.rejection_reasons as string[]))
             }
           }
-        } catch { /* continue — non-fatal */ }
+        } catch { /* non-fatal */ }
       }
-
       if (totalRejected > 0) {
         const reason = rejectionReasons[0] ?? 'no clear face detected'
-        updateStep(
-          1,
-          'warn',
-          `${totalAccepted} accepted · ${totalRejected} rejected (${reason})`
-        )
+        updateStep(1, 'warn', `${totalAccepted} accepted · ${totalRejected} rejected (${reason})`)
         setPhotoWarning({ rejected: totalRejected, accepted: totalAccepted, reasons: rejectionReasons })
-        return // pause — wait for agent confirmation below
+        isSubmittingRef.current = false
+        return
       } else {
         updateStep(1, 'ok', `${totalAccepted} photos · ${totalAccepted} embeddings generated`)
       }
@@ -223,12 +310,10 @@ export default function CreateCase() {
     await continueCreatingCase()
   }
 
-  // REAL steps 2–3: create incident + link person
   const continueCreatingCase = async () => {
     if (!personIdRef.current) return
     const personId = personIdRef.current
 
-    // Step 2: create incident
     updateStep(2, 'running', '')
     let incidentId: string
     try {
@@ -260,13 +345,9 @@ export default function CreateCase() {
       return
     }
 
-    // Step 3: link person → incident
     updateStep(3, 'running', '')
     try {
-      const linkRes = await fetch(
-        `${incUrl}/incidents/${incidentId}/persons/${personId}`,
-        { method: 'POST' }
-      )
+      const linkRes = await fetch(`${incUrl}/incidents/${incidentId}/persons/${personId}`, { method: 'POST' })
       if (!linkRes.ok) {
         updateStep(3, 'fail', `Link failed (${linkRes.status}) — person was enrolled but not linked`)
         isSubmittingRef.current = false
@@ -282,14 +363,7 @@ export default function CreateCase() {
   }
 
   const handleSubmit = () => {
-    setStep('processing')
-    setProcSteps(PROC_STEPS.map((s) => ({ ...s })))
-    setPhotoWarning(null)
-    if (accessMode === 'MOCK') {
-      runMockProcessing()
-    } else {
-      runProcessing()
-    }
+    void runValidation()
   }
 
   return (
@@ -301,51 +375,27 @@ export default function CreateCase() {
         </p>
       </div>
 
-      <StepProgress current={currentIdx} total={3} />
+      <StepProgress current={currentIdx} total={4} />
 
       <div className="mt-8 bg-gray-900 border border-gray-800 rounded-lg p-7">
         <AnimatePresence mode="wait">
           {step === 'person' && (
-            <StepPanel key="person" title="Person Details" subtitle="Step 1 of 3">
+            <StepPanel key="person" title="Person Details" subtitle="Step 1 of 4">
               <Field label="Full name">
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => update('name', e.target.value)}
-                  className={inputCls}
-                  placeholder="e.g. Sarah Chen"
-                />
+                <input type="text" value={form.name} onChange={(e) => update('name', e.target.value)} className={inputCls} placeholder="e.g. Sarah Chen" />
               </Field>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Age">
-                  <input
-                    type="number"
-                    value={form.age}
-                    onChange={(e) => update('age', e.target.value)}
-                    className={inputCls}
-                    placeholder="e.g. 24"
-                    min={1}
-                    max={120}
-                  />
+                  <input type="number" value={form.age} onChange={(e) => update('age', e.target.value)} className={inputCls} placeholder="e.g. 24" min={1} max={120} />
                 </Field>
                 <Field label="Gender">
-                  <select
-                    value={form.gender}
-                    onChange={(e) => update('gender', e.target.value)}
-                    className={inputCls}
-                  >
+                  <select value={form.gender} onChange={(e) => update('gender', e.target.value)} className={inputCls}>
                     {GENDERS.map((g) => <option key={g} value={g}>{g}</option>)}
                   </select>
                 </Field>
               </div>
               <Field label="Physical description">
-                <textarea
-                  value={form.description}
-                  onChange={(e) => update('description', e.target.value)}
-                  className={`${inputCls} resize-none`}
-                  rows={3}
-                  placeholder="Clothing, distinguishing features, hair colour, etc."
-                />
+                <textarea value={form.description} onChange={(e) => update('description', e.target.value)} className={`${inputCls} resize-none`} rows={3} placeholder="Clothing, distinguishing features, hair colour, etc." />
               </Field>
               <div className="flex justify-end">
                 <NextBtn disabled={!form.name} onClick={next} />
@@ -354,42 +404,20 @@ export default function CreateCase() {
           )}
 
           {step === 'last-seen' && (
-            <StepPanel key="last-seen" title="Last Known Location" subtitle="Step 2 of 3">
+            <StepPanel key="last-seen" title="Last Known Location" subtitle="Step 2 of 4">
               <Field label="Location">
-                <input
-                  type="text"
-                  value={form.location}
-                  onChange={(e) => update('location', e.target.value)}
-                  className={inputCls}
-                  placeholder="e.g. Whitechapel Market, London E1"
-                />
+                <input type="text" value={form.location} onChange={(e) => update('location', e.target.value)} className={inputCls} placeholder="e.g. Whitechapel Market, London E1" />
               </Field>
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Date">
-                  <input
-                    type="date"
-                    value={form.lastSeenDate}
-                    onChange={(e) => update('lastSeenDate', e.target.value)}
-                    className={inputCls}
-                  />
+                  <input type="date" value={form.lastSeenDate} onChange={(e) => update('lastSeenDate', e.target.value)} className={inputCls} />
                 </Field>
                 <Field label="Time">
-                  <input
-                    type="time"
-                    value={form.lastSeenTime}
-                    onChange={(e) => update('lastSeenTime', e.target.value)}
-                    className={inputCls}
-                  />
+                  <input type="time" value={form.lastSeenTime} onChange={(e) => update('lastSeenTime', e.target.value)} className={inputCls} />
                 </Field>
               </div>
               <Field label="Additional notes">
-                <textarea
-                  value={form.notes}
-                  onChange={(e) => update('notes', e.target.value)}
-                  className={`${inputCls} resize-none`}
-                  rows={3}
-                  placeholder="Context, circumstances, who reported, etc."
-                />
+                <textarea value={form.notes} onChange={(e) => update('notes', e.target.value)} className={`${inputCls} resize-none`} rows={3} placeholder="Context, circumstances, who reported, etc." />
               </Field>
               <div className="flex justify-between">
                 <BackBtn onClick={back} />
@@ -399,37 +427,25 @@ export default function CreateCase() {
           )}
 
           {step === 'photos' && (
-            <StepPanel key="photos" title="Reference Photos" subtitle="Step 3 of 3">
+            <StepPanel key="photos" title="Reference Photos" subtitle="Step 3 of 4">
               <p className="text-sm text-gray-500 mb-5">
-                Upload one or more clear photos. Multiple angles improve match accuracy.
+                Upload 1–8 photos. Multiple angles (frontal, 3/4 view, profile) significantly improve match accuracy.
               </p>
-              <input
-                ref={fileRef}
-                type="file"
-                multiple
-                accept="image/*"
-                className="hidden"
-                onChange={handleFileChange}
-              />
+              <input ref={fileRef} type="file" multiple accept="image/*" className="hidden" onChange={handleFileChange} />
               <button
                 onClick={() => fileRef.current?.click()}
                 className="w-full border-2 border-dashed border-gray-700 hover:border-cyan-600/50 rounded-lg p-8 flex flex-col items-center gap-3 transition-colors text-gray-600 hover:text-gray-400"
               >
                 <Upload size={24} />
                 <span className="text-sm">Click to upload photos</span>
-                <span className="text-[11px] font-mono text-gray-700">PNG / JPG / WEBP — multiple files OK</span>
+                <span className="text-[11px] font-mono text-gray-700">PNG / JPG / WEBP — up to 8 photos</span>
               </button>
               {form.photos.length > 0 && (
                 <div className="mt-4 space-y-2">
                   {form.photos.map((file, i) => (
                     <div key={i} className="flex items-center gap-3 bg-gray-800/60 border border-gray-700 rounded px-4 py-2.5">
                       <div className="w-8 h-8 bg-gray-700 rounded flex items-center justify-center flex-shrink-0 overflow-hidden">
-                        <img
-                          src={URL.createObjectURL(file)}
-                          alt=""
-                          className="w-full h-full object-cover"
-                          onLoad={(e) => URL.revokeObjectURL((e.target as HTMLImageElement).src)}
-                        />
+                        <img src={URL.createObjectURL(file)} alt="" className="w-full h-full object-cover" onLoad={(e) => URL.revokeObjectURL((e.target as HTMLImageElement).src)} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-sm text-gray-300 truncate">{file.name}</div>
@@ -449,120 +465,171 @@ export default function CreateCase() {
                   disabled={form.photos.length === 0}
                   className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded text-sm font-medium hover:bg-cyan-500/25 transition-colors disabled:opacity-30 disabled:pointer-events-none"
                 >
-                  Create Case & Activate
-                  <ArrowRight size={14} />
+                  Validate & Continue <ArrowRight size={14} />
                 </button>
               </div>
+            </StepPanel>
+          )}
+
+          {step === 'validating' && (
+            <StepPanel key="validating" title="Photo Validation" subtitle="Step 4 of 4">
+              {validationLoading && (
+                <div className="flex flex-col items-center py-10 gap-4">
+                  <Loader2 size={28} className="text-cyan-400 animate-spin" />
+                  <p className="text-sm text-gray-500">Analyzing {form.photos.length} photo{form.photos.length !== 1 ? 's' : ''}…</p>
+                  <p className="text-[11px] font-mono text-gray-700">Running face detection + identity clustering</p>
+                </div>
+              )}
+
+              {validationError && (
+                <div className="bg-red-500/8 border border-red-500/30 rounded-lg p-4 mb-4">
+                  <p className="text-xs text-red-400">{validationError}</p>
+                  <button onClick={() => void runValidation()} className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-gray-300">
+                    <RefreshCw size={11} /> Retry
+                  </button>
+                </div>
+              )}
+
+              {validationResults && !validationLoading && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    {validationResults.photos.map((photo) => {
+                      const isRemoved = operatorRemovedIndices.has(photo.index)
+                      const isApproved = operatorApprovedOutliers.has(photo.index)
+                      const effectiveStatus = isRemoved ? 'removed' : isApproved && photo.is_outlier ? 'ok' : photo.status
+                      return (
+                        <div key={photo.index} className={`flex items-start gap-3 rounded-lg px-4 py-3 border transition-colors ${
+                          isRemoved ? 'border-gray-800 bg-transparent opacity-40' :
+                          effectiveStatus === 'ok' ? 'border-emerald-500/25 bg-emerald-500/5' :
+                          effectiveStatus === 'outlier' ? 'border-amber-500/25 bg-amber-500/5' :
+                          'border-red-500/25 bg-red-500/5'
+                        }`}>
+                          <div className="w-10 h-10 rounded bg-gray-800 flex-shrink-0 overflow-hidden">
+                            {photo.thumbnail_b64
+                              ? <img src={`data:image/jpeg;base64,${photo.thumbnail_b64}`} alt="" className="w-full h-full object-cover" />
+                              : <div className="w-full h-full flex items-center justify-center"><Eye size={12} className="text-gray-600" /></div>
+                            }
+                          </div>
+                          <div className="flex-shrink-0 mt-0.5">
+                            {isRemoved && <div className="w-4 h-4 rounded-full border border-gray-700" />}
+                            {!isRemoved && effectiveStatus === 'ok' && <CheckCircle2 size={16} className="text-emerald-400" />}
+                            {!isRemoved && effectiveStatus === 'outlier' && <AlertTriangle size={16} className="text-amber-400" />}
+                            {!isRemoved && effectiveStatus === 'rejected' && <XCircle size={16} className="text-red-400" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className={`text-[13px] font-medium truncate ${
+                              isRemoved ? 'text-gray-600' :
+                              effectiveStatus === 'ok' ? 'text-emerald-300' :
+                              effectiveStatus === 'outlier' ? 'text-amber-300' : 'text-red-300'
+                            }`}>
+                              {isRemoved ? 'Removed' : effectiveStatus === 'ok' ? 'Accepted' : effectiveStatus === 'outlier' ? 'Identity mismatch — review required' : 'Rejected'}
+                            </div>
+                            <div className="text-[10px] font-mono text-gray-600 truncate">
+                              {isRemoved ? photo.filename : (photo.reason ?? photo.filename)}
+                            </div>
+                          </div>
+                          {photo.is_outlier && !isRemoved && !isApproved && (
+                            <div className="flex gap-1.5 flex-shrink-0">
+                              <button
+                                onClick={() => setOperatorApprovedOutliers(prev => new Set([...prev, photo.index]))}
+                                className="px-2.5 py-1 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded text-[10px] font-medium hover:bg-amber-500/25 transition-colors"
+                              >Keep</button>
+                              <button
+                                onClick={() => setOperatorRemovedIndices(prev => new Set([...prev, photo.index]))}
+                                className="px-2.5 py-1 border border-gray-700 text-gray-500 rounded text-[10px] hover:bg-gray-800 hover:text-gray-300 transition-colors"
+                              >Remove</button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <div className="pt-2 border-t border-gray-800">
+                    {pendingOutliers().length > 0 ? (
+                      <p className="text-[11px] text-amber-400/80 font-mono">
+                        ⚠ {pendingOutliers().length} photo{pendingOutliers().length !== 1 ? 's' : ''} require operator review before proceeding
+                      </p>
+                    ) : approvedPhotoIndices().length === 0 ? (
+                      <p className="text-[11px] text-red-400/80 font-mono">No valid photos — go back and upload different photos</p>
+                    ) : (
+                      <p className="text-[11px] text-gray-500 font-mono">
+                        {approvedPhotoIndices().length} photo{approvedPhotoIndices().length !== 1 ? 's' : ''} ready for enrollment
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex justify-between pt-1">
+                    <button onClick={() => { setValidationResults(null); setStep('photos') }} className="flex items-center gap-2 px-4 py-2.5 border border-gray-700 text-gray-500 rounded text-sm hover:bg-gray-800 hover:text-gray-300 transition-colors">
+                      <ArrowLeft size={14} /> Re-upload
+                    </button>
+                    <button
+                      onClick={proceedAfterValidation}
+                      disabled={!canProceedFromValidation()}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded text-sm font-medium hover:bg-cyan-500/25 transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                    >
+                      Create Case & Activate <ArrowRight size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
             </StepPanel>
           )}
 
           {step === 'processing' && (
             <StepPanel key="processing" title="Creating Case" subtitle={caseRef}>
               <div className="mb-5 text-sm text-gray-500">
-                Enrolling{' '}
-                <span className="font-semibold text-gray-300">{form.name || 'subject'}</span>
-                {' '}— {form.photos.length} photo{form.photos.length !== 1 ? 's' : ''} submitted
+                Enrolling <span className="font-semibold text-gray-300">{form.name || 'subject'}</span> — {form.photos.length} photo{form.photos.length !== 1 ? 's' : ''} submitted
               </div>
-
               <div className="space-y-3">
                 {procSteps.map((s, i) => (
-                  <div
-                    key={i}
-                    className={`flex items-start gap-3 rounded-lg px-4 py-3 border transition-colors ${
-                      s.status === 'idle'    ? 'border-gray-800 bg-transparent' :
-                      s.status === 'running' ? 'border-cyan-500/25 bg-cyan-500/5' :
-                      s.status === 'ok'      ? 'border-emerald-500/25 bg-emerald-500/5' :
-                      s.status === 'warn'    ? 'border-amber-500/25 bg-amber-500/5' :
-                                               'border-red-500/25 bg-red-500/5'
-                    }`}
-                  >
+                  <div key={i} className={`flex items-start gap-3 rounded-lg px-4 py-3 border transition-colors ${
+                    s.status === 'idle' ? 'border-gray-800 bg-transparent' :
+                    s.status === 'running' ? 'border-cyan-500/25 bg-cyan-500/5' :
+                    s.status === 'ok' ? 'border-emerald-500/25 bg-emerald-500/5' :
+                    s.status === 'warn' ? 'border-amber-500/25 bg-amber-500/5' :
+                    'border-red-500/25 bg-red-500/5'
+                  }`}>
                     <div className="flex-shrink-0 mt-0.5">
-                      {s.status === 'idle'    && <div className="w-4 h-4 rounded-full border border-gray-700" />}
+                      {s.status === 'idle' && <div className="w-4 h-4 rounded-full border border-gray-700" />}
                       {s.status === 'running' && <Loader2 size={16} className="text-cyan-400 animate-spin" />}
-                      {s.status === 'ok'      && <CheckCircle2 size={16} className="text-emerald-400" />}
-                      {s.status === 'warn'    && <AlertCircle size={16} className="text-amber-400" />}
-                      {s.status === 'fail'    && <XCircle size={16} className="text-red-400" />}
+                      {s.status === 'ok' && <CheckCircle2 size={16} className="text-emerald-400" />}
+                      {s.status === 'warn' && <AlertCircle size={16} className="text-amber-400" />}
+                      {s.status === 'fail' && <XCircle size={16} className="text-red-400" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className={`text-[13px] font-medium ${
-                        s.status === 'idle'    ? 'text-gray-600' :
+                        s.status === 'idle' ? 'text-gray-600' :
                         s.status === 'running' ? 'text-cyan-300' :
-                        s.status === 'ok'      ? 'text-emerald-300' :
-                        s.status === 'warn'    ? 'text-amber-300' :
-                                                  'text-red-300'
+                        s.status === 'ok' ? 'text-emerald-300' :
+                        s.status === 'warn' ? 'text-amber-300' : 'text-red-300'
                       }`}>{s.label}</div>
-                      {s.detail && (
-                        <div className="text-[11px] font-mono text-gray-500 mt-0.5 break-words">{s.detail}</div>
-                      )}
+                      {s.detail && <div className="text-[11px] font-mono text-gray-500 mt-0.5 break-words">{s.detail}</div>}
                     </div>
                   </div>
                 ))}
               </div>
 
-              {/* Active Case Conflict */}
               {enrollConflict && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mt-5 bg-red-500/8 border border-red-500/30 rounded-lg p-4"
-                >
+                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-5 bg-red-500/8 border border-red-500/30 rounded-lg p-4">
                   <div className="flex items-start gap-3">
                     <AlertTriangle size={15} className="text-red-400 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-semibold text-red-300 mb-1">
-                        Active Case Conflict
-                      </div>
+                      <div className="text-xs font-semibold text-red-300 mb-1">Active Case Conflict</div>
                       <p className="text-[11px] text-gray-300 mb-0.5">
-                        <span className="text-white font-medium">{enrollConflict.person_name}</span>
-                        {' '}is already enrolled in{' '}
-                        <span className="text-white font-medium">{enrollConflict.incident_ref}</span>
-                        {' '}with a {Math.round(enrollConflict.similarity * 100)}% identity match.
+                        <span className="text-white font-medium">{enrollConflict.person_name}</span> is already enrolled in <span className="text-white font-medium">{enrollConflict.incident_ref}</span> with a {Math.round(enrollConflict.similarity * 100)}% identity match.
                       </p>
                       <p className="text-[10px] text-gray-500 mb-3">
-                        {enrollConflict.incident_title} · {enrollConflict.incident_status.toUpperCase()} · opened{' '}
-                        {new Date(enrollConflict.incident_opened_at).toLocaleDateString('en-GB', {
-                          day: '2-digit', month: 'short', year: 'numeric',
-                        })}
+                        {enrollConflict.incident_title} · {enrollConflict.incident_status.toUpperCase()} · opened {new Date(enrollConflict.incident_opened_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </p>
-
                       <div className="flex gap-2 mb-4">
-                        <button
-                          onClick={() => navigate(`/cases/${enrollConflict.incident_id}`)}
-                          className="px-3 py-1.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 rounded text-[11px] font-medium hover:bg-cyan-500/20 transition-colors"
-                        >
-                          View Case
-                        </button>
-                        <button
-                          onClick={() => navigate(`/cases/${enrollConflict.incident_id}`)}
-                          className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-gray-300 rounded text-[11px] font-medium hover:bg-gray-700 transition-colors"
-                        >
-                          Add Photos to Existing
-                        </button>
+                        <button onClick={() => navigate(`/cases/${enrollConflict.incident_id}`)} className="px-3 py-1.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 rounded text-[11px] font-medium hover:bg-cyan-500/20 transition-colors">View Case</button>
                       </div>
-
                       <div className="border-t border-red-500/20 pt-3">
-                        <p className="text-[10px] text-gray-600 mb-2">
-                          To create a separate case anyway, type{' '}
-                          <span className="text-gray-400 font-mono">CREATE DUPLICATE</span> below:
-                        </p>
+                        <p className="text-[10px] text-gray-600 mb-2">To create a separate case anyway, type <span className="text-gray-400 font-mono">CREATE DUPLICATE</span> below:</p>
                         <div className="flex gap-2">
-                          <input
-                            value={conflictConfirmText}
-                            onChange={e => setConflictConfirmText(e.target.value)}
-                            placeholder="CREATE DUPLICATE"
-                            className="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-[11px] font-mono text-gray-200 outline-none focus:border-red-500/50 placeholder-gray-700"
-                          />
-                          <button
-                            disabled={conflictConfirmText !== 'CREATE DUPLICATE'}
-                            onClick={() => {
-                              setEnrollConflict(null)
-                              setConflictConfirmText('')
-                              void runProcessing(true)
-                            }}
-                            className="px-3 py-1.5 bg-red-900/30 border border-red-700/40 text-red-400 rounded text-[11px] font-medium hover:bg-red-900/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                          >
-                            Create Anyway
-                          </button>
+                          <input value={conflictConfirmText} onChange={e => setConflictConfirmText(e.target.value)} placeholder="CREATE DUPLICATE" className="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-[11px] font-mono text-gray-200 outline-none focus:border-red-500/50 placeholder-gray-700" />
+                          <button disabled={conflictConfirmText !== 'CREATE DUPLICATE'} onClick={() => { setEnrollConflict(null); setConflictConfirmText(''); void runProcessing(true) }} className="px-3 py-1.5 bg-red-900/30 border border-red-700/40 text-red-400 rounded text-[11px] font-medium hover:bg-red-900/50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">Create Anyway</button>
                         </div>
                       </div>
                     </div>
@@ -570,44 +637,21 @@ export default function CreateCase() {
                 </motion.div>
               )}
 
-              {/* Photo quality warning — agent confirmation required */}
               {photoWarning && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mt-5 bg-amber-500/8 border border-amber-500/30 rounded-lg p-4"
-                >
+                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-5 bg-amber-500/8 border border-amber-500/30 rounded-lg p-4">
                   <div className="flex items-start gap-3">
                     <AlertTriangle size={15} className="text-amber-400 flex-shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-semibold text-amber-300 mb-1">
-                        Photo Quality Warning — Agent Confirmation Required
-                      </div>
+                      <div className="text-xs font-semibold text-amber-300 mb-1">Photo Quality Warning — Agent Confirmation Required</div>
                       <p className="text-[11px] text-amber-400/80 mb-1">
-                        {photoWarning.rejected} of {photoWarning.accepted + photoWarning.rejected}{' '}
-                        photo{photoWarning.rejected !== 1 ? 's' : ''} could not be processed.
-                        {photoWarning.reasons[0] ? ` Reason: ${photoWarning.reasons[0]}` : ''}
+                        {photoWarning.rejected} of {photoWarning.accepted + photoWarning.rejected} photo{photoWarning.rejected !== 1 ? 's' : ''} could not be processed.{photoWarning.reasons[0] ? ` Reason: ${photoWarning.reasons[0]}` : ''}
                       </p>
-                      <p className="text-[10px] text-gray-500 mb-3">
-                        These photos may not contain a detectable face or are too low quality.
-                        They will not be included in the tracking profile.
-                        Confirm to proceed with the {photoWarning.accepted} accepted photo{photoWarning.accepted !== 1 ? 's' : ''}.
-                      </p>
+                      <p className="text-[10px] text-gray-500 mb-3">Confirm to proceed with the {photoWarning.accepted} accepted photo{photoWarning.accepted !== 1 ? 's' : ''}.</p>
                       <div className="flex gap-2">
-                        <button
-                          onClick={() => { setPhotoWarning(null); void continueCreatingCase() }}
-                          className="px-3 py-1.5 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded text-[11px] font-medium hover:bg-amber-500/25 transition-colors"
-                        >
+                        <button onClick={() => { setPhotoWarning(null); void continueCreatingCase() }} className="px-3 py-1.5 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded text-[11px] font-medium hover:bg-amber-500/25 transition-colors">
                           Proceed with {photoWarning.accepted} photo{photoWarning.accepted !== 1 ? 's' : ''}
                         </button>
-                        <button
-                          onClick={() => {
-                            setPhotoWarning(null)
-                            setProcSteps(PROC_STEPS.map((s) => ({ ...s })))
-                            setStep('photos')
-                          }}
-                          className="px-3 py-1.5 border border-gray-700 text-gray-500 rounded text-[11px] hover:bg-gray-800 hover:text-gray-300 transition-colors"
-                        >
+                        <button onClick={() => { setPhotoWarning(null); setProcSteps(PROC_STEPS.map((s) => ({ ...s }))); setStep('photos') }} className="px-3 py-1.5 border border-gray-700 text-gray-500 rounded text-[11px] hover:bg-gray-800 hover:text-gray-300 transition-colors">
                           Re-upload Photos
                         </button>
                       </div>
@@ -616,26 +660,10 @@ export default function CreateCase() {
                 </motion.div>
               )}
 
-              {/* Any step failed — offer to retry or go back */}
               {!photoWarning && procSteps.some((s) => s.status === 'fail') && (
                 <div className="mt-5 flex justify-center gap-3">
-                  <button
-                    onClick={() => {
-                      setProcSteps(PROC_STEPS.map((s) => ({ ...s })))
-                      setPhotoWarning(null)
-                      isSubmittingRef.current = false
-                      void runProcessing()
-                    }}
-                    className="px-4 py-2 bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 rounded text-xs hover:bg-cyan-500/25 transition-colors"
-                  >
-                    Retry
-                  </button>
-                  <button
-                    onClick={() => setStep('photos')}
-                    className="px-4 py-2 border border-gray-700 text-gray-500 rounded text-xs hover:bg-gray-800 hover:text-gray-300 transition-colors"
-                  >
-                    Back to Photos
-                  </button>
+                  <button onClick={() => { setProcSteps(PROC_STEPS.map((s) => ({ ...s }))); setPhotoWarning(null); isSubmittingRef.current = false; void runProcessing() }} className="px-4 py-2 bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 rounded text-xs hover:bg-cyan-500/25 transition-colors">Retry</button>
+                  <button onClick={() => setStep('photos')} className="px-4 py-2 border border-gray-700 text-gray-500 rounded text-xs hover:bg-gray-800 hover:text-gray-300 transition-colors">Back to Photos</button>
                 </div>
               )}
             </StepPanel>
@@ -644,38 +672,22 @@ export default function CreateCase() {
           {step === 'success' && (
             <StepPanel key="success" title="Case Created" subtitle={caseRef}>
               <div className="text-center py-4">
-                <motion.div
-                  initial={{ scale: 0.6, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  transition={{ type: 'spring', stiffness: 300 }}
-                  className="w-16 h-16 bg-emerald-500/15 border border-emerald-500/40 rounded-full flex items-center justify-center mx-auto mb-5"
-                >
+                <motion.div initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', stiffness: 300 }} className="w-16 h-16 bg-emerald-500/15 border border-emerald-500/40 rounded-full flex items-center justify-center mx-auto mb-5">
                   <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
                 </motion.div>
                 <h3 className="text-lg font-semibold text-gray-100 mb-1">{caseRef} is live</h3>
-                <p className="text-sm text-gray-500 mb-6">
-                  Tracking pipeline is armed. Upload a video source in Operations to begin scanning.
-                </p>
+                <p className="text-sm text-gray-500 mb-6">Tracking pipeline is armed. Upload a video source in Operations to begin scanning.</p>
                 <div className="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-800 border border-gray-700 rounded text-xs font-mono text-gray-400 mb-6">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-dot" />
                   {form.name} · {form.photos.length} embeddings · TRACKING
                 </div>
                 <div className="flex justify-center gap-3">
-                  <button
-                    onClick={() => navigate('/cases')}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded text-sm font-medium hover:bg-cyan-500/25 transition-colors"
-                  >
-                    View All Cases
-                    <ExternalLink size={13} />
+                  <button onClick={() => navigate('/cases')} className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded text-sm font-medium hover:bg-cyan-500/25 transition-colors">
+                    View All Cases <ExternalLink size={13} />
                   </button>
-                  <button
-                    onClick={() => navigate('/operations')}
-                    className="px-5 py-2.5 border border-gray-700 text-gray-400 rounded text-sm hover:bg-gray-800 transition-colors"
-                  >
-                    Go to Operations
-                  </button>
+                  <button onClick={() => navigate('/operations')} className="px-5 py-2.5 border border-gray-700 text-gray-400 rounded text-sm hover:bg-gray-800 transition-colors">Go to Operations</button>
                 </div>
               </div>
             </StepPanel>
@@ -688,12 +700,7 @@ export default function CreateCase() {
 
 function StepPanel({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, x: 12 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: -12 }}
-      transition={{ duration: 0.2 }}
-    >
+    <motion.div initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.2 }}>
       <div className="mb-6">
         <h2 className="text-base font-semibold text-gray-100">{title}</h2>
         <div className="text-[11px] font-mono text-gray-600 mt-0.5">{subtitle}</div>
@@ -706,9 +713,7 @@ function StepPanel({ title, subtitle, children }: { title: string; subtitle: str
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs font-mono text-gray-500 tracking-wider mb-1.5">
-        {label.toUpperCase()}
-      </label>
+      <label className="block text-xs font-mono text-gray-500 tracking-wider mb-1.5">{label.toUpperCase()}</label>
       {children}
     </div>
   )
@@ -718,12 +723,7 @@ function StepProgress({ current, total }: { current: number; total: number }) {
   return (
     <div className="flex items-center gap-2">
       {Array.from({ length: total }).map((_, i) => (
-        <div
-          key={i}
-          className={`h-1 flex-1 rounded-full transition-all duration-300 ${
-            i < current ? 'bg-cyan-500' : i === current ? 'bg-cyan-500/50' : 'bg-gray-800'
-          }`}
-        />
+        <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-300 ${i < current ? 'bg-cyan-500' : i === current ? 'bg-cyan-500/50' : 'bg-gray-800'}`} />
       ))}
     </div>
   )
@@ -731,11 +731,7 @@ function StepProgress({ current, total }: { current: number; total: number }) {
 
 function NextBtn({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded text-sm font-medium hover:bg-cyan-500/25 transition-colors disabled:opacity-30 disabled:pointer-events-none"
-    >
+    <button onClick={onClick} disabled={disabled} className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded text-sm font-medium hover:bg-cyan-500/25 transition-colors disabled:opacity-30 disabled:pointer-events-none">
       Continue <ArrowRight size={14} />
     </button>
   )
@@ -743,14 +739,10 @@ function NextBtn({ onClick, disabled }: { onClick: () => void; disabled?: boolea
 
 function BackBtn({ onClick }: { onClick: () => void }) {
   return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-2 px-4 py-2.5 border border-gray-700 text-gray-500 rounded text-sm hover:bg-gray-800 hover:text-gray-300 transition-colors"
-    >
+    <button onClick={onClick} className="flex items-center gap-2 px-4 py-2.5 border border-gray-700 text-gray-500 rounded text-sm hover:bg-gray-800 hover:text-gray-300 transition-colors">
       <ArrowLeft size={14} /> Back
     </button>
   )
 }
 
-const inputCls =
-  'w-full bg-gray-950 border border-gray-700 focus:border-cyan-600/60 rounded px-3 py-2.5 text-sm text-gray-100 outline-none transition-colors placeholder-gray-700'
+const inputCls = 'w-full bg-gray-950 border border-gray-700 focus:border-cyan-600/60 rounded px-3 py-2.5 text-sm text-gray-100 outline-none transition-colors placeholder-gray-700'

@@ -267,14 +267,19 @@ class RecognitionPipeline:
             raise ValueError(f"Face quality rejected for enrollment: {quality.reason}")
         return self._embedder.embed_face(prepared.bgr, best)
 
-    def count_enrollment_faces(self, frame_bgr: np.ndarray) -> int:
+    def count_enrollment_faces(self, frame_bgr: np.ndarray, min_det_score: float = 0.50) -> int:
         """Count detectable faces in an image for pre-enrollment validation.
 
         Call before enroll_reference_embedding to gate 0-face and multi-face inputs.
         Does not alter any internal state.
+
+        Uses a higher det_score floor than video (0.50 vs 0.35) so noise detections
+        from background clutter or large-face scale artefacts do not produce false
+        "multiple faces detected" rejections on genuine single-person portrait photos.
         """
         prepared = self._preprocessor.process(frame_bgr)
-        return len(self._detector.detect(prepared.bgr))
+        faces = self._detector.detect(prepared.bgr)
+        return sum(1 for f in faces if f.det_score >= min_det_score)
 
     def process_frame(
         self,

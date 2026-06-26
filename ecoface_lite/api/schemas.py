@@ -125,6 +125,25 @@ class PersonEnrollMultiOut(BaseModel):
     rejection_reasons: list[str] = []
 
 
+class PhotoValidationResult(BaseModel):
+    """Per-photo result from POST /persons/validate-batch."""
+    index: int
+    filename: str
+    status: str          # "ok" | "rejected" | "outlier"
+    reason: str | None = None
+    is_outlier: bool = False
+    thumbnail_b64: str | None = None  # base64 JPEG crop, 120px wide, for inline preview
+
+
+class BatchValidationOut(BaseModel):
+    """POST /persons/validate-batch — pre-flight check before person creation."""
+    photos: list[PhotoValidationResult]
+    valid_count: int
+    rejected_count: int
+    outlier_indices: list[int] = []
+    can_proceed: bool
+
+
 class PersonPhotoAddRequest(BaseModel):
     person_id: int
 

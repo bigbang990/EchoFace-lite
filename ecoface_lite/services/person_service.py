@@ -290,3 +290,124 @@ async def add_photos_to_person(
         await db.flush()
 
     return accepted, rejected, reasons
+
+
+# ── Pre-flight batch validation (no DB writes) ────────────────────────────────
+
+@dataclass
+class PhotoValidation:
+    index: int
+    filename: str
+    status: str           # "ok" | "rejected" | "outlier"
+    reason: str | None
+    embedding: "np.ndarray | None"
+    thumbnail_b64: str | None
+    is_outlier: bool = False
+
+
+def _make_thumbnail_b64(image: "np.ndarray", max_width: int = 120) -> str | None:
+    """Return base64-encoded JPEG thumbnail of the image, or None on failure."""
+    try:
+        import base64
+        import cv2
+        import numpy as np
+        h, w = image.shape[:2]
+        if w > max_width:
+            scale = max_width / w
+            image = cv2.resize(image, (max_width, max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        if not ok:
+            return None
+        return base64.b64encode(buf.tobytes()).decode()
+    except Exception:
+        return None
+
+
+async def validate_enrollment_batch(
+    pipeline: "RecognitionPipeline",
+    files: list[bytes],
+    filenames: list[str],
+    outlier_threshold: float = 0.30,
+) -> list[PhotoValidation]:
+    """Validate N photos for enrollment without writing to DB.
+
+    For each photo:
+      - Decode image
+      - Count faces using enrollment-grade threshold (0.50 det_score)
+      - Extract embedding via enroll_reference_embedding (enrollment_mode=True)
+      - Generate a thumbnail for inline preview
+
+    After all photos are processed, run cross-photo outlier detection:
+      - Compute pairwise cosine similarity between all accepted embeddings
+      - Flag any photo whose mean similarity to all others is below outlier_threshold
+
+    Returns a list of PhotoValidation results (one per input file, same order).
+    Outlier detection only fires when >=3 photos are accepted.
+    """
+    import cv2
+    import numpy as np
+
+    results: list[PhotoValidation] = []
+
+    for idx, (file_bytes, filename) in enumerate(zip(files, filenames)):
+        buf = np.frombuffer(file_bytes, dtype=np.uint8)
+        image = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if image is None:
+            results.append(PhotoValidation(
+                index=idx, filename=filename, status="rejected",
+                reason="invalid or corrupted image file",
+                embedding=None, thumbnail_b64=None,
+            ))
+            continue
+
+        thumbnail = _make_thumbnail_b64(image)
+
+        try:
+            n = pipeline.count_enrollment_faces(image, min_det_score=0.50)
+            if n == 0:
+                results.append(PhotoValidation(
+                    index=idx, filename=filename, status="rejected",
+                    reason="no face detected",
+                    embedding=None, thumbnail_b64=thumbnail,
+                ))
+                continue
+            if n > 1:
+                results.append(PhotoValidation(
+                    index=idx, filename=filename, status="rejected",
+                    reason=f"multiple faces detected ({n}) — crop to one face per photo",
+                    embedding=None, thumbnail_b64=thumbnail,
+                ))
+                continue
+
+            embedding = pipeline.enroll_reference_embedding(image, enrollment_mode=True)
+            results.append(PhotoValidation(
+                index=idx, filename=filename, status="ok",
+                reason=None, embedding=embedding, thumbnail_b64=thumbnail,
+            ))
+        except ValueError as exc:
+            results.append(PhotoValidation(
+                index=idx, filename=filename, status="rejected",
+                reason=str(exc).replace("Face quality rejected for enrollment: ", ""),
+                embedding=None, thumbnail_b64=thumbnail,
+            ))
+
+    # Outlier detection — only meaningful with >=3 accepted photos
+    ok_results = [r for r in results if r.status == "ok" and r.embedding is not None]
+    if len(ok_results) >= 3:
+        embeddings = np.stack([r.embedding.astype(np.float32) for r in ok_results])
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        embeddings = embeddings / np.maximum(norms, 1e-6)
+        sim_matrix = embeddings @ embeddings.T
+        n_ok = len(ok_results)
+        for i, r in enumerate(ok_results):
+            others = [sim_matrix[i, j] for j in range(n_ok) if j != i]
+            mean_sim = float(np.mean(others)) if others else 1.0
+            if mean_sim < outlier_threshold:
+                r.is_outlier = True
+                r.status = "outlier"
+                r.reason = (
+                    f"identity mismatch — this photo looks different from the others "
+                    f"(similarity {mean_sim:.2f} vs threshold {outlier_threshold:.2f})"
+                )
+
+    return results

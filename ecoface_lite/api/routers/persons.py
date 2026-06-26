@@ -4,12 +4,67 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import select
 
 from ecoface_lite.api.deps import DbSession, RecognitionPipelineDep
-from ecoface_lite.api.schemas import PersonEnrollMultiOut, PersonEnrollOut, PersonOut
+from ecoface_lite.api.schemas import PersonEnrollMultiOut, PersonEnrollOut, PersonOut, PhotoValidationResult, BatchValidationOut
 from ecoface_lite.core.config import get_settings
 from ecoface_lite.db.models import Person
 from ecoface_lite.services import person_service
 
 router = APIRouter(prefix="/persons", tags=["persons"])
+
+
+@router.post("/validate-batch", response_model=BatchValidationOut)
+async def validate_person_photos(
+    pipeline: RecognitionPipelineDep,
+    images: list[UploadFile] = File(...),
+) -> BatchValidationOut:
+    """Pre-flight validation for multi-photo enrollment.
+
+    Accepts 1-8 photos, runs face detection + quality check + identity clustering
+    on each, and returns per-photo results with outlier flags.
+
+    No person is created and nothing is written to the database.
+    Outlier detection fires when >=3 photos are accepted (identity mismatch check).
+    """
+    settings = get_settings()
+    if len(images) > 8:
+        raise HTTPException(status_code=400, detail="Max 8 photos per validation call")
+
+    raw_files: list[bytes] = []
+    filenames: list[str] = []
+    for image in images:
+        raw = await image.read()
+        if len(raw) > settings.max_image_mb * 1024 * 1024:
+            raise HTTPException(status_code=413, detail=f"{image.filename}: image too large")
+        raw_files.append(raw)
+        filenames.append(image.filename or "upload.jpg")
+
+    validations = await person_service.validate_enrollment_batch(
+        pipeline, raw_files, filenames
+    )
+
+    photos_out = [
+        PhotoValidationResult(
+            index=v.index,
+            filename=v.filename,
+            status=v.status,
+            reason=v.reason,
+            is_outlier=v.is_outlier,
+            thumbnail_b64=v.thumbnail_b64,
+        )
+        for v in validations
+    ]
+
+    valid_count = sum(1 for v in validations if v.status == "ok")
+    rejected_count = sum(1 for v in validations if v.status == "rejected")
+    outlier_indices = [v.index for v in validations if v.is_outlier]
+
+    return BatchValidationOut(
+        photos=photos_out,
+        valid_count=valid_count,
+        rejected_count=rejected_count,
+        outlier_indices=outlier_indices,
+        can_proceed=valid_count > 0,
+    )
 
 
 @router.get("", response_model=list[PersonOut])

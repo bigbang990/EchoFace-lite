@@ -33,7 +33,10 @@ class FaceQualityAssessor:
         *,
         enrollment_mode: bool = False,
     ) -> FaceQualityResult:
-        if face.det_score < self._settings.detection_confidence_threshold:
+        # In enrollment mode skip the det_score gate — the preprocessor resize chain
+        # can cause large close-up faces to score below the video threshold even when
+        # the face is clearly present. We already filtered by 0.50 in count_enrollment_faces.
+        if not enrollment_mode and face.det_score < self._settings.detection_confidence_threshold:
             return FaceQualityResult(False, 0.0, reason="low_detection_confidence")
         geometry = compute_face_geometry(face, frame_bgr.shape)
         x1, y1, x2, y2 = geometry.x1, geometry.y1, geometry.x2, geometry.y2
@@ -44,10 +47,15 @@ class FaceQualityAssessor:
         brightness_score = self.brightness_score(crop)
         contrast_score = self.contrast_score(crop)
         min_size = self._settings.face_quality_min_face_size
-        if blur_score >= self._settings.face_quality_min_blur_score * 1.5:
-            min_size = self._settings.face_quality_small_face_size
-        elif blur_score < self._settings.face_quality_min_blur_score:
-            min_size = self._settings.face_quality_blurry_face_size
+        if not enrollment_mode:
+            # Only apply blur-dependent size penalties during video processing.
+            # Enrollment photos may be slightly soft (camera phone, low light) but
+            # still contain a valid face — penalising them by inflating min_size
+            # causes false face_too_small rejections.
+            if blur_score >= self._settings.face_quality_min_blur_score * 1.5:
+                min_size = self._settings.face_quality_small_face_size
+            elif blur_score < self._settings.face_quality_min_blur_score:
+                min_size = self._settings.face_quality_blurry_face_size
         if enrollment_mode:
             min_size = min_size // 2
         quality_score = self.quality_score(blur_score, brightness_score, contrast_score, width, height)
