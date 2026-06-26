@@ -559,10 +559,12 @@ class FaceTrackManager:
     def to_detected_face(self, track: TrackedFace) -> DetectedFace:
         x1, y1, x2, y2 = track.bbox
         landmarks = track.metadata.get("landmarks")
+        gender = track.metadata.get("gender")
         return DetectedFace(
             bbox=BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2),
             det_score=track.confidence,
             landmarks=landmarks,
+            gender=gender,
         )
 
     def _admit_or_queue_pending(self, face: DetectedFace, frame_index: int) -> TrackedFace | None:
@@ -744,6 +746,8 @@ class FaceTrackManager:
         )
         if face.landmarks is not None:
             track.metadata["landmarks"] = face.landmarks
+        if face.gender is not None:
+            track.metadata["gender"] = face.gender
         self._tracks[track_id] = track
         metrics.increment("track_state_new")
         return track
@@ -774,6 +778,8 @@ class FaceTrackManager:
         track.confirmation_hits = max(track.confirmation_hits, self._cfg.confirm_frames)
         if face.landmarks is not None:
             track.metadata["landmarks"] = face.landmarks
+        if face.gender is not None:
+            track.metadata["gender"] = face.gender
         if prev_center != (0.0, 0.0):
             track.metadata["velocity"] = (
                 track.center_point[0] - prev_center[0],

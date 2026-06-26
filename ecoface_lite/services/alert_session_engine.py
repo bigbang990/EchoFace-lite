@@ -68,7 +68,7 @@ class AlertSessionEngine:
 
         from ecoface_lite.db.models import Alert
 
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=lookback_minutes)
+        cutoff = datetime.now() - timedelta(minutes=lookback_minutes)
         rows = (await session.execute(
             select(Alert)
             .where(Alert.status == "open")
@@ -116,7 +116,7 @@ class AlertSessionEngine:
         """
         from ecoface_lite.db.models import Alert, Sighting
 
-        now = detected_at or datetime.now(tz=timezone.utc)
+        now = detected_at or datetime.now()
         key: _RegistryKey = (incident_id, person_id, camera_id)
 
         async with self._lock:
@@ -223,7 +223,7 @@ class AlertSessionEngine:
         """Close every open session in the registry (call on graceful shutdown)."""
         from ecoface_lite.db.models import Alert
 
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now()
         async with self._lock:
             for active in self._registry.values():
                 alert = await session.get(Alert, active.alert_id)
