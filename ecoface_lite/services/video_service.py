@@ -279,16 +279,7 @@ async def process_prerecorded_video(
                 continue
             if not m.should_alert:
                 continue
-            # Rate-limit sighting writes: one DB write per video_event_dedupe_frames frames.
-            # The alert session tracks last_seen_at in memory between writes.
-            previous = last_sighting_frame_by_person.get(m.person_id)
-            if previous is not None and packet.index - previous < settings.video_event_dedupe_frames:
-                job_diagnostics.duplicate_suppressions += 1
-                metrics.increment("duplicate_alerts_suppressed")
-                continue
-            last_sighting_frame_by_person[m.person_id] = packet.index
-
-            # Gender gate — reject cross-gender false positives
+            # Gender gate — reject cross-gender false positives BEFORE dedupe window
             _enrolled_gender = gender_map.get(m.person_id)
             _detected_gender = m.face.gender if m.face is not None else None
             if (
@@ -298,6 +289,15 @@ async def process_prerecorded_video(
             ):
                 metrics.increment("gender_gate_rejections")
                 continue
+
+            # Rate-limit sighting writes: one DB write per video_event_dedupe_frames frames.
+            # The alert session tracks last_seen_at in memory between writes.
+            previous = last_sighting_frame_by_person.get(m.person_id)
+            if previous is not None and packet.index - previous < settings.video_event_dedupe_frames:
+                job_diagnostics.duplicate_suppressions += 1
+                metrics.increment("duplicate_alerts_suppressed")
+                continue
+            last_sighting_frame_by_person[m.person_id] = packet.index
 
             # Save face crop snapshot
             name = f"{uuid.uuid4().hex}.jpg"
