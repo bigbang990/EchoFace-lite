@@ -42,6 +42,8 @@ def _alert_out(alert: Alert, *, with_sightings: bool = False, incident_status: s
                 confidence=s.confidence,
                 frame_index=s.frame_index,
                 snapshot_path=s.snapshot_path,
+                blur_score=s.blur_score,
+                pose_bucket=s.pose_bucket,
             ))
 
     return AlertOut(
@@ -83,7 +85,11 @@ async def list_incident_alerts(
     stmt = (
         select(Alert)
         .where(Alert.incident_id == incident_id)
-        .options(selectinload(Alert.person), selectinload(Alert.camera))
+        .options(
+            selectinload(Alert.person),
+            selectinload(Alert.camera),
+            selectinload(Alert.sightings),
+        )
         .order_by(Alert.last_seen_at.desc())
         .limit(limit)
         .offset(offset)
@@ -96,7 +102,7 @@ async def list_incident_alerts(
         stmt = stmt.where(Alert.source == source)
 
     rows = (await db.execute(stmt)).scalars().all()
-    return [_alert_out(a) for a in rows]
+    return [_alert_out(a, with_sightings=True) for a in rows]
 
 
 @router.get("/alerts/{alert_id}", response_model=AlertOut)
