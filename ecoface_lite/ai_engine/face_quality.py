@@ -7,6 +7,7 @@ import numpy as np
 
 from ecoface_lite.ai_engine.detector import DetectedFace
 from ecoface_lite.ai_engine.geometry import compute_face_geometry
+from ecoface_lite.ai_engine.pose_estimator import PoseBucket, classify_pose_bucket
 from ecoface_lite.core.config import Settings
 from ecoface_lite.core.metrics import metrics
 
@@ -56,6 +57,11 @@ class FaceQualityAssessor:
         metrics.observe("face_quality_score", quality_score)
         if width < min_size or height < min_size:
             return FaceQualityResult(False, blur_score, brightness_score, contrast_score, quality_score, "face_too_small")
+        if face.landmarks is not None:
+            pose = classify_pose_bucket(face.landmarks, face.bbox)
+            if pose in (PoseBucket.LEFT_PROFILE, PoseBucket.RIGHT_PROFILE, PoseBucket.PARTIAL):
+                metrics.increment("embedding_suppressed")
+                return FaceQualityResult(False, blur_score, brightness_score, contrast_score, quality_score, "poor_face_angle")
         skew = max(width / max(height, 1), height / max(width, 1))
         if skew > self._settings.face_quality_max_pose_skew:
             return FaceQualityResult(False, blur_score, brightness_score, contrast_score, quality_score, "extreme_face_pose")
