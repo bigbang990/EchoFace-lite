@@ -282,13 +282,30 @@ async def process_prerecorded_video(
             # Gender gate — reject cross-gender false positives BEFORE dedupe window
             _enrolled_gender = gender_map.get(m.person_id)
             _detected_gender = m.face.gender if m.face is not None else None
+            # Prefer track-level accumulated gender when pipeline populates it (future).
+            # getattr is safe here: if FrameMatch gains track_gender later, it will be
+            # used automatically; until then _raw_track is None and we fall back.
+            _raw_track = getattr(m, 'track_gender', None)
+            _track_gender = _raw_track if _raw_track is not None else _detected_gender
             if (
-                _detected_gender is not None
+                _track_gender is not None
                 and _enrolled_gender is not None
-                and _detected_gender != _enrolled_gender
+                and _track_gender != _enrolled_gender
             ):
                 metrics.increment("gender_gate_rejections")
                 continue
+            # Soft flag: gender unknown but enrollment has gender — high-conf hit needs review
+            if (
+                _enrolled_gender is not None
+                and _track_gender is None
+                and m.confidence is not None
+                and m.confidence > 0.70
+            ):
+                metrics.increment("gender_unknown_high_confidence")
+                logger.debug(
+                    "GENDER_UNKNOWN: person=%s conf=%.3f enrolled_gender=%s — flagging for review",
+                    m.person_id, m.confidence, _enrolled_gender,
+                )
 
             # Rate-limit sighting writes: one DB write per video_event_dedupe_frames frames.
             # The alert session tracks last_seen_at in memory between writes.
