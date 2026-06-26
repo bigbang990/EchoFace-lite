@@ -42,6 +42,8 @@ export interface Sighting {
   status: 'PENDING' | 'CONFIRMED' | 'REJECTED'
   frame_index: number
   snapshot_path?: string
+  blur_score?: number
+  pose_bucket?: string
 }
 
 export interface Camera {

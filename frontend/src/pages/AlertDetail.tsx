@@ -193,13 +193,18 @@ export default function AlertDetail() {
   const badge = statusBadge(effectiveStatus)
   const snapUrl = useMemo(() => {
     const alertSightings = alertData?.sightings ?? []
+    const qualityScore = (s: typeof sightings[number]) => {
+      const poseBonus = s.pose_bucket === 'FRONTAL' ? 0.15 : 0
+      const blurBonus = s.blur_score ? Math.min(s.blur_score / 500, 0.15) : 0
+      return (s.confidence ?? 0) + poseBonus + blurBonus
+    }
     const candidates = (
       alertSightings.length > 0
         ? alertSightings
         : sightings.filter(s => String(s.person_id) === String(sighting?.person_id))
     )
       .filter(s => s.snapshot_path)
-      .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+      .sort((a, b) => qualityScore(b) - qualityScore(a))
     const best = candidates[0]
     return best?.snapshot_path ? buildUrl(best.snapshot_path, backendBase) : null
   }, [alertData, sightings, sighting, backendBase])
