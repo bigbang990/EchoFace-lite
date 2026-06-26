@@ -359,7 +359,7 @@ async def process_prerecorded_video(
                     detection_id=det.id,
                     frame_index=m.frame_index,
                     snapshot_path=rel_snap,
-                    source="live",
+                    source="video",
                     blur_score=_blur_score,
                     pose_bucket=_pose_bucket,
                 )
