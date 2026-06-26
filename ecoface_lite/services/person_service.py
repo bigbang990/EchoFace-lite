@@ -363,7 +363,7 @@ async def validate_enrollment_batch(
         thumbnail = _make_thumbnail_b64(image)
 
         try:
-            n = pipeline.count_enrollment_faces(image, min_det_score=0.50)
+            n = pipeline.count_enrollment_faces(image, min_det_score=0.65)
             if n == 0:
                 results.append(PhotoValidation(
                     index=idx, filename=filename, status="rejected",

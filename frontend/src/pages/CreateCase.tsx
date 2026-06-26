@@ -60,6 +60,23 @@ interface BatchValidationOut {
   can_proceed: boolean
 }
 
+const REASON_LABELS: Record<string, string> = {
+  'poor_face_angle': 'Face angle too extreme — use a frontal or 3/4 view photo',
+  'face_too_small': 'Face too small in frame — use a closer photo',
+  'low_detection_confidence': 'Face not clearly detected — try better lighting',
+  'extreme_face_pose': 'Face angle too extreme — use a frontal or 3/4 view photo',
+  'no face detected': 'No face detected — check lighting and image quality',
+  'multiple faces detected': 'Multiple faces in frame — crop to show one person only',
+}
+
+const friendlyReason = (reason: string | null): string => {
+  if (!reason) return ''
+  for (const [key, label] of Object.entries(REASON_LABELS)) {
+    if (reason.startsWith(key)) return label
+  }
+  return reason
+}
+
 const PROC_STEPS: ProcStep[] = [
   { label: 'Analyzing reference photos',   status: 'idle', detail: '' },
   { label: 'Creating face embeddings',      status: 'idle', detail: '' },
@@ -525,7 +542,7 @@ export default function CreateCase() {
                               {isRemoved ? 'Removed' : effectiveStatus === 'ok' ? 'Accepted' : effectiveStatus === 'outlier' ? 'Identity mismatch — review required' : 'Rejected'}
                             </div>
                             <div className="text-[10px] font-mono text-gray-600 truncate">
-                              {isRemoved ? photo.filename : (photo.reason ?? photo.filename)}
+                              {isRemoved ? photo.filename : (friendlyReason(photo.reason) || photo.filename)}
                             </div>
                           </div>
                           {photo.is_outlier && !isRemoved && !isApproved && (
