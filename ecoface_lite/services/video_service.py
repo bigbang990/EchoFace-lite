@@ -300,6 +300,8 @@ async def process_prerecorded_video(
             last_sighting_frame_by_person[m.person_id] = packet.index
 
             # Save face crop snapshot
+            from ecoface_lite.ai_engine.pose_estimator import classify_pose_bucket
+            import numpy as _np
             name = f"{uuid.uuid4().hex}.jpg"
             snap_path = settings.resolved_snapshots_dir() / name
             _ih, _iw = inference_frame.shape[:2]
@@ -313,6 +315,11 @@ async def process_prerecorded_video(
                 max(0, _y1 - _py):min(_ih, _y2 + _py),
                 max(0, _x1 - _px):min(_iw, _x2 + _px),
             ]
+            # Compute quality fields from the crop
+            _gray = cv2.cvtColor(_face_crop, cv2.COLOR_BGR2GRAY) if _face_crop.size > 0 else None
+            _blur_score = float(cv2.Laplacian(_gray, cv2.CV_64F).var()) if _gray is not None else None
+            _pose = classify_pose_bucket(m.face.landmarks, m.face.bbox) if m.face.landmarks is not None else None
+            _pose_bucket = _pose.name if _pose is not None else None
             cv2.imwrite(str(snap_path), _face_crop)
             rel_snap = str(Path("data/snapshots") / name)
 
@@ -348,6 +355,8 @@ async def process_prerecorded_video(
                     frame_index=m.frame_index,
                     snapshot_path=rel_snap,
                     source="live",
+                    blur_score=_blur_score,
+                    pose_bucket=_pose_bucket,
                 )
                 if alert is not None and alert.sighting_count == 1:
                     new_sessions += 1

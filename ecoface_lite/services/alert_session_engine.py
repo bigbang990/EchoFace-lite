@@ -102,6 +102,8 @@ class AlertSessionEngine:
         detected_at: datetime | None = None,
         source: str = "live",
         zone_id: str | None = None,
+        blur_score: float | None = None,
+        pose_bucket: str | None = None,
     ) -> tuple[Alert | None, Sighting]:
         """Core method: find or open an alert session, always persist a sighting.
 
@@ -130,6 +132,8 @@ class AlertSessionEngine:
                     confidence=confidence,
                     frame_index=frame_index,
                     snapshot_path=snapshot_path,
+                    blur_score=blur_score,
+                    pose_bucket=pose_bucket,
                     source=source,
                     status="pending",
                 )
@@ -198,6 +202,8 @@ class AlertSessionEngine:
                 confidence=confidence,
                 frame_index=frame_index,
                 snapshot_path=snapshot_path,
+                blur_score=blur_score,
+                pose_bucket=pose_bucket,
                 source=source,
                 status="pending",
             )
