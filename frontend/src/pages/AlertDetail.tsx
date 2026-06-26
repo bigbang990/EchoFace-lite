@@ -193,7 +193,7 @@ export default function AlertDetail() {
   const badge = statusBadge(effectiveStatus)
   const snapUrl = useMemo(() => {
     const alertSightings = alertData?.sightings ?? []
-    const qualityScore = (s: typeof sightings[number]) => {
+    const qualityScore = (s: { confidence?: number | null; blur_score?: number | null; pose_bucket?: string | null }) => {
       const poseBonus = s.pose_bucket === 'FRONTAL' ? 0.15 : 0
       const blurBonus = s.blur_score ? Math.min(s.blur_score / 500, 0.15) : 0
       return (s.confidence ?? 0) + poseBonus + blurBonus
