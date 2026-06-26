@@ -320,6 +320,11 @@ async def process_prerecorded_video(
             _blur_score = float(cv2.Laplacian(_gray, cv2.CV_64F).var()) if _gray is not None else None
             _pose = classify_pose_bucket(m.face.landmarks, m.face.bbox) if m.face.landmarks is not None else None
             _pose_bucket = _pose.name if _pose is not None else None
+            # Upscale crops narrower than ArcFace's 112px minimum for readable display
+            _ch, _cw = _face_crop.shape[:2]
+            if _cw < 112 or _ch < 112:
+                _cscale = 112 / min(_cw, _ch)
+                _face_crop = cv2.resize(_face_crop, (int(_cw * _cscale), int(_ch * _cscale)), interpolation=cv2.INTER_CUBIC)
             cv2.imwrite(str(snap_path), _face_crop)
             rel_snap = str(Path("data/snapshots") / name)
 
