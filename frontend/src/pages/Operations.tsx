@@ -4,22 +4,37 @@ import {
   Upload, Video, Play, Square, CheckCircle2, AlertTriangle,
   RotateCcw, Loader2, Film, Download, Activity,
   Gauge, Cpu, ShieldCheck, TrendingDown, Zap,
-  Camera, Wifi, ExternalLink,
+  Camera, ExternalLink, MapPin, Wifi, WifiOff,
 } from 'lucide-react'
 import { useAppStore } from '../store/appStore'
-import { useVideoJob, useCameras } from '../api/hooks'
+import { useVideoJob } from '../api/hooks'
 import { createApiClient } from '../api/client'
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
-type SourceType = 'file' | 'camera' | 'rtsp'
+type Mode = 'camera' | 'file'
+
+interface RichCamera {
+  id: string
+  label: string
+  stream_url: string | null
+  zone: string | null
+  zone_id: number | null
+  status: string          // 'online' | 'offline' | 'reconnecting' | 'unknown'
+  location: string | null
+  source_type: string
+}
+
+interface ActiveJob {
+  jobId: string
+  label: string
+}
 
 type RawMetrics = Record<string, unknown>
 
 interface JobMetricsSnapshot {
   capturedAt: string
   jobId: string
-  // from observability endpoint
   obs_fps: number
   detector_latency_ms: number
   stable_matches: number
@@ -27,7 +42,6 @@ interface JobMetricsSnapshot {
   validator_rejection_rate: number
   gpu_status: string
   hardware_backend_type: number
-  // from job progress
   total_frames: number
   avg_fps: number
   alerts_created: number
@@ -37,81 +51,45 @@ interface JobMetricsSnapshot {
   processing_seconds: number
 }
 
+// ── mock data ──────────────────────────────────────────────────────────────────
+
+const MOCK_CAMERAS: RichCamera[] = [
+  { id: 'cam-1', label: 'CAM-01 — Main Entrance', stream_url: 'mock://cam1', zone: 'Zone A', zone_id: 1, status: 'online', location: 'Ground Floor', source_type: 'rtsp' },
+  { id: 'cam-2', label: 'CAM-02 — East Corridor', stream_url: 'mock://cam2', zone: 'Zone A', zone_id: 1, status: 'online', location: 'Ground Floor', source_type: 'rtsp' },
+  { id: 'cam-3', label: 'CAM-03 — Parking Lot', stream_url: 'mock://cam3', zone: 'Zone B', zone_id: 2, status: 'online', location: 'Exterior', source_type: 'rtsp' },
+  { id: 'cam-4', label: 'CAM-04 — Server Room', stream_url: null, zone: 'Zone B', zone_id: 2, status: 'offline', location: 'Basement', source_type: 'rtsp' },
+]
+
 // ── mock job ───────────────────────────────────────────────────────────────────
 
-interface MockStats {
-  framesAnalyzed: number
-  tracksDetected: number
-  matchesFound: number
-  elapsedSeconds: number
-}
+interface MockStats { framesAnalyzed: number; tracksDetected: number; matchesFound: number; elapsedSeconds: number }
 
 function useMockJob() {
   const [state, setState] = useState<'idle' | 'running' | 'done'>('idle')
-  const [stats, setStats] = useState<MockStats>({
-    framesAnalyzed: 0, tracksDetected: 0, matchesFound: 0, elapsedSeconds: 0,
-  })
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
+  const [stats, setStats] = useState<MockStats>({ framesAnalyzed: 0, tracksDetected: 0, matchesFound: 0, elapsedSeconds: 0 })
+  const ref = useRef<ReturnType<typeof setInterval> | null>(null)
   const start = () => {
     setState('running')
     setStats({ framesAnalyzed: 0, tracksDetected: 0, matchesFound: 0, elapsedSeconds: 0 })
-    intervalRef.current = setInterval(() => {
-      setStats((prev) => {
-        const elapsed = prev.elapsedSeconds + 1
-        const shouldMatch = prev.matchesFound === 0 && elapsed > 8 && Math.random() > 0.85
-        return {
-          framesAnalyzed: prev.framesAnalyzed + Math.floor(Math.random() * 6 + 20),
-          tracksDetected: Math.min(prev.tracksDetected + (Math.random() > 0.7 ? 1 : 0), 12),
-          matchesFound: shouldMatch ? 1 : prev.matchesFound,
-          elapsedSeconds: elapsed,
-        }
+    ref.current = setInterval(() => {
+      setStats((p) => {
+        const elapsed = p.elapsedSeconds + 1
+        return { framesAnalyzed: p.framesAnalyzed + Math.floor(Math.random() * 6 + 20), tracksDetected: Math.min(p.tracksDetected + (Math.random() > 0.7 ? 1 : 0), 12), matchesFound: p.matchesFound === 0 && elapsed > 8 && Math.random() > 0.85 ? 1 : p.matchesFound, elapsedSeconds: elapsed }
       })
     }, 1000)
   }
-
-  const stop = () => {
-    setState('done')
-    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
-  }
-
-  useEffect(() => () => { if (intervalRef.current) clearInterval(intervalRef.current) }, [])
-
+  const stop = () => { setState('done'); if (ref.current) { clearInterval(ref.current); ref.current = null } }
+  useEffect(() => () => { if (ref.current) clearInterval(ref.current) }, [])
   return { state, stats, start, stop }
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-function LivePreviewImage({ src, isLive }: { src: string; isLive: boolean }) {
-  const [tick, setTick] = useState(0)
-  useEffect(() => {
-    if (!isLive) return
-    const t = setInterval(() => setTick((v) => v + 1), 2000)
-    return () => clearInterval(t)
-  }, [isLive])
-  const url = isLive ? `${src}?t=${tick}` : src
-  return (
-    <img
-      src={url}
-      alt="annotated preview"
-      className="w-full object-contain"
-      style={{ maxHeight: '60vh' }}
-      onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.3' }}
-    />
-  )
-}
-
 const fmt = (s: number) =>
   `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.round(s) % 60).padStart(2, '0')}`
 
-function MetricRow({
-  icon: Icon, label, value, sub, accent,
-}: {
-  icon: React.ElementType
-  label: string
-  value: string
-  sub?: string
-  accent?: string
+function MetricRow({ icon: Icon, label, value, sub, accent }: {
+  icon: React.ElementType; label: string; value: string; sub?: string; accent?: string
 }) {
   return (
     <div className="flex items-center gap-3 py-2.5 border-b border-gray-800/60 last:border-0">
@@ -127,36 +105,67 @@ function MetricRow({
   )
 }
 
+function CameraStatusDot({ status }: { status: string }) {
+  const cls = status === 'online' ? 'bg-emerald-400' : status === 'reconnecting' ? 'bg-amber-400 animate-pulse' : 'bg-gray-600'
+  return <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${cls}`} />
+}
+
 // ── main component ─────────────────────────────────────────────────────────────
 
 export default function Operations() {
   const { accessMode, backendUrl, activeJobId, setActiveJobId } = useAppStore()
+  const isMock = accessMode === 'MOCK'
+  const isAdmin = accessMode === 'ADMIN'
+
+  // ── mode ──────────────────────────────────────────────────────────────────
+  const [mode, setMode] = useState<Mode>('camera')
+
+  // ── camera tracking state ─────────────────────────────────────────────────
+  const [cameras, setCameras] = useState<RichCamera[]>([])
+  const [camsLoading, setCamsLoading] = useState(false)
+  const [selectedZone, setSelectedZone] = useState<string>('all')
+  const [selectedCamIds, setSelectedCamIds] = useState<Set<string>>(new Set())
+  const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([])
+
+  // ── file upload state ─────────────────────────────────────────────────────
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+
+  // ── metrics ───────────────────────────────────────────────────────────────
   const [snapshot, setSnapshot] = useState<JobMetricsSnapshot | null>(null)
   const capturedRef = useRef(false)
 
-  // ── source selector state ─────────────────────────────────────────────────
-  const [sourceType, setSourceType] = useState<SourceType>('file')
-  const [selectedCameraId, setSelectedCameraId] = useState('')
-  const [rtspUrl, setRtspUrl] = useState('')
-  const [rtspTestStatus, setRtspTestStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
-  const { data: registeredCameras } = useCameras()
-
-  const isMock = accessMode === 'MOCK'
-  const isAdmin = accessMode === 'ADMIN'
-
-  const { progress, previewUrl, error: jobError } = useVideoJob(!isMock ? activeJobId : null)
   const mock = useMockJob()
+  const { progress, error: jobError } = useVideoJob(!isMock ? activeJobId : null)
 
-  // ── capture metrics snapshot on job completion (ADMIN only) ──────────────────
+  // ── load cameras ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (isMock) { setCameras(MOCK_CAMERAS); return }
+    if (mode !== 'camera') return
+    setCamsLoading(true)
+    createApiClient(backendUrl)
+      .get<RichCamera[]>('/cameras')
+      .then((raw) => setCameras(Array.isArray(raw) ? raw : []))
+      .catch(() => setCameras([]))
+      .finally(() => setCamsLoading(false))
+  }, [mode, backendUrl, isMock])
+
+  const zones = ['all', ...Array.from(new Set(cameras.map((c) => c.zone ?? 'Unassigned').filter(Boolean)))]
+  const visibleCameras = selectedZone === 'all' ? cameras : cameras.filter((c) => (c.zone ?? 'Unassigned') === selectedZone)
+  const onlineCams = cameras.filter((c) => c.status === 'online')
+
+  const toggleCam = (id: string, online: boolean) => {
+    if (!online) return
+    setSelectedCamIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+
+  // ── capture metrics ───────────────────────────────────────────────────────
   const captureMetrics = useCallback(async () => {
     if (!isAdmin || !progress || capturedRef.current) return
     capturedRef.current = true
-    // capture before the async gap so TypeScript knows it's non-null
     const p = progress
     try {
       const raw = await createApiClient(backendUrl).get<RawMetrics>('/observability/metrics')
@@ -185,12 +194,10 @@ export default function Operations() {
     if (progress?.status === 'completed') void captureMetrics()
   }, [progress?.status, captureMetrics])
 
-  // ── job actions ────────────────────────────────────────────────────────────
-  const clearJob = () => {
-    setActiveJobId(null)
-    setFile(null)
-    setUploadError(null)
-    setSnapshot(null)
+  // ── actions ────────────────────────────────────────────────────────────────
+  const clearAll = () => {
+    setActiveJobId(null); setFile(null); setUploadError(null)
+    setSnapshot(null); setActiveJobs([]); setSelectedCamIds(new Set())
     capturedRef.current = false
   }
 
@@ -200,48 +207,67 @@ export default function Operations() {
     if (f?.type.startsWith('video/')) { setFile(f); setSnapshot(null); capturedRef.current = false }
   }
 
-  const testRtsp = () => {
-    if (!rtspUrl) return
-    setRtspTestStatus('testing')
-    // Colab cannot reach local-network IPs — validate URL format only.
-    const valid = rtspUrl.startsWith('rtsp://') ||
-                  rtspUrl.startsWith('http://')  ||
-                  rtspUrl.startsWith('https://')
-    setTimeout(() => setRtspTestStatus(valid ? 'ok' : 'fail'), 250)
+  const openLiveFeed = (jobs: ActiveJob[]) => {
+    const base = backendUrl.replace(/\/api\/v1\/?$/, '')
+    const jobsParam = jobs.map((j) => j.jobId).join(',')
+    const labelsParam = jobs.map((j) => encodeURIComponent(j.label)).join(',')
+    window.open(
+      `/live-feed?jobs=${encodeURIComponent(jobsParam)}&labels=${labelsParam}&base=${encodeURIComponent(base)}`,
+      'echoface-live',
+      'width=1440,height=900,toolbar=0,menubar=0,location=0,scrollbars=0',
+    )
   }
 
-  const startTracking = async () => {
-    if (isMock) { mock.start(); return }
-    setSnapshot(null)
-    capturedRef.current = false
-    setUploading(true)
-    setUploadError(null)
-    try {
-      if (sourceType === 'file') {
-        if (!file) return
-        const form = new FormData()
-        form.append('video', file)
-        const res = await fetch(`${backendUrl}/videos/upload-and-process`, { method: 'POST', body: form })
-        if (!res.ok) throw new Error(`Upload failed (${res.status}): ${await res.text().catch(() => res.statusText)}`)
-        const data = await res.json()
-        setActiveJobId(String(data.job_id))
-      } else if (sourceType === 'camera') {
-        if (!selectedCameraId) return
-        const client = createApiClient(backendUrl)
-        const camData = await client.get<Record<string, unknown>>(`/cameras/${selectedCameraId}`)
-        const streamUrl = camData.stream_url ? String(camData.stream_url) : null
-        if (!streamUrl) throw new Error('Camera has no stream URL configured')
+  const startCameraTracking = async () => {
+    if (isMock) {
+      const mockJobs: ActiveJob[] = Array.from(selectedCamIds).map((id) => ({
+        jobId: `mock-${id}`,
+        label: cameras.find((c) => c.id === id)?.label ?? id,
+      }))
+      setActiveJobs(mockJobs)
+      mock.start()
+      openLiveFeed(mockJobs)
+      return
+    }
+    setUploading(true); setUploadError(null)
+    const client = createApiClient(backendUrl)
+    const jobs: ActiveJob[] = []
+    for (const camId of selectedCamIds) {
+      const cam = cameras.find((c) => c.id === camId)
+      if (!cam?.stream_url) continue
+      try {
         const data = await client.post<{ job_id: string }>('/videos/process/async', {
-          video_relative_path: streamUrl,
+          video_relative_path: cam.stream_url,
         })
-        setActiveJobId(String(data.job_id))
-      } else if (sourceType === 'rtsp') {
-        if (!rtspUrl) return
-        const data = await createApiClient(backendUrl).post<{ job_id: string }>('/videos/process/async', {
-          video_relative_path: rtspUrl,
-        })
-        setActiveJobId(String(data.job_id))
+        jobs.push({ jobId: String(data.job_id), label: cam.label })
+      } catch (e) {
+        setUploadError(`${cam.label}: ${(e as Error).message}`)
       }
+    }
+    setUploading(false)
+    if (jobs.length > 0) {
+      setActiveJobs(jobs)
+      setActiveJobId(jobs[0].jobId)  // first job drives the metrics sidebar
+      openLiveFeed(jobs)
+    }
+  }
+
+  const startFileJob = async () => {
+    if (isMock) { mock.start(); return }
+    if (!file) return
+    setSnapshot(null); capturedRef.current = false
+    setUploading(true); setUploadError(null)
+    try {
+      const form = new FormData()
+      form.append('video', file)
+      const res = await fetch(`${backendUrl}/videos/upload-and-process`, { method: 'POST', body: form })
+      if (!res.ok) throw new Error(`Upload failed (${res.status}): ${await res.text().catch(() => res.statusText)}`)
+      const data = await res.json()
+      const jobId = String(data.job_id)
+      setActiveJobId(jobId)
+      const jobs: ActiveJob[] = [{ jobId, label: file.name }]
+      setActiveJobs(jobs)
+      openLiveFeed(jobs)
     } catch (e) {
       setUploadError((e as Error).message)
     } finally {
@@ -258,16 +284,12 @@ export default function Operations() {
     a.click()
   }
 
-  // ── derived state ──────────────────────────────────────────────────────────
+  // ── derived ────────────────────────────────────────────────────────────────
   const realJobActive = !isMock && activeJobId !== null
   const realStatus = progress?.status ?? 'queued'
   const realDone = realJobActive && (realStatus === 'completed' || realStatus === 'failed')
   const realRunning = realJobActive && !realDone
-  const showUpload = sourceType === 'file' && (isMock ? mock.state === 'idle' : !activeJobId)
-  const showCameraPanel = sourceType === 'camera' && !activeJobId && mock.state === 'idle'
-  const showRtspPanel   = sourceType === 'rtsp'   && !activeJobId && mock.state === 'idle'
-  const trackState: 'idle' | 'running' | 'done' =
-    isMock ? mock.state : realRunning ? 'running' : realDone ? 'done' : 'idle'
+  const jobsRunning = activeJobs.length > 0 || realJobActive || (isMock && mock.state !== 'idle')
   const pct = progress && progress.total_frames > 0
     ? Math.round((progress.processed_frames / progress.total_frames) * 100)
     : null
@@ -275,33 +297,33 @@ export default function Operations() {
   return (
     <div className="flex h-full overflow-hidden">
 
-      {/* ── left column ───────────────────────────────────────────────────── */}
+      {/* ── main column ───────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto p-8 min-w-0">
+
         {/* header */}
         <div className="mb-6 flex items-start justify-between">
           <div>
             <h1 className="text-xl font-semibold text-gray-100">Operations</h1>
             <p className="text-xs font-mono text-gray-600 mt-1">
-              Feed video into the tracking pipeline — file upload · registered cameras · RTSP streams
+              Select cameras to track · or upload a recorded video
+              {cameras.length > 0 && (
+                <span className="ml-2 text-cyan-700">
+                  {onlineCams.length} online · {cameras.length - onlineCams.length} offline
+                </span>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {(realJobActive || realDone || mock.state !== 'idle') && (
+            {jobsRunning && (
               <button
-                onClick={clearJob}
+                onClick={clearAll}
                 className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-700 rounded text-xs font-mono text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-colors"
               >
                 <RotateCcw size={11} /> New job
               </button>
             )}
             <button
-              onClick={() =>
-                window.open(
-                  `/live-feed${activeJobId ? `?job=${activeJobId}` : ''}`,
-                  'echoface-live',
-                  'width=1280,height=720,toolbar=0,menubar=0,location=0',
-                )
-              }
+              onClick={() => activeJobs.length > 0 ? openLiveFeed(activeJobs) : openLiveFeed([])}
               className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-700 rounded text-xs font-mono text-gray-500 hover:text-cyan-400 hover:border-cyan-700/50 transition-colors"
             >
               <ExternalLink size={11} /> Open Live Feed ↗
@@ -309,35 +331,134 @@ export default function Operations() {
           </div>
         </div>
 
-        {/* ── source type selector ─────────────────────────────────────────── */}
-        {mock.state === 'idle' && !activeJobId && (
+        {/* ── mode tabs ─────────────────────────────────────────────────────── */}
+        {!jobsRunning && (
           <div className="mb-5 flex items-center gap-1 p-1 bg-gray-900 border border-gray-800 rounded-lg">
             {([
-              { key: 'file',   Icon: Upload, label: 'File Upload'       },
-              { key: 'camera', Icon: Camera, label: 'Registered Camera' },
-              { key: 'rtsp',   Icon: Wifi,   label: 'RTSP URL'          },
-            ] as const).map(({ key, Icon, label }) => (
+              { key: 'camera' as Mode, Icon: Camera, label: 'Camera Tracking' },
+              { key: 'file'   as Mode, Icon: Upload, label: 'Video File'       },
+            ]).map(({ key, Icon, label }) => (
               <button
                 key={key}
-                onClick={() => { setSourceType(key); setUploadError(null) }}
+                onClick={() => { setMode(key); setUploadError(null) }}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded text-xs font-mono transition-colors ${
-                  sourceType === key
-                    ? 'bg-gray-800 text-gray-200 shadow-inner'
-                    : 'text-gray-600 hover:text-gray-400'
+                  mode === key ? 'bg-gray-800 text-gray-200 shadow-inner' : 'text-gray-600 hover:text-gray-400'
                 }`}
               >
-                <Icon size={11} />
-                {label}
+                <Icon size={11} /> {label}
               </button>
             ))}
           </div>
         )}
 
-        {/* ── upload / file selection ──────────────────────────────────────── */}
+        {/* ── camera tracking panel ─────────────────────────────────────────── */}
         <AnimatePresence mode="wait">
-          {showUpload && (
+          {mode === 'camera' && !jobsRunning && (
             <motion.div
-              key="upload"
+              key="camera-panel"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-5"
+            >
+              {/* zone filter */}
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <MapPin size={14} className="text-cyan-400" />
+                </div>
+                <div className="flex-1">
+                  <div className="text-sm font-semibold text-gray-200">Camera Tracking</div>
+                  <div className="text-[10px] font-mono text-gray-600">Select one or more online cameras then start tracking</div>
+                </div>
+                {zones.length > 1 && (
+                  <select
+                    value={selectedZone}
+                    onChange={(e) => setSelectedZone(e.target.value)}
+                    className="bg-gray-950 border border-gray-700 focus:border-cyan-600/50 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-300 outline-none"
+                  >
+                    <option value="all">All zones</option>
+                    {zones.filter((z) => z !== 'all').map((z) => (
+                      <option key={z} value={z}>{z}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* camera tiles */}
+              {camsLoading ? (
+                <div className="flex items-center justify-center py-10 gap-2 text-xs font-mono text-gray-600">
+                  <Loader2 size={13} className="animate-spin" /> Loading cameras…
+                </div>
+              ) : visibleCameras.length === 0 ? (
+                <div className="text-center py-10 text-xs font-mono text-gray-600">
+                  No cameras registered — add them in Administration
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  {visibleCameras.map((cam) => {
+                    const online = cam.status === 'online'
+                    const selected = selectedCamIds.has(cam.id)
+                    return (
+                      <button
+                        key={cam.id}
+                        onClick={() => toggleCam(cam.id, online)}
+                        disabled={!online}
+                        className={`text-left border rounded-xl p-4 transition-all duration-150 ${
+                          selected
+                            ? 'border-cyan-500/60 bg-cyan-500/8 shadow-[inset_0_0_0_1px] shadow-cyan-500/20'
+                            : online
+                            ? 'border-gray-700 bg-gray-800/40 hover:border-gray-600 hover:bg-gray-800/60'
+                            : 'border-gray-800 bg-gray-900/30 opacity-50 cursor-not-allowed'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {online ? <Wifi size={12} className="text-emerald-400 flex-shrink-0" /> : <WifiOff size={12} className="text-gray-600 flex-shrink-0" />}
+                            <span className="text-xs font-semibold text-gray-200 truncate">{cam.label}</span>
+                          </div>
+                          {selected && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 rounded flex-shrink-0">✓ SELECTED</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] font-mono text-gray-600">
+                          <CameraStatusDot status={cam.status} />
+                          <span className={online ? 'text-emerald-500' : 'text-gray-600'}>{cam.status}</span>
+                          {cam.zone && <><span>·</span><span>{cam.zone}</span></>}
+                          {cam.location && <><span>·</span><span className="truncate">{cam.location}</span></>}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {uploadError && (
+                <div className="mb-4 border border-red-500/30 bg-red-500/8 rounded-lg px-3 py-2 text-xs font-mono text-red-400">
+                  {uploadError}
+                </div>
+              )}
+
+              <button
+                onClick={startCameraTracking}
+                disabled={uploading || selectedCamIds.size === 0}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded-xl text-sm font-semibold hover:bg-cyan-500/25 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+              >
+                {uploading
+                  ? <><Loader2 size={15} className="animate-spin" /> Starting {selectedCamIds.size} job{selectedCamIds.size !== 1 ? 's' : ''}…</>
+                  : selectedCamIds.size > 0
+                  ? <><Play size={15} /> Track {selectedCamIds.size} camera{selectedCamIds.size !== 1 ? 's' : ''} — open live feed</>
+                  : <><Camera size={15} /> Select cameras to begin</>
+                }
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── file upload panel ──────────────────────────────────────────────── */}
+        <AnimatePresence mode="wait">
+          {mode === 'file' && !jobsRunning && (
+            <motion.div
+              key="file-panel"
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
@@ -348,12 +469,9 @@ export default function Operations() {
                   <Video size={15} className="text-cyan-400" />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold text-gray-200">Camera Source — File Upload</div>
-                  <div className="text-[10px] font-mono text-gray-600">CAM-UPLOAD-001 · {isMock ? 'mode: mock' : 'standby'}</div>
+                  <div className="text-sm font-semibold text-gray-200">Process Recorded Video</div>
+                  <div className="text-[10px] font-mono text-gray-600">Run face detection & identity matching on a local video file</div>
                 </div>
-                <span className="ml-auto text-[10px] font-mono px-2 py-1 rounded border text-gray-600 border-gray-700 bg-gray-800/50">
-                  ○ STANDBY
-                </span>
               </div>
 
               <input ref={fileRef} type="file" accept="video/*" className="hidden" onChange={(e) => { if (e.target.files?.[0]) { setFile(e.target.files[0]); setSnapshot(null); capturedRef.current = false } }} />
@@ -379,257 +497,75 @@ export default function Operations() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-semibold text-gray-200 truncate">{file.name}</div>
-                    <div className="text-[10px] font-mono text-gray-600 mt-0.5">
-                      {(file.size / 1024 / 1024).toFixed(1)} MB · {file.type || 'video'}
-                    </div>
+                    <div className="text-[10px] font-mono text-gray-600 mt-0.5">{(file.size / 1024 / 1024).toFixed(1)} MB · {file.type || 'video'}</div>
                   </div>
-                  {!uploading && (
-                    <button onClick={() => setFile(null)} className="text-gray-600 hover:text-gray-400 transition-colors text-xl leading-none">×</button>
-                  )}
+                  {!uploading && <button onClick={() => setFile(null)} className="text-gray-600 hover:text-gray-400 transition-colors text-xl leading-none">×</button>}
                 </div>
               )}
 
               {uploadError && (
-                <div className="mt-3 border border-red-500/30 bg-red-500/8 rounded-lg px-3 py-2 text-xs font-mono text-red-400">
-                  {uploadError}
-                </div>
+                <div className="mt-3 border border-red-500/30 bg-red-500/8 rounded-lg px-3 py-2 text-xs font-mono text-red-400">{uploadError}</div>
               )}
 
               {(file || isMock) && (
                 <motion.button
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
-                  onClick={startTracking}
+                  onClick={startFileJob}
                   disabled={uploading}
-                  className="mt-4 w-full flex items-center justify-center gap-2 py-3 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded-xl text-sm font-semibold tracking-wide hover:bg-cyan-500/25 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                  className="mt-4 w-full flex items-center justify-center gap-2 py-3 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded-xl text-sm font-semibold hover:bg-cyan-500/25 transition-colors disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  {uploading ? <><Loader2 size={15} className="animate-spin" /> Uploading…</> : <><Play size={15} /> Activate Tracking Pipeline</>}
+                  {uploading ? <><Loader2 size={15} className="animate-spin" /> Uploading…</> : <><Play size={15} /> Process video — open live feed</>}
                 </motion.button>
               )}
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* ── registered camera panel ─────────────────────────────────────── */}
-        <AnimatePresence mode="wait">
-          {showCameraPanel && (
-            <motion.div
-              key="camera-panel"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-5"
-            >
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center">
-                  <Camera size={15} className="text-cyan-400" />
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-gray-200">Camera Source — Registered Camera</div>
-                  <div className="text-[10px] font-mono text-gray-600">Select an online registered camera</div>
-                </div>
-              </div>
-
-              <select
-                value={selectedCameraId}
-                onChange={(e) => setSelectedCameraId(e.target.value)}
-                className="w-full bg-gray-950 border border-gray-700 focus:border-cyan-600/50 rounded-lg px-3 py-2.5 text-sm text-gray-200 outline-none mb-4"
-              >
-                <option value="">Select camera…</option>
-                {registeredCameras.map((cam) => (
-                  <option key={cam.id} value={cam.id}>
-                    {cam.name}{cam.location ? ` · ${cam.location}` : ''} · {cam.status}
-                  </option>
-                ))}
-              </select>
-
-              {selectedCameraId && (() => {
-                const cam = registeredCameras.find((c) => c.id === selectedCameraId)
-                if (!cam) return null
-                return (
-                  <div className="border border-gray-700 bg-gray-800/40 rounded-xl p-4 mb-4">
-                    <div className="text-sm font-semibold text-gray-200">{cam.name}</div>
-                    <div className="text-[10px] font-mono text-gray-500 mt-0.5">
-                      {cam.location || 'No zone assigned'} · {cam.status === 'ACTIVE' ? '● Active' : '◌ Inactive'}
-                    </div>
-                  </div>
-                )
-              })()}
-
-              {uploadError && (
-                <div className="mb-4 border border-red-500/30 bg-red-500/8 rounded-lg px-3 py-2 text-xs font-mono text-red-400">
-                  {uploadError}
-                </div>
-              )}
-
-              {selectedCameraId && (
-                <motion.button
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  onClick={startTracking}
-                  disabled={uploading}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded-xl text-sm font-semibold hover:bg-cyan-500/25 transition-colors disabled:opacity-50 disabled:pointer-events-none"
-                >
-                  {uploading ? <><Loader2 size={15} className="animate-spin" /> Connecting…</> : <><Play size={15} /> Activate Tracking Pipeline</>}
-                </motion.button>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ── RTSP URL panel ───────────────────────────────────────────────── */}
-        <AnimatePresence mode="wait">
-          {showRtspPanel && (
-            <motion.div
-              key="rtsp-panel"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-5"
-            >
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center">
-                  <Wifi size={15} className="text-cyan-400" />
-                </div>
-                <div>
-                  <div className="text-sm font-semibold text-gray-200">Camera Source — RTSP Stream</div>
-                  <div className="text-[10px] font-mono text-gray-600">Enter a direct RTSP stream URL</div>
-                </div>
-              </div>
-
-              <div className="flex gap-2 mb-4">
-                <input
-                  value={rtspUrl}
-                  onChange={(e) => { setRtspUrl(e.target.value); setRtspTestStatus('idle') }}
-                  placeholder="rtsp://192.168.1.100:554/stream"
-                  className="flex-1 bg-gray-950 border border-gray-700 focus:border-cyan-600/50 rounded-lg px-3 py-2.5 text-sm font-mono text-gray-200 outline-none"
-                />
+        {/* ── active jobs status ────────────────────────────────────────────── */}
+        <AnimatePresence>
+          {activeJobs.length > 0 && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-3 mb-5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-[10px] font-mono text-gray-600 tracking-widest">ACTIVE JOBS ({activeJobs.length})</h2>
                 <button
-                  onClick={testRtsp}
-                  disabled={!rtspUrl || rtspTestStatus === 'testing'}
-                  className="px-4 py-2.5 border border-gray-700 rounded-lg text-xs font-mono text-gray-400 hover:border-gray-600 hover:text-gray-200 transition-colors disabled:opacity-40"
+                  onClick={() => openLiveFeed(activeJobs)}
+                  className="flex items-center gap-1.5 text-xs font-mono text-cyan-500 hover:text-cyan-400 transition-colors"
                 >
-                  {rtspTestStatus === 'testing' ? <Loader2 size={12} className="animate-spin" /> : 'Test'}
+                  <ExternalLink size={11} /> Reopen live feed
                 </button>
               </div>
-
-              {rtspTestStatus === 'ok' && (
-                <div className="mb-4 flex items-center gap-2 text-xs font-mono text-emerald-400">
-                  <CheckCircle2 size={12} /> URL format valid
-                </div>
-              )}
-              {rtspTestStatus === 'fail' && (
-                <div className="mb-4 flex items-center gap-2 text-xs font-mono text-red-400">
-                  <AlertTriangle size={12} /> Invalid URL format — expected rtsp://, http://, or https://
-                </div>
-              )}
-
-              {uploadError && (
-                <div className="mb-4 border border-red-500/30 bg-red-500/8 rounded-lg px-3 py-2 text-xs font-mono text-red-400">
-                  {uploadError}
-                </div>
-              )}
-
-              {rtspUrl && (
-                <motion.button
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  onClick={startTracking}
-                  disabled={uploading}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-cyan-500/15 border border-cyan-500/40 text-cyan-400 rounded-xl text-sm font-semibold hover:bg-cyan-500/25 transition-colors disabled:opacity-50 disabled:pointer-events-none"
-                >
-                  {uploading ? <><Loader2 size={15} className="animate-spin" /> Connecting…</> : <><Play size={15} /> Activate Tracking Pipeline</>}
-                </motion.button>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ── annotated preview — PRIMARY FOCUS ────────────────────────────── */}
-        <AnimatePresence>
-          {(previewUrl || realRunning) && (
-            <motion.div
-              key="preview"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-5"
-            >
-              <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-800">
-                <Film size={13} className="text-cyan-400" />
-                <h2 className="text-[10px] font-mono text-gray-400 tracking-widest">ANNOTATED PREVIEW</h2>
-                {realRunning && (
-                  <span className="ml-auto flex items-center gap-1.5 text-[10px] font-mono text-cyan-500">
-                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" /> LIVE
-                  </span>
-                )}
-                {!realRunning && <span className="ml-auto text-[10px] font-mono text-gray-700">bbox overlay · last annotated frame</span>}
-              </div>
-              <div className="bg-black min-h-[200px] flex items-center justify-center">
-                {previewUrl ? (
-                  /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(previewUrl) ? (
-                    <LivePreviewImage src={previewUrl} isLive={realJobActive} />
-                  ) : (
-                    <video
-                      key={previewUrl}
-                      src={previewUrl}
-                      controls
-                      autoPlay
-                      className="w-full object-contain"
-                      style={{ maxHeight: '60vh' }}
-                      onError={(e) => console.warn('Preview failed:', previewUrl, e)}
-                    />
-                  )
-                ) : (
-                  <div className="flex flex-col items-center gap-3 py-16 text-center">
-                    <Loader2 size={20} className="text-cyan-600 animate-spin" />
-                    <div className="text-[11px] font-mono text-gray-600">Processing — preview will appear once frames are annotated</div>
+              {activeJobs.map((job) => (
+                <div key={job.jobId} className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center gap-3">
+                  <Loader2 size={13} className="text-cyan-500 animate-spin flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-gray-300 truncate">{job.label}</div>
+                    <div className="text-[10px] font-mono text-gray-600 mt-0.5">Job {job.jobId.slice(0, 12)}…</div>
                   </div>
-                )}
-              </div>
-              {previewUrl && (
-                <div className="px-5 py-2 text-[10px] font-mono text-gray-700 truncate">
-                  {previewUrl.split('/').pop()?.split('?')[0]}
+                  <span className="text-[10px] font-mono px-2 py-1 rounded border text-cyan-400 border-cyan-500/40 bg-cyan-500/10">● TRACKING</span>
                 </div>
-              )}
+              ))}
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* ── job running — compact status + progress ──────────────────────── */}
+        {/* ── real job progress (file upload) ───────────────────────────────── */}
         <AnimatePresence>
           {realJobActive && progress && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-5"
-            >
-              {/* status row */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-5">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 bg-gray-800 rounded-lg flex items-center justify-center">
-                  {realRunning
-                    ? <Loader2 size={14} className="text-cyan-400 animate-spin" />
-                    : realStatus === 'failed'
-                    ? <span className="text-red-400 text-xs">✕</span>
-                    : <CheckCircle2 size={14} className="text-emerald-400" />}
+                  {realRunning ? <Loader2 size={14} className="text-cyan-400 animate-spin" /> : realStatus === 'failed' ? <span className="text-red-400 text-xs">✕</span> : <CheckCircle2 size={14} className="text-emerald-400" />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[11px] font-mono text-gray-400">
-                    Job <span className="text-cyan-400">{activeJobId?.slice(0, 12)}…</span>
-                  </div>
-                  <div className="text-[10px] font-mono text-gray-700 mt-0.5">
-                    {realRunning ? 'Processing on server — polling every 2s' : realStatus === 'failed' ? 'Job failed' : 'Processing complete'}
-                  </div>
+                  <div className="text-[11px] font-mono text-gray-400">Job <span className="text-cyan-400">{activeJobId?.slice(0, 12)}…</span></div>
+                  <div className="text-[10px] font-mono text-gray-700 mt-0.5">{realRunning ? 'Processing — view annotations in live feed' : realStatus === 'failed' ? 'Job failed' : 'Processing complete'}</div>
                 </div>
-                <span className={`text-[10px] font-mono px-2 py-1 rounded border flex-shrink-0 ${
-                  realRunning ? 'text-cyan-400 border-cyan-500/40 bg-cyan-500/10'
-                  : realStatus === 'failed' ? 'text-red-400 border-red-500/30 bg-red-500/8'
-                  : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/8'
-                }`}>
+                <span className={`text-[10px] font-mono px-2 py-1 rounded border flex-shrink-0 ${realRunning ? 'text-cyan-400 border-cyan-500/40 bg-cyan-500/10' : realStatus === 'failed' ? 'text-red-400 border-red-500/30 bg-red-500/8' : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/8'}`}>
                   {realRunning ? '● PROCESSING' : realStatus === 'failed' ? '✕ FAILED' : '✓ COMPLETE'}
                 </span>
               </div>
 
-              {/* progress bar */}
               {pct !== null && (
                 <div className="mb-4">
                   <div className="flex justify-between text-[10px] font-mono text-gray-600 mb-1.5">
@@ -637,21 +573,15 @@ export default function Operations() {
                     <span>{pct}%</span>
                   </div>
                   <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                    <motion.div
-                      className={`h-full rounded-full ${realStatus === 'failed' ? 'bg-red-500' : 'bg-cyan-500'}`}
-                      initial={{ width: 0 }}
-                      animate={{ width: `${pct}%` }}
-                      transition={{ duration: 0.4 }}
-                    />
+                    <motion.div className={`h-full rounded-full ${realStatus === 'failed' ? 'bg-red-500' : 'bg-cyan-500'}`} initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.4 }} />
                   </div>
                 </div>
               )}
 
-              {/* stat tiles */}
               <div className="grid grid-cols-4 gap-3">
                 {[
-                  { label: 'FRAMES',  value: progress.processed_frames.toLocaleString(), accent: 'text-gray-200' },
-                  { label: 'ALERTS',  value: String(progress.alerts_created), accent: progress.alerts_created > 0 ? 'text-amber-400' : 'text-gray-500' },
+                  { label: 'FRAMES', value: progress.processed_frames.toLocaleString(), accent: 'text-gray-200' },
+                  { label: 'ALERTS', value: String(progress.alerts_created), accent: progress.alerts_created > 0 ? 'text-amber-400' : 'text-gray-500' },
                   { label: 'AVG FPS', value: progress.avg_fps > 0 ? progress.avg_fps.toFixed(1) : '—', accent: 'text-cyan-400' },
                   { label: 'ELAPSED', value: fmt(Math.round(progress.processing_duration_seconds ?? 0)), accent: 'text-gray-400' },
                 ].map((m) => (
@@ -662,23 +592,18 @@ export default function Operations() {
                 ))}
               </div>
 
-              {/* alerts banner */}
               {progress.alerts_created > 0 && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 border border-amber-500/30 bg-amber-500/8 rounded-lg p-3 flex items-center gap-3">
                   <AlertTriangle size={14} className="text-amber-400 flex-shrink-0" />
-                  <div className="text-sm font-medium text-amber-300">
-                    {progress.alerts_created} potential match{progress.alerts_created !== 1 ? 'es' : ''} detected —{' '}
-                    <span className="text-amber-400/70 font-normal text-xs">open a Case Workspace to review</span>
-                  </div>
+                  <div className="text-sm font-medium text-amber-300">{progress.alerts_created} potential match{progress.alerts_created !== 1 ? 'es' : ''} detected — <span className="text-amber-400/70 font-normal text-xs">open a Case Workspace to review</span></div>
                 </motion.div>
               )}
 
               {realStatus === 'completed' && progress.alerts_created === 0 && (
                 <div className="mt-3 flex items-center gap-2 text-xs font-mono text-gray-500">
-                  <CheckCircle2 size={13} className="text-emerald-400" /> Processing complete — no matches found in this source
+                  <CheckCircle2 size={13} className="text-emerald-400" /> Processing complete — no matches found
                 </div>
               )}
-
               {(progress.error_message || jobError) && (
                 <div className="mt-3 text-xs font-mono text-red-400">{progress.error_message ?? jobError}</div>
               )}
@@ -686,17 +611,13 @@ export default function Operations() {
           )}
         </AnimatePresence>
 
-        {/* ── mock mode panel ───────────────────────────────────────────────── */}
+        {/* ── mock status ────────────────────────────────────────────────────── */}
         <AnimatePresence>
           {isMock && mock.state !== 'idle' && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-gray-900 border border-gray-800 rounded-xl p-6">
               <div className="flex items-center justify-between mb-5">
                 <h2 className="text-[10px] font-mono text-gray-600 tracking-widest">PIPELINE STATUS</h2>
-                {mock.state === 'running' && (
-                  <div className="flex items-center gap-2 text-[10px] font-mono text-violet-400">
-                    <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" /> MOCK · LIVE
-                  </div>
-                )}
+                {mock.state === 'running' && <div className="flex items-center gap-2 text-[10px] font-mono text-violet-400"><span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" /> MOCK · LIVE</div>}
               </div>
               <div className="grid grid-cols-4 gap-3 mb-5">
                 {[
@@ -714,15 +635,11 @@ export default function Operations() {
               {mock.stats.matchesFound > 0 && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="border border-amber-500/30 bg-amber-500/8 rounded-lg p-3 flex items-center gap-3 mb-4">
                   <AlertTriangle size={14} className="text-amber-400 flex-shrink-0" />
-                  <div className="text-sm font-medium text-amber-300">
-                    Potential match detected — <span className="text-xs font-normal text-amber-400/70">Frame {Math.floor(mock.stats.framesAnalyzed * 0.6)} · Confidence 91%</span>
-                  </div>
+                  <div className="text-sm font-medium text-amber-300">Potential match detected — <span className="text-xs font-normal text-amber-400/70">Frame {Math.floor(mock.stats.framesAnalyzed * 0.6)} · Confidence 91%</span></div>
                 </motion.div>
               )}
               {mock.state === 'done' && mock.stats.matchesFound === 0 && (
-                <div className="flex items-center gap-2 text-xs font-mono text-gray-500">
-                  <CheckCircle2 size={13} className="text-emerald-400" /> Complete — no definitive matches found
-                </div>
+                <div className="flex items-center gap-2 text-xs font-mono text-gray-500"><CheckCircle2 size={13} className="text-emerald-400" /> Complete — no definitive matches found</div>
               )}
               {mock.state === 'running' && (
                 <button onClick={mock.stop} className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-sm font-semibold hover:bg-red-500/15 transition-colors">
@@ -734,7 +651,7 @@ export default function Operations() {
         </AnimatePresence>
       </div>
 
-      {/* ── right panel — ADMIN only ─────────────────────────────────────────── */}
+      {/* ── right sidebar — ADMIN only ─────────────────────────────────────────── */}
       {isAdmin && (
         <aside className="w-72 flex-shrink-0 border-l border-gray-800 bg-gray-950 overflow-y-auto">
           <div className="p-5">
@@ -744,132 +661,44 @@ export default function Operations() {
                 <h3 className="text-[10px] font-mono text-gray-400 tracking-widest">JOB METRICS</h3>
               </div>
               {snapshot && (
-                <button
-                  onClick={downloadMetrics}
-                  title="Download metrics JSON"
-                  className="flex items-center gap-1 px-2 py-1 border border-gray-700 rounded text-[10px] font-mono text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-colors"
-                >
+                <button onClick={downloadMetrics} title="Download metrics JSON" className="flex items-center gap-1 px-2 py-1 border border-gray-700 rounded text-[10px] font-mono text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-colors">
                   <Download size={10} /> JSON
                 </button>
               )}
             </div>
             <div className="text-[9px] font-mono text-gray-700 mb-5">
-              {snapshot
-                ? `Captured ${new Date(snapshot.capturedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
-                : 'Snapshot taken on job completion'}
+              {snapshot ? `Captured ${new Date(snapshot.capturedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : 'Snapshot taken on job completion'}
             </div>
 
             <AnimatePresence mode="wait">
               {!snapshot ? (
-                <motion.div
-                  key="empty"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="flex flex-col items-center justify-center py-12 text-center"
-                >
+                <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-12 text-center">
                   <div className="w-10 h-10 rounded-full bg-gray-900 border border-gray-800 flex items-center justify-center mb-3">
                     <Activity size={16} className="text-gray-700" />
                   </div>
                   <div className="text-[11px] font-mono text-gray-600">No data yet</div>
                   <div className="text-[10px] font-mono text-gray-700 mt-1">Run a job to capture metrics</div>
-                  {realRunning && (
-                    <div className="mt-4 flex items-center gap-1.5 text-[10px] font-mono text-cyan-600">
-                      <Loader2 size={10} className="animate-spin" /> Processing…
-                    </div>
-                  )}
+                  {realRunning && <div className="mt-4 flex items-center gap-1.5 text-[10px] font-mono text-cyan-600"><Loader2 size={10} className="animate-spin" /> Processing…</div>}
                 </motion.div>
               ) : (
                 <motion.div key="data" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
-
-                  {/* ── processing stats ─────────────────────────────────── */}
                   <div className="text-[9px] font-mono text-gray-600 tracking-widest mb-2">PROCESSING</div>
-                  <MetricRow
-                    icon={Gauge}
-                    label="Avg processing FPS"
-                    value={snapshot.avg_fps.toFixed(1)}
-                    accent={snapshot.avg_fps > 20 ? 'text-emerald-400' : snapshot.avg_fps > 5 ? 'text-cyan-400' : 'text-amber-400'}
-                  />
-                  <MetricRow
-                    icon={Film}
-                    label="Total frames"
-                    value={snapshot.total_frames.toLocaleString()}
-                  />
-                  <MetricRow
-                    icon={Zap}
-                    label="Elapsed time"
-                    value={fmt(Math.round(snapshot.processing_seconds))}
-                  />
-                  <MetricRow
-                    icon={AlertTriangle}
-                    label="Alerts created"
-                    value={String(snapshot.alerts_created)}
-                    accent={snapshot.alerts_created > 0 ? 'text-amber-400' : 'text-gray-500'}
-                  />
-
-                  {/* ── detector ──────────────────────────────────────────── */}
+                  <MetricRow icon={Gauge} label="Avg processing FPS" value={snapshot.avg_fps.toFixed(1)} accent={snapshot.avg_fps > 20 ? 'text-emerald-400' : snapshot.avg_fps > 5 ? 'text-cyan-400' : 'text-amber-400'} />
+                  <MetricRow icon={Film} label="Total frames" value={snapshot.total_frames.toLocaleString()} />
+                  <MetricRow icon={Zap} label="Elapsed time" value={fmt(Math.round(snapshot.processing_seconds))} />
+                  <MetricRow icon={AlertTriangle} label="Alerts created" value={String(snapshot.alerts_created)} accent={snapshot.alerts_created > 0 ? 'text-amber-400' : 'text-gray-500'} />
                   <div className="text-[9px] font-mono text-gray-600 tracking-widest mt-5 mb-2">DETECTOR</div>
-                  <MetricRow
-                    icon={Cpu}
-                    label="Detector latency"
-                    value={`${snapshot.detector_latency_ms.toFixed(1)} ms`}
-                    accent={snapshot.detector_latency_ms < 20 ? 'text-emerald-400' : snapshot.detector_latency_ms < 50 ? 'text-cyan-400' : 'text-amber-400'}
-                  />
-                  <MetricRow
-                    icon={ShieldCheck}
-                    label="Faces detected"
-                    value={String(snapshot.total_faces_detected)}
-                  />
-                  <MetricRow
-                    icon={TrendingDown}
-                    label="Rejection rate"
-                    value={`${(snapshot.validator_rejection_rate * 100).toFixed(1)}%`}
-                    sub={`${snapshot.total_faces_rejected} rejected`}
-                    accent={snapshot.validator_rejection_rate < 0.2 ? 'text-emerald-400' : 'text-amber-400'}
-                  />
-                  <MetricRow
-                    icon={TrendingDown}
-                    label="Blur rejections"
-                    value={String(snapshot.blur_rejections)}
-                    accent="text-gray-400"
-                  />
-
-                  {/* ── identity model ───────────────────────────────────── */}
+                  <MetricRow icon={Cpu} label="Detector latency" value={`${snapshot.detector_latency_ms.toFixed(1)} ms`} accent={snapshot.detector_latency_ms < 20 ? 'text-emerald-400' : snapshot.detector_latency_ms < 50 ? 'text-cyan-400' : 'text-amber-400'} />
+                  <MetricRow icon={ShieldCheck} label="Faces detected" value={String(snapshot.total_faces_detected)} />
+                  <MetricRow icon={TrendingDown} label="Rejection rate" value={`${(snapshot.validator_rejection_rate * 100).toFixed(1)}%`} sub={`${snapshot.total_faces_rejected} rejected`} accent={snapshot.validator_rejection_rate < 0.2 ? 'text-emerald-400' : 'text-amber-400'} />
+                  <MetricRow icon={TrendingDown} label="Blur rejections" value={String(snapshot.blur_rejections)} accent="text-gray-400" />
                   <div className="text-[9px] font-mono text-gray-600 tracking-widest mt-5 mb-2">IDENTITY MODEL</div>
-                  <MetricRow
-                    icon={Activity}
-                    label="Stable matches"
-                    value={String(snapshot.stable_matches)}
-                    accent="text-cyan-400"
-                  />
-                  <MetricRow
-                    icon={TrendingDown}
-                    label="Identity switch rate"
-                    value={snapshot.identity_switch_rate.toFixed(4)}
-                    accent={snapshot.identity_switch_rate === 0 ? 'text-emerald-400' : 'text-amber-400'}
-                  />
-
-                  {/* ── hardware ──────────────────────────────────────────── */}
+                  <MetricRow icon={Activity} label="Stable matches" value={String(snapshot.stable_matches)} accent="text-cyan-400" />
+                  <MetricRow icon={TrendingDown} label="Identity switch rate" value={snapshot.identity_switch_rate.toFixed(4)} accent={snapshot.identity_switch_rate === 0 ? 'text-emerald-400' : 'text-amber-400'} />
                   <div className="text-[9px] font-mono text-gray-600 tracking-widest mt-5 mb-2">HARDWARE</div>
-                  <MetricRow
-                    icon={Cpu}
-                    label="Backend"
-                    value={snapshot.hardware_backend_type === 1 ? 'GPU' : 'CPU'}
-                    accent={snapshot.hardware_backend_type === 1 ? 'text-emerald-400' : 'text-cyan-400'}
-                  />
-                  <MetricRow
-                    icon={ShieldCheck}
-                    label="GPU status"
-                    value={snapshot.gpu_status}
-                    accent={snapshot.gpu_status === 'OK' ? 'text-emerald-400' : 'text-amber-400'}
-                  />
-                  <MetricRow
-                    icon={Gauge}
-                    label="Obs. FPS"
-                    value={snapshot.obs_fps.toFixed(1)}
-                    sub="rolling avg"
-                    accent="text-gray-400"
-                  />
-
+                  <MetricRow icon={Cpu} label="Backend" value={snapshot.hardware_backend_type === 1 ? 'GPU' : 'CPU'} accent={snapshot.hardware_backend_type === 1 ? 'text-emerald-400' : 'text-cyan-400'} />
+                  <MetricRow icon={ShieldCheck} label="GPU status" value={snapshot.gpu_status} accent={snapshot.gpu_status === 'OK' ? 'text-emerald-400' : 'text-amber-400'} />
+                  <MetricRow icon={Gauge} label="Obs. FPS" value={snapshot.obs_fps.toFixed(1)} sub="rolling avg" accent="text-gray-400" />
                   <div className="mt-5 pt-4 border-t border-gray-800">
                     <div className="text-[9px] font-mono text-gray-700 mb-2">Job ID</div>
                     <div className="text-[10px] font-mono text-gray-600 break-all">{snapshot.jobId}</div>

@@ -1,12 +1,14 @@
-"""Live MJPEG streaming endpoint — decoupled capture + AI via LiveCameraSession.
+"""Live MJPEG streaming endpoints.
 
-GET /stream/live/{camera_id}        multipart/x-mixed-replace MJPEG stream
-GET /debug/stream-metrics           lightweight rolling counters for the active session(s)
+GET /stream/live/{camera_id}   multipart/x-mixed-replace — live camera via LiveCameraSession
+GET /stream/job/{job_id}       multipart/x-mixed-replace — file/RTSP processing job preview
+GET /debug/stream-metrics      lightweight rolling counters for active sessions
 """
 
 from __future__ import annotations
 
 import asyncio
+import pathlib
 
 import cv2
 from fastapi import APIRouter, HTTPException
@@ -14,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from ecoface_lite.api.deps import DbSession
+from ecoface_lite.core.config import get_settings
 from ecoface_lite.core.logging import get_logger
 from ecoface_lite.core.metrics import metrics
 from ecoface_lite.db.models import Camera
@@ -65,6 +68,47 @@ async def stream_live(camera_id: int, db: DbSession):
 
     return StreamingResponse(
         _frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@router.get("/stream/job/{job_id}")
+async def stream_job_annotated_frames(job_id: str):
+    """MJPEG stream for any file-upload or camera processing job.
+
+    Polls {PREVIEWS_DIR}/{job_id}/latest.jpg at ~10 FPS and yields each
+    new frame as a MJPEG boundary when mtime or size changes.  Keeps the
+    last good frame on screen while the pipeline is slower than the poll
+    interval, and terminates after ~60 s with no file present.
+    """
+    settings = get_settings()
+    preview_path = pathlib.Path(settings.resolved_previews_dir()) / job_id / "latest.jpg"
+
+    async def _generator():
+        last_mtime: float = 0.0
+        last_size: int = 0
+        idle_ticks: int = 0
+        while True:
+            try:
+                if preview_path.is_file():
+                    st = preview_path.stat()
+                    if st.st_mtime != last_mtime or st.st_size != last_size:
+                        last_mtime = st.st_mtime
+                        last_size = st.st_size
+                        data = preview_path.read_bytes()
+                        if data:
+                            yield _BOUNDARY_PREFIX + data + _BOUNDARY_SUFFIX
+                    idle_ticks = 0
+                else:
+                    idle_ticks += 1
+                    if idle_ticks > 600:  # ~60 s with no file → close
+                        break
+            except OSError:
+                pass
+            await asyncio.sleep(0.1)  # poll at ~10 FPS
+
+    return StreamingResponse(
+        _generator(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
 
