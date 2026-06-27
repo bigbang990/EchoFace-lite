@@ -206,6 +206,12 @@ export function deriveActivityFeed(incidents: Incident[]): ActivityEvent[] {
 
 let _incidentsCache: Incident[] = []
 
+const _detailCache = new Map<string, {
+  incident: Incident
+  persons: Person[]
+  sightings: Sighting[]
+}>()
+
 // ── useIncidents ──────────────────────────────────────────────────────────────
 
 export function useIncidents() {
@@ -292,6 +298,8 @@ export function useIncidentDetail(id: string | undefined) {
       const inc = normalizeIncident(rawInc, 0)
       const ps = rawPersons.map((p) => normalizePerson(p, id))
       const ss = rawSightings.map(normalizeSighting)
+      // Write to cache so return-visits are instant
+      _detailCache.set(id, { incident: inc, persons: ps, sightings: ss })
       setIncident(inc)
       setPersons(ps)
       setSightings(ss)
@@ -307,16 +315,28 @@ export function useIncidentDetail(id: string | undefined) {
 
   useEffect(() => {
     cancelledRef.current = false
-    hasLoadedRef.current = false
-    setLoading(true)
-    setIncident(null)
+    const cached = id ? _detailCache.get(id) : undefined
+    if (cached) {
+      // Stale-while-revalidate: show cached data immediately, no spinner
+      hasLoadedRef.current = true
+      setIncident(cached.incident)
+      setPersons(cached.persons)
+      setSightings(cached.sightings)
+      setTimeline(buildTimeline(cached.incident, cached.persons, cached.sightings))
+      setLoading(false)
+    } else {
+      hasLoadedRef.current = false
+      setLoading(true)
+      setIncident(null)
+    }
+    // Always fetch fresh data in background
     load()
     if (accessMode === 'ADMIN') {
       const t = setInterval(load, 60_000)
       return () => { cancelledRef.current = true; clearInterval(t) }
     }
     return () => { cancelledRef.current = true }
-  }, [load, accessMode])
+  }, [load, accessMode, id])
 
   return { incident, persons, sightings, timeline, loading, error, refetch: load }
 }
@@ -491,7 +511,8 @@ export function useVideoJob(jobId: string | null) {
         // Always set preview URL when job is active or done.
         // Uses the no-cache endpoint so browsers receive fresh bytes each poll.
           if (s.status === 'processing' || s.status === 'completed') {
-            setPreviewUrl(`${backendBase}/api/v1/videos/preview-image/${jobId}`)
+            // Cache-bust each poll so the browser fetches fresh frame bytes
+            setPreviewUrl(`${backendBase}/api/v1/videos/preview-image/${jobId}?t=${Date.now()}`)
           }
 
         if (s.status === 'completed' || s.status === 'failed') {
