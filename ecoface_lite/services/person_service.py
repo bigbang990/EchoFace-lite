@@ -292,30 +292,33 @@ async def add_photos_to_person(
     return accepted, rejected, reasons
 
 
-# ── Pre-flight batch validation (no DB writes) ────────────────────────────────
+# ── Multi-face enrollment with operator face picker ───────────────────────────
 
 @dataclass
-class PhotoValidation:
-    index: int
-    filename: str
-    status: str           # "ok" | "rejected" | "outlier"
-    reason: str | None
-    embedding: "np.ndarray | None"
-    thumbnail_b64: str | None
-    is_outlier: bool = False
+class DetectedEnrollmentFace:
+    face_id: str
+    bbox: tuple[float, float, float, float]
+    det_score: float
+    pose_bucket: str
+    quality_score: float | None
+    thumbnail_b64: str
+    embedding: "np.ndarray"
 
 
-def _make_thumbnail_b64(image: "np.ndarray", max_width: int = 120) -> str | None:
-    """Return base64-encoded JPEG thumbnail of the image, or None on failure."""
+def _hash_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _make_jpeg_b64(image: "np.ndarray", max_width: int = 200) -> str | None:
+    """Base64-encoded JPEG of `image`, downscaled so the wider side is <= max_width."""
     try:
         import base64
         import cv2
-        import numpy as np
         h, w = image.shape[:2]
         if w > max_width:
             scale = max_width / w
             image = cv2.resize(image, (max_width, max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
-        ok, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        ok, buf = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 78])
         if not ok:
             return None
         return base64.b64encode(buf.tobytes()).decode()
@@ -323,91 +326,342 @@ def _make_thumbnail_b64(image: "np.ndarray", max_width: int = 120) -> str | None
         return None
 
 
-async def validate_enrollment_batch(
+def _crop_face_thumbnail(image_bgr: "np.ndarray", bbox: tuple[float, float, float, float], pad_ratio: float = 0.20) -> "np.ndarray | None":
+    """Crop a face region from the original-resolution image with padding for context."""
+    import numpy as np
+    try:
+        x1, y1, x2, y2 = bbox
+        h, w = image_bgr.shape[:2]
+        bw, bh = x2 - x1, y2 - y1
+        px, py = bw * pad_ratio, bh * pad_ratio
+        cx1 = max(0, int(x1 - px))
+        cy1 = max(0, int(y1 - py))
+        cx2 = min(w, int(x2 + px))
+        cy2 = min(h, int(y2 + py))
+        if cx2 <= cx1 or cy2 <= cy1:
+            return None
+        return image_bgr[cy1:cy2, cx1:cx2].copy()
+    except Exception:
+        return None
+
+
+def _compute_face_id(image_hash: str, bbox: tuple[float, float, float, float]) -> str:
+    """Content-addressable ID — same image + same bbox always yields same id."""
+    x1, y1, x2, y2 = bbox
+    payload = f"{image_hash}:{x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+async def detect_faces_in_batch(
     pipeline: "RecognitionPipeline",
     files: list[bytes],
     filenames: list[str],
+) -> list[dict]:
+    """Detect all faces in each uploaded photo. No DB writes, no face selection.
+
+    Returns a list of dicts (one per input file) with shape matching PhotoDetectionResult.
+    The operator picks ONE face per photo from these candidates in the frontend.
+    """
+    import cv2
+    import numpy as np
+    from ecoface_lite.ai_engine.geometry import compute_face_geometry
+    from ecoface_lite.ai_engine.pose_estimator import classify_pose_bucket
+
+    results: list[dict] = []
+
+    for idx, (file_bytes, filename) in enumerate(zip(files, filenames)):
+        image_hash = _hash_bytes(file_bytes)
+        buf = np.frombuffer(file_bytes, dtype=np.uint8)
+        image = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if image is None:
+            results.append({
+                "photo_index": idx, "filename": filename, "image_hash": image_hash,
+                "status": "invalid", "reason": "could not decode image",
+                "photo_thumbnail_b64": None, "faces": [],
+            })
+            continue
+
+        photo_thumb = _make_jpeg_b64(image, max_width=200)
+
+        try:
+            detected = pipeline.detect_enrollment_faces(image, min_det_score=0.50)
+        except Exception as exc:
+            results.append({
+                "photo_index": idx, "filename": filename, "image_hash": image_hash,
+                "status": "invalid", "reason": f"detection error: {exc}",
+                "photo_thumbnail_b64": photo_thumb, "faces": [],
+            })
+            continue
+
+        if not detected:
+            results.append({
+                "photo_index": idx, "filename": filename, "image_hash": image_hash,
+                "status": "no_face", "reason": "no face detected in this photo",
+                "photo_thumbnail_b64": photo_thumb, "faces": [],
+            })
+            continue
+
+        # Sort by face area descending → the largest face is usually the subject in a portrait
+        # and in groups it lets the operator see the prominent faces first.
+        faces_with_area = []
+        for face in detected:
+            bb = face.bbox
+            area = max(0.0, (bb.x2 - bb.x1) * (bb.y2 - bb.y1))
+            faces_with_area.append((area, face))
+        faces_with_area.sort(key=lambda x: x[0], reverse=True)
+
+        face_out_list = []
+        for rank, (_, face) in enumerate(faces_with_area):
+            bb = face.bbox
+            bbox_tuple = (float(bb.x1), float(bb.y1), float(bb.x2), float(bb.y2))
+            face_id = _compute_face_id(image_hash, bbox_tuple)
+
+            # Pose classification
+            try:
+                pose = classify_pose_bucket(face.landmarks, face.bbox) if face.landmarks is not None else None
+                pose_value = pose.value if pose is not None else "unknown"
+            except Exception:
+                pose_value = "unknown"
+
+            # Quality score (geometric proxy — width/height/det_score blend, no hard gate)
+            try:
+                geom = compute_face_geometry(face, image.shape)
+                w_ratio = min(1.0, geom.width / 200.0)
+                h_ratio = min(1.0, geom.height / 200.0)
+                quality = float(min(1.0, 0.4 * face.det_score + 0.3 * w_ratio + 0.3 * h_ratio))
+            except Exception:
+                quality = float(face.det_score)
+
+            # Thumbnail crop of just the face region
+            face_crop = _crop_face_thumbnail(image, bbox_tuple)
+            face_thumb = _make_jpeg_b64(face_crop, max_width=140) if face_crop is not None else _make_jpeg_b64(image, max_width=140)
+
+            face_out_list.append({
+                "face_id": face_id,
+                "bbox": list(bbox_tuple),
+                "det_score": float(face.det_score),
+                "pose_bucket": pose_value,
+                "quality_score": quality,
+                "thumbnail_b64": face_thumb or "",
+                "is_recommended": rank == 0,  # largest face flagged as suggested
+            })
+
+        results.append({
+            "photo_index": idx, "filename": filename, "image_hash": image_hash,
+            "status": "ok", "reason": None,
+            "photo_thumbnail_b64": photo_thumb, "faces": face_out_list,
+        })
+
+    return results
+
+
+async def confirm_face_selections(
+    pipeline: "RecognitionPipeline",
+    files: list[bytes],
+    filenames: list[str],
+    selections: list[dict],
     outlier_threshold: float = 0.30,
-) -> list[PhotoValidation]:
-    """Validate N photos for enrollment without writing to DB.
+) -> dict:
+    """Re-detect faces in each photo, match operator selection by face_id, extract embeddings.
 
-    For each photo:
-      - Decode image
-      - Count faces using enrollment-grade threshold (0.50 det_score)
-      - Extract embedding via enroll_reference_embedding (enrollment_mode=True)
-      - Generate a thumbnail for inline preview
+    Then run cross-selection outlier detection — if any selected face is dissimilar to the
+    others (mean cosine sim < threshold), flag it for operator review.
 
-    After all photos are processed, run cross-photo outlier detection:
-      - Compute pairwise cosine similarity between all accepted embeddings
-      - Flag any photo whose mean similarity to all others is below outlier_threshold
-
-    Returns a list of PhotoValidation results (one per input file, same order).
-    Outlier detection only fires when >=3 photos are accepted.
+    Returns a dict matching BatchConfirmOut. Embeddings are returned in `selections[*]["_embedding"]`
+    so the caller can persist them (the response model strips that field).
     """
     import cv2
     import numpy as np
 
-    results: list[PhotoValidation] = []
+    sel_by_photo: dict[int, dict] = {s["photo_index"]: s for s in selections}
+    enriched: list[dict] = []
 
     for idx, (file_bytes, filename) in enumerate(zip(files, filenames)):
+        if idx not in sel_by_photo:
+            continue
+        sel = sel_by_photo[idx]
+        image_hash = _hash_bytes(file_bytes)
+        if image_hash != sel.get("image_hash"):
+            enriched.append({
+                "photo_index": idx, "face_id": sel["face_id"],
+                "pose_bucket": "unknown", "quality_score": None,
+                "is_outlier": False, "mean_similarity": None,
+                "_error": "image_hash_mismatch — re-upload this photo",
+                "_embedding": None,
+            })
+            continue
+
         buf = np.frombuffer(file_bytes, dtype=np.uint8)
         image = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         if image is None:
-            results.append(PhotoValidation(
-                index=idx, filename=filename, status="rejected",
-                reason="invalid or corrupted image file",
-                embedding=None, thumbnail_b64=None,
-            ))
+            enriched.append({
+                "photo_index": idx, "face_id": sel["face_id"],
+                "pose_bucket": "unknown", "quality_score": None,
+                "is_outlier": False, "mean_similarity": None,
+                "_error": "invalid image bytes", "_embedding": None,
+            })
             continue
 
-        thumbnail = _make_thumbnail_b64(image)
+        # Re-detect (stateless — we don't trust client-side bbox)
+        detected = pipeline.detect_enrollment_faces(image, min_det_score=0.50)
+        target_face = None
+        for face in detected:
+            bb = face.bbox
+            fid = _compute_face_id(image_hash, (float(bb.x1), float(bb.y1), float(bb.x2), float(bb.y2)))
+            if fid == sel["face_id"]:
+                target_face = face
+                break
+
+        if target_face is None:
+            enriched.append({
+                "photo_index": idx, "face_id": sel["face_id"],
+                "pose_bucket": "unknown", "quality_score": None,
+                "is_outlier": False, "mean_similarity": None,
+                "_error": "selected face no longer detectable — re-pick", "_embedding": None,
+            })
+            continue
 
         try:
-            n = pipeline.count_enrollment_faces(image, min_det_score=0.65)
-            if n == 0:
-                results.append(PhotoValidation(
-                    index=idx, filename=filename, status="rejected",
-                    reason="no face detected",
-                    embedding=None, thumbnail_b64=thumbnail,
-                ))
-                continue
-            if n > 1:
-                results.append(PhotoValidation(
-                    index=idx, filename=filename, status="rejected",
-                    reason=f"multiple faces detected ({n}) — crop to one face per photo",
-                    embedding=None, thumbnail_b64=thumbnail,
-                ))
-                continue
+            embedding = pipeline.embed_enrollment_face(image, target_face)
+            embedding = embedding.astype(np.float32)
+            norm = float(np.linalg.norm(embedding))
+            if norm > 1e-6:
+                embedding = embedding / norm
+        except Exception as exc:
+            enriched.append({
+                "photo_index": idx, "face_id": sel["face_id"],
+                "pose_bucket": "unknown", "quality_score": None,
+                "is_outlier": False, "mean_similarity": None,
+                "_error": f"embedding extraction failed: {exc}", "_embedding": None,
+            })
+            continue
 
-            embedding = pipeline.enroll_reference_embedding(image, enrollment_mode=True)
-            results.append(PhotoValidation(
-                index=idx, filename=filename, status="ok",
-                reason=None, embedding=embedding, thumbnail_b64=thumbnail,
-            ))
-        except ValueError as exc:
-            results.append(PhotoValidation(
-                index=idx, filename=filename, status="rejected",
-                reason=str(exc).replace("Face quality rejected for enrollment: ", ""),
-                embedding=None, thumbnail_b64=thumbnail,
-            ))
+        # Pose + quality
+        try:
+            from ecoface_lite.ai_engine.geometry import compute_face_geometry
+            from ecoface_lite.ai_engine.pose_estimator import classify_pose_bucket
+            pose = classify_pose_bucket(target_face.landmarks, target_face.bbox) if target_face.landmarks is not None else None
+            pose_value = pose.value if pose is not None else "unknown"
+            geom = compute_face_geometry(target_face, image.shape)
+            w_ratio = min(1.0, geom.width / 200.0)
+            h_ratio = min(1.0, geom.height / 200.0)
+            quality = float(min(1.0, 0.4 * target_face.det_score + 0.3 * w_ratio + 0.3 * h_ratio))
+        except Exception:
+            pose_value = "unknown"
+            quality = float(target_face.det_score)
 
-    # Outlier detection — only meaningful with >=3 accepted photos
-    ok_results = [r for r in results if r.status == "ok" and r.embedding is not None]
-    if len(ok_results) >= 3:
-        embeddings = np.stack([r.embedding.astype(np.float32) for r in ok_results])
-        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-        embeddings = embeddings / np.maximum(norms, 1e-6)
-        sim_matrix = embeddings @ embeddings.T
-        n_ok = len(ok_results)
-        for i, r in enumerate(ok_results):
-            others = [sim_matrix[i, j] for j in range(n_ok) if j != i]
+        enriched.append({
+            "photo_index": idx, "face_id": sel["face_id"],
+            "pose_bucket": pose_value, "quality_score": quality,
+            "is_outlier": False, "mean_similarity": None,
+            "_embedding": embedding, "_error": None,
+        })
+
+    # Outlier check — only when >=3 successful selections
+    successful = [e for e in enriched if e["_embedding"] is not None]
+    outlier_indices: list[int] = []
+    if len(successful) >= 3:
+        embs = np.stack([e["_embedding"] for e in successful])
+        sim_matrix = embs @ embs.T
+        n = len(successful)
+        for i, entry in enumerate(successful):
+            others = [sim_matrix[i, j] for j in range(n) if j != i]
             mean_sim = float(np.mean(others)) if others else 1.0
+            entry["mean_similarity"] = mean_sim
             if mean_sim < outlier_threshold:
-                r.is_outlier = True
-                r.status = "outlier"
-                r.reason = (
-                    f"identity mismatch — this photo looks different from the others "
-                    f"(similarity {mean_sim:.2f} vs threshold {outlier_threshold:.2f})"
-                )
+                entry["is_outlier"] = True
+                outlier_indices.append(entry["photo_index"])
 
-    return results
+    return {
+        "selections": enriched,
+        "outlier_indices": outlier_indices,
+        "all_similar": len(outlier_indices) == 0,
+    }
+
+
+async def create_person_from_selections(
+    session: AsyncSession,
+    settings: "Settings",
+    *,
+    display_name: str,
+    notes: str | None,
+    files: list[bytes],
+    filenames: list[str],
+    confirmed: dict,
+    skip_conflict_check: bool = False,
+) -> tuple["Person", int]:
+    """Create a Person and persist N FaceEmbedding rows (one per confirmed selection).
+
+    Returns (person, embeddings_written).
+    Stores the FIRST file as `source_image_path` for the gallery display.
+    """
+    import json
+    import numpy as np
+    import cv2  # noqa: F401  — needed by called helpers via Settings
+
+    # Filter successful selections
+    successful = [s for s in confirmed["selections"] if s.get("_embedding") is not None]
+    if not successful:
+        raise ValueError("no valid face selections to enroll")
+
+    # Conflict check: use the highest-quality embedding as the conflict probe
+    successful.sort(key=lambda s: s.get("quality_score") or 0.0, reverse=True)
+    primary = successful[0]
+    primary_embedding = primary["_embedding"]
+
+    if not skip_conflict_check:
+        await _check_identity_conflict(session, primary_embedding, settings.enrollment_conflict_threshold)
+
+    # Save source image (first file) to uploads
+    uploads = settings.resolved_uploads_dir()
+    uploads.mkdir(parents=True, exist_ok=True)
+    first_filename = filenames[0]
+    first_bytes = files[0]
+    digest = sha256_hex(first_bytes)
+    ext = Path(first_filename).suffix.lower() or ".jpg"
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    stored_path = uploads / stored_name
+    stored_path.write_bytes(first_bytes)
+    rel_upload = str(Path("data/uploads") / stored_name)
+
+    person = Person(
+        display_name=display_name,
+        notes=notes,
+        source_image_path=rel_upload,
+        source_image_hash=digest,
+    )
+    session.add(person)
+    await session.flush()
+
+    # Persist all extra photos too so the gallery can show them
+    extra_paths: list[str] = []
+    for i, (b, fn) in enumerate(zip(files, filenames)):
+        if i == 0:
+            continue
+        ext_i = Path(fn).suffix.lower() or ".jpg"
+        name_i = f"{uuid.uuid4().hex}{ext_i}"
+        (uploads / name_i).write_bytes(b)
+        extra_paths.append(str(Path("data/uploads") / name_i))
+    if extra_paths:
+        person.extra_photo_paths = json.dumps(extra_paths)
+
+    # Write embeddings
+    written = 0
+    for sel in successful:
+        emb_bytes = sel["_embedding"].astype(np.float32).tobytes()
+        face_row = FaceEmbedding(
+            person_id=person.id,
+            ingest_sha256=digest if sel["photo_index"] == 0 else None,
+            embedding=emb_bytes,
+            embedding_dim=int(sel["_embedding"].shape[0]),
+            model_name=settings.insightface_model_name,
+            pose_bucket=sel.get("pose_bucket") or "unknown",
+            quality_score=sel.get("quality_score"),
+        )
+        session.add(face_row)
+        written += 1
+
+    await session.flush()
+    await session.refresh(person)
+    logger.info("Multi-face enrolled person id=%s name=%s embeddings=%d", person.id, display_name, written)
+    return person, written

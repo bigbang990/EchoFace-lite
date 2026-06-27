@@ -125,23 +125,48 @@ class PersonEnrollMultiOut(BaseModel):
     rejection_reasons: list[str] = []
 
 
-class PhotoValidationResult(BaseModel):
-    """Per-photo result from POST /persons/validate-batch."""
-    index: int
+class DetectedFaceOut(BaseModel):
+    """A single face detected inside an enrollment photo."""
+    face_id: str                 # content-addressable id: sha256(image_hash + bbox)[:16]
+    bbox: list[float]            # [x1, y1, x2, y2] in original-image coords (after preprocessor resize)
+    det_score: float
+    pose_bucket: str             # frontal | left_profile | right_profile | partial | unknown
+    quality_score: float | None
+    thumbnail_b64: str           # face crop as base64 JPEG, ~120px wide
+    is_recommended: bool         # True if this is the largest/highest-quality face in the photo
+
+
+class PhotoDetectionResult(BaseModel):
+    """Result of detecting faces in a single uploaded photo."""
+    photo_index: int
     filename: str
-    status: str          # "ok" | "rejected" | "outlier"
+    image_hash: str              # sha256 of original bytes — used by confirm-batch to locate this photo
+    status: str                  # "ok" (>=1 face) | "no_face" | "invalid"
     reason: str | None = None
-    is_outlier: bool = False
-    thumbnail_b64: str | None = None  # base64 JPEG crop, 120px wide, for inline preview
+    photo_thumbnail_b64: str | None = None  # whole-photo thumbnail for context
+    faces: list[DetectedFaceOut] = []
 
 
-class BatchValidationOut(BaseModel):
-    """POST /persons/validate-batch — pre-flight check before person creation."""
-    photos: list[PhotoValidationResult]
-    valid_count: int
-    rejected_count: int
+class BatchDetectionOut(BaseModel):
+    """POST /persons/detect-faces — multi-face detection across multiple photos."""
+    photos: list[PhotoDetectionResult]
+    total_photos: int
+    photos_with_faces: int
+    photos_with_no_face: int
+
+
+class FaceSelection(BaseModel):
+    """One operator-confirmed subject selection per photo."""
+    photo_index: int
+    image_hash: str              # echoed back from detect-faces response — used to match image bytes
+    face_id: str                 # which detected face is the subject
+
+
+class BatchConfirmOut(BaseModel):
+    """Result of cross-photo identity outlier check on operator-selected subject faces."""
+    selections: list[dict]       # [{photo_index, face_id, pose_bucket, quality_score, is_outlier, mean_similarity}]
     outlier_indices: list[int] = []
-    can_proceed: bool
+    all_similar: bool            # True if all selections passed outlier check (or only 1-2 selections, where outlier check doesn't apply)
 
 
 class PersonPhotoAddRequest(BaseModel):

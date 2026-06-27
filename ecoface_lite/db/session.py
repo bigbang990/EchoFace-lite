@@ -84,6 +84,8 @@ async def _sqlite_apply_schema_patches() -> None:
             "ALTER TABLE incidents ADD COLUMN is_paused BOOLEAN NOT NULL DEFAULT 0",
             "CREATE TABLE IF NOT EXISTS incident_persons (incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE, PRIMARY KEY (incident_id, person_id))",
             "ALTER TABLE persons ADD COLUMN extra_photo_paths TEXT",
+            "ALTER TABLE face_embeddings ADD COLUMN pose_bucket VARCHAR(32)",
+            "ALTER TABLE face_embeddings ADD COLUMN quality_score FLOAT",
             # Phase 8: alerts table + sighting session fields
             "CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id INTEGER NOT NULL REFERENCES incidents(id) ON DELETE CASCADE, person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE, camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL, zone_id VARCHAR(128), status VARCHAR(32) NOT NULL DEFAULT 'open', level VARCHAR(32) NOT NULL DEFAULT 'sighting', source VARCHAR(32) NOT NULL DEFAULT 'live', first_seen_at DATETIME NOT NULL, last_seen_at DATETIME NOT NULL, sighting_count INTEGER NOT NULL DEFAULT 1, created_at DATETIME DEFAULT (CURRENT_TIMESTAMP), updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP))",
             "ALTER TABLE sightings ADD COLUMN alert_id INTEGER REFERENCES alerts(id) ON DELETE SET NULL",

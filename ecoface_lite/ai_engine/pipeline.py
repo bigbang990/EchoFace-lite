@@ -267,19 +267,41 @@ class RecognitionPipeline:
             raise ValueError(f"Face quality rejected for enrollment: {quality.reason}")
         return self._embedder.embed_face(prepared.bgr, best)
 
-    def count_enrollment_faces(self, frame_bgr: np.ndarray, min_det_score: float = 0.65) -> int:
+    def count_enrollment_faces(self, frame_bgr: np.ndarray, min_det_score: float = 0.50) -> int:
         """Count detectable faces in an image for pre-enrollment validation.
 
-        Call before enroll_reference_embedding to gate 0-face and multi-face inputs.
-        Does not alter any internal state.
+        Returns count of faces with det_score >= min_det_score.
+        Kept for backward compatibility; new code should call detect_enrollment_faces.
+        """
+        return len(self.detect_enrollment_faces(frame_bgr, min_det_score=min_det_score))
 
-        Uses a higher det_score floor than video (0.50 vs 0.35) so noise detections
-        from background clutter or large-face scale artefacts do not produce false
-        "multiple faces detected" rejections on genuine single-person portrait photos.
+    def detect_enrollment_faces(
+        self,
+        frame_bgr: np.ndarray,
+        *,
+        min_det_score: float = 0.50,
+    ) -> list:
+        """Detect ALL faces in an enrollment image, returning the DetectedFace list.
+
+        Filters by det_score >= min_det_score to drop low-confidence noise detections.
+        Caller is responsible for selecting which face is the subject.
         """
         prepared = self._preprocessor.process(frame_bgr)
         faces = self._detector.detect(prepared.bgr)
-        return sum(1 for f in faces if f.det_score >= min_det_score)
+        return [f for f in faces if f.det_score >= min_det_score]
+
+    def embed_enrollment_face(
+        self,
+        frame_bgr: np.ndarray,
+        face,
+    ) -> "np.ndarray":
+        """Extract ArcFace embedding for a single pre-detected face.
+
+        Bypasses quality gates — caller has already selected this face.
+        Use ONLY for enrollment, never for video processing.
+        """
+        prepared = self._preprocessor.process(frame_bgr)
+        return self._embedder.embed_face(prepared.bgr, face)
 
     def process_frame(
         self,

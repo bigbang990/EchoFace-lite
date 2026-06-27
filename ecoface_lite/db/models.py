@@ -60,6 +60,10 @@ class FaceEmbedding(Base):
     embedding: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     embedding_dim: Mapped[int] = mapped_column(Integer, nullable=False)
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Pose bucket of the face when enrolled: frontal | left_profile | right_profile | partial
+    pose_bucket: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # Quality score 0.0-1.0 from face_quality_score at enrollment time
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     person: Mapped[Person] = relationship(back_populates="embeddings")
