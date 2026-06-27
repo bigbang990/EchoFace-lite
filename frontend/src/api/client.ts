@@ -5,19 +5,22 @@ export interface ApiClient {
   del: (path: string) => Promise<void>
 }
 
-export function createApiClient(baseUrl: string): ApiClient {
+export function createApiClient(baseUrl: string, timeoutMs = 8_000): ApiClient {
   const base = baseUrl.trim().replace(/\/$/, '')
 
   async function req<T>(path: string, init?: RequestInit): Promise<T> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     const res = await fetch(`${base}${path}`, {
       ...init,
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'EchoFace-Dashboard/1.0',
         'ngrok-skip-browser-warning': '1',
         ...(init?.headers ?? {}),
       },
-    })
+    }).finally(() => clearTimeout(timer))
     if (!res.ok) {
       const msg = await res.text().catch(() => res.statusText)
       throw new Error(`${res.status}: ${msg}`)

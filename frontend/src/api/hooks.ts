@@ -659,7 +659,7 @@ export function useHealthCheck(url: string) {
   const check = useCallback(async () => {
     setStatus('checking')
     try {
-      await createApiClient(url).get('/health')
+      await createApiClient(url, 4_000).get('/health')
       setStatus('online')
     } catch {
       setStatus('offline')
