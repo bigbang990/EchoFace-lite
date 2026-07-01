@@ -87,6 +87,10 @@ class LiveCameraSession:
         self._pipeline = pipeline
 
         self.latest_frame: "np.ndarray | None" = None
+        # Boxes rendered onto the exact frame inference ran on. Published by the AI
+        # thread, read by the stream endpoint — kept separate from latest_frame so
+        # overlays are never composited onto a newer, moved-on capture.
+        self._annotated_frame: "np.ndarray | None" = None
         self._frame_lock = threading.Lock()
         self._frame_captured_at: float | None = None
 
@@ -105,6 +109,7 @@ class LiveCameraSession:
 
         self._gallery: list[tuple[int, "np.ndarray"]] = []
         self._frame_index = 0
+        self._last_snapshot_by_person: dict[int, str] = {}  # reused on skip frames
 
         # debug metrics (G-adjacent, required by /debug/stream-metrics)
         self.stream_fps = _RollingRate()
@@ -195,6 +200,17 @@ class LiveCameraSession:
             with metrics.timer("live_session_inference_duration"):
                 matches = self._pipeline.process_frame(frame, frame_index, self._gallery)
             self.update_overlay(matches)
+            # Render boxes onto the exact frame inference ran on and publish that
+            # snapshot. The capture thread runs far ahead of AI inference for fast
+            # sources (e.g. video-file "cameras"), so drawing the latest overlay onto
+            # the freshest captured frame lands boxes where subjects *used to be* —
+            # the box-drift glitch. Annotating the inference frame keeps boxes aligned.
+            annotated = frame.copy()
+            with self._overlay_lock:
+                overlay = dict(self.overlay_state)
+            self._draw_overlay(annotated, overlay)
+            with self._frame_lock:
+                self._annotated_frame = annotated
             self.ai_fps.tick()
             self._persist_alerts(matches, frame, frame_index)
         except Exception:
@@ -234,11 +250,16 @@ class LiveCameraSession:
 
     def get_annotated_frame(self) -> "np.ndarray | None":
         with self._frame_lock:
+            if self._annotated_frame is not None:
+                return self._annotated_frame.copy()
+            # No inference has completed yet — show the raw frame so the viewer sees
+            # video immediately instead of a blank tile.
             if self.latest_frame is None:
                 return None
-            frame = self.latest_frame.copy()
-        with self._overlay_lock:
-            overlay = dict(self.overlay_state)
+            return self.latest_frame.copy()
+
+    @staticmethod
+    def _draw_overlay(frame: "np.ndarray", overlay: dict[int, dict[str, Any]]) -> None:
         for item in overlay.values():
             x1, y1, x2, y2 = item["bbox"]
             color = _OVERLAY_COLORS.get(item["status"], (0, 0, 220))
@@ -253,7 +274,6 @@ class LiveCameraSession:
                 frame, label, (x1, max(15, y1 - 8)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA,
             )
-        return frame
 
     # ── debug metrics ──────────────────────────────────────────────────
 
@@ -307,18 +327,25 @@ class LiveCameraSession:
             for m in alertable:
                 if m.face is None:
                     continue
-                name = f"{uuid.uuid4().hex}.jpg"
-                snap_path = settings.resolved_snapshots_dir() / name
-                ih, iw = frame.shape[:2]
-                x1 = max(0, int(m.face.bbox.x1))
-                y1 = max(0, int(m.face.bbox.y1))
-                x2 = min(iw, int(m.face.bbox.x2))
-                y2 = min(ih, int(m.face.bbox.y2))
-                px = max(4, int((x2 - x1) * 0.15))
-                py = max(4, int((y2 - y1) * 0.15))
-                crop = frame[max(0, y1 - py):min(ih, y2 + py), max(0, x1 - px):min(iw, x2 + px)]
-                cv2.imwrite(str(snap_path), crop)
-                rel_snap = str(Path("data/snapshots") / name)
+                # Reuse the last detection-origin crop on skip frames — a predicted
+                # track box lags the moving face and produces half-face crops.
+                cached_snap = self._last_snapshot_by_person.get(m.person_id)
+                if m.from_detection or cached_snap is None:
+                    name = f"{uuid.uuid4().hex}.jpg"
+                    snap_path = settings.resolved_snapshots_dir() / name
+                    ih, iw = frame.shape[:2]
+                    x1 = max(0, int(m.face.bbox.x1))
+                    y1 = max(0, int(m.face.bbox.y1))
+                    x2 = min(iw, int(m.face.bbox.x2))
+                    y2 = min(ih, int(m.face.bbox.y2))
+                    px = max(4, int((x2 - x1) * 0.15))
+                    py = max(4, int((y2 - y1) * 0.15))
+                    crop = frame[max(0, y1 - py):min(ih, y2 + py), max(0, x1 - px):min(iw, x2 + px)]
+                    cv2.imwrite(str(snap_path), crop)
+                    rel_snap = str(Path("data/snapshots") / name)
+                    self._last_snapshot_by_person[m.person_id] = rel_snap
+                else:
+                    rel_snap = cached_snap
 
                 det = DetectionEvent(
                     person_id=m.person_id,

@@ -1,0 +1,4 @@
+# Generated stress-run artifacts (keep code + hand-authored baselines only)
+overlay_exports/*.mp4
+logs/*.jsonl
+reports/report_*.json

@@ -51,6 +51,36 @@ def _bbox_area(bbox: tuple[float, float, float, float]) -> float:
     return max(1.0, (x2 - x1) * (y2 - y1))
 
 
+# Per-skip-frame decay applied to the predicted velocity so that long detector
+# gaps settle toward rest instead of extrapolating indefinitely. A face at 25fps
+# never moves at a self-reinforced runaway velocity; decaying keeps slow real
+# motion smooth while guaranteeing predictions cannot march off-frame.
+_PREDICTION_VELOCITY_DECAY = 0.9
+
+
+def _clamp_bbox_within_frame(
+    bbox: tuple[float, float, float, float],
+    frame_shape: tuple[int, ...],
+) -> tuple[float, float, float, float]:
+    """Keep a predicted bbox inside the visible frame, preserving its size.
+
+    Shifts the box back into bounds rather than clipping edges, so the predicted
+    box never collapses to a degenerate sliver at the frame border.
+    """
+    h, w = int(frame_shape[0]), int(frame_shape[1])
+    x1, y1, x2, y2 = bbox
+    bw, bh = x2 - x1, y2 - y1
+    if x1 < 0:
+        x1, x2 = 0.0, bw
+    elif x2 > w:
+        x1, x2 = w - bw, float(w)
+    if y1 < 0:
+        y1, y2 = 0.0, bh
+    elif y2 > h:
+        y1, y2 = h - bh, float(h)
+    return (x1, y1, x2, y2)
+
+
 @dataclass
 class _PendingCandidate:
     face: DetectedFace
@@ -421,10 +451,20 @@ class FaceTrackManager:
             metrics.observe("avg_track_quality", sum(t.track_quality_score for t in valid_tracks) / len(valid_tracks))
         return results
 
-    def propagate(self, frame_index: int, detector_interval: int = 1) -> list[TrackedFace]:
+    def propagate(
+        self,
+        frame_index: int,
+        detector_interval: int = 1,
+        frame_shape: tuple[int, ...] | None = None,
+    ) -> list[TrackedFace]:
         """Predict track positions on frames where the detector is skipped."""
         self._expire_removed()
         self._check_congestion()
+        # Anti-teleport bound: cap the per-frame predicted displacement to a
+        # physically plausible face motion. Without this, a self-reinforced
+        # velocity marches the predicted box off-frame during detector gaps
+        # (coordinate teleportation) — the primary skip-frame regression risk.
+        max_disp = float(self._settings.motion_max_frame_displacement_px)
         propagated: list[TrackedFace] = []
         for track in list(self._tracks.values()):
             if not track.is_active or track.state == TrackLifecycleState.REMOVED.value:
@@ -433,17 +473,30 @@ class FaceTrackManager:
                 continue
             velocity = track.metadata.get("velocity", (0.0, 0.0))
             x1, y1, x2, y2 = track.bbox
-            
+
             dx, dy = velocity
+            speed = (dx * dx + dy * dy) ** 0.5
+            if max_disp > 0.0 and speed > max_disp:
+                scale = max_disp / speed
+                dx, dy = dx * scale, dy * scale
             track.bbox = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
+            if frame_shape is not None:
+                track.bbox = _clamp_bbox_within_frame(track.bbox, frame_shape)
             metrics.observe("recovery_prediction_distance", (dx*dx + dy*dy)**0.5)
-            
+
             track.center_point = _bbox_center(track.bbox)
             track.face_area = _bbox_area(track.bbox)
             track.last_seen_frame = frame_index
             track.visibility_age = frame_index - track.first_seen_frame + 1
             motion = self._motion.update(track.track_id, track.bbox, frame_index)
-            track.metadata["velocity"] = motion.velocity
+            # Decay the predicted velocity instead of re-affirming it from the
+            # synthetic (just-moved) box. Reusing motion.velocity here made the
+            # prediction self-reinforcing and unbounded; decaying lets detector
+            # gaps settle so a single bad estimate cannot run away.
+            track.metadata["velocity"] = (
+                dx * _PREDICTION_VELOCITY_DECAY,
+                dy * _PREDICTION_VELOCITY_DECAY,
+            )
             track.metadata["motion_score"] = motion.motion_stability_score
             
             # Phase 2: Partial continuity accumulation during skipped frames

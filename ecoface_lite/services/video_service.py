@@ -246,6 +246,7 @@ async def process_prerecorded_video(
     job_diagnostics = VideoJobDiagnostics(job_id=job_id)
     preview_writer = VideoPreviewWriter(settings, job_id)
     last_sighting_frame_by_person: dict[int, int] = {}  # controls sighting write frequency
+    last_snapshot_by_person: dict[int, str] = {}  # last detection-origin crop, reused on skip frames
     pipeline.reset_session()
     started_at = perf_counter()
     metrics.observe("job_setup_duration_ms", (started_at - _setup_t0) * 1000.0)
@@ -316,34 +317,43 @@ async def process_prerecorded_video(
                 continue
             last_sighting_frame_by_person[m.person_id] = packet.index
 
-            # Save face crop snapshot
+            # Save face crop snapshot — but only cut a NEW crop from a real detection
+            # box. On detector-skip frames m.face.bbox is a Kalman-predicted box that
+            # lags the moving face and yields half-face crops, so reuse this person's
+            # most recent detection-origin snapshot when this frame is predicted.
             from ecoface_lite.ai_engine.pose_estimator import classify_pose_bucket
-            import numpy as _np
-            name = f"{uuid.uuid4().hex}.jpg"
-            snap_path = settings.resolved_snapshots_dir() / name
-            _ih, _iw = inference_frame.shape[:2]
-            _x1 = max(0, int(m.face.bbox.x1))
-            _y1 = max(0, int(m.face.bbox.y1))
-            _x2 = min(_iw, int(m.face.bbox.x2))
-            _y2 = min(_ih, int(m.face.bbox.y2))
-            _px = max(4, int((_x2 - _x1) * 0.15))
-            _py = max(4, int((_y2 - _y1) * 0.15))
-            _face_crop = inference_frame[
-                max(0, _y1 - _py):min(_ih, _y2 + _py),
-                max(0, _x1 - _px):min(_iw, _x2 + _px),
-            ]
-            # Compute quality fields from the crop
-            _gray = cv2.cvtColor(_face_crop, cv2.COLOR_BGR2GRAY) if _face_crop.size > 0 else None
-            _blur_score = float(cv2.Laplacian(_gray, cv2.CV_64F).var()) if _gray is not None else None
-            _pose = classify_pose_bucket(m.face.landmarks, m.face.bbox) if m.face.landmarks is not None else None
-            _pose_bucket = _pose.name if _pose is not None else None
-            # Upscale crops narrower than ArcFace's 112px minimum for readable display
-            _ch, _cw = _face_crop.shape[:2]
-            if _cw < 112 or _ch < 112:
-                _cscale = 112 / min(_cw, _ch)
-                _face_crop = cv2.resize(_face_crop, (int(_cw * _cscale), int(_ch * _cscale)), interpolation=cv2.INTER_CUBIC)
-            cv2.imwrite(str(snap_path), _face_crop)
-            rel_snap = str(Path("data/snapshots") / name)
+            _blur_score = None
+            _pose_bucket = None
+            _cached_snap = last_snapshot_by_person.get(m.person_id)
+            if m.from_detection or _cached_snap is None:
+                name = f"{uuid.uuid4().hex}.jpg"
+                snap_path = settings.resolved_snapshots_dir() / name
+                _ih, _iw = inference_frame.shape[:2]
+                _x1 = max(0, int(m.face.bbox.x1))
+                _y1 = max(0, int(m.face.bbox.y1))
+                _x2 = min(_iw, int(m.face.bbox.x2))
+                _y2 = min(_ih, int(m.face.bbox.y2))
+                _px = max(4, int((_x2 - _x1) * 0.15))
+                _py = max(4, int((_y2 - _y1) * 0.15))
+                _face_crop = inference_frame[
+                    max(0, _y1 - _py):min(_ih, _y2 + _py),
+                    max(0, _x1 - _px):min(_iw, _x2 + _px),
+                ]
+                # Compute quality fields from the crop
+                _gray = cv2.cvtColor(_face_crop, cv2.COLOR_BGR2GRAY) if _face_crop.size > 0 else None
+                _blur_score = float(cv2.Laplacian(_gray, cv2.CV_64F).var()) if _gray is not None else None
+                _pose = classify_pose_bucket(m.face.landmarks, m.face.bbox) if m.face.landmarks is not None else None
+                _pose_bucket = _pose.name if _pose is not None else None
+                # Upscale crops narrower than ArcFace's 112px minimum for readable display
+                _ch, _cw = _face_crop.shape[:2]
+                if _cw < 112 or _ch < 112:
+                    _cscale = 112 / min(_cw, _ch)
+                    _face_crop = cv2.resize(_face_crop, (int(_cw * _cscale), int(_ch * _cscale)), interpolation=cv2.INTER_CUBIC)
+                cv2.imwrite(str(snap_path), _face_crop)
+                rel_snap = str(Path("data/snapshots") / name)
+                last_snapshot_by_person[m.person_id] = rel_snap
+            else:
+                rel_snap = _cached_snap
 
             # Audit log: one DetectionEvent per written frame (source of truth for raw detections)
             det = DetectionEvent(

@@ -32,6 +32,11 @@ class FrameMatch:
     threshold: float
     stable: bool = False
     should_alert: bool = False
+    # True when this match's bbox comes from a fresh detector run this frame; False
+    # when it comes from a propagated (Kalman-predicted) track box on a skip frame.
+    # Consumers save snapshot crops only from detection-origin matches, since a
+    # predicted box lags the face during motion and yields half-face crops.
+    from_detection: bool = False
     track_id: int | None = None
     reason: str | None = None
     face: DetectedFace | None = None

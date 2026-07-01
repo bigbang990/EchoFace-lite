@@ -49,6 +49,12 @@ from ecoface_lite.core.validator import FaceValidator, ValidationTier, Validatio
 logger = get_logger(__name__)
 _PLATFORM = _detect_platform()
 
+# Max consecutive missed detection cycles for which a predicted (detector-skip) track
+# is still trusted for overlay/alert emission. Beyond this the box is pure extrapolation
+# and drifts off the real face (torso "ghost" artifact), so it is suppressed from output.
+# Detection recency only — does not change tracker identity/lifecycle state.
+_MAX_GHOST_EMIT_LOST_FRAMES = 1
+
 
 class LegacyDetectorWrapper(BaseDetector):
     """Minimal wrapper for legacy detectors that don't implement BaseDetector."""
@@ -956,11 +962,23 @@ class RecognitionPipeline:
         diagnostics.record("tracking", "detector_skipped_reused_tracks", frame_index=frame_index)
 
         matches: list[FrameMatch] = []
-        tracks = self._track_manager.propagate(frame_index, detector_interval=self._dynamic_detector_interval)
+        tracks = self._track_manager.propagate(
+            frame_index,
+            detector_interval=self._dynamic_detector_interval,
+            frame_shape=prepared.bgr.shape,
+        )
         for track in tracks:
             if track.state not in ACTIVE_RECOGNITION_STATES:
                 continue
             if track.confirmation_hits < self._tracking_cfg.confirm_frames:
+                continue
+            # Ghost suppression: a predicted track that has missed 2+ consecutive
+            # detection cycles is being extrapolated, not observed. Emitting it draws
+            # overlay boxes (and cached-recognition alerts) on a stale, drifted position
+            # — the "ghost box on the torso" artifact. Anchor output to recently-seen
+            # tracks; lost_frames == 0/1 (detected this or last cycle) still emit.
+            if track.lost_frames > _MAX_GHOST_EMIT_LOST_FRAMES:
+                metrics.increment("ghost_track_emissions_suppressed")
                 continue
             face = self._track_manager.to_detected_face(track)
             match = self._process_tracked_face(
@@ -1303,6 +1321,7 @@ class RecognitionPipeline:
             threshold=self._settings.match_confidence_threshold,
             stable=recognition.stable,
             should_alert=event.should_emit,
+            from_detection=from_detection,
             track_id=recognition.track_id,
             reason=event.reason if not event.should_emit else "accepted",
             face=_scale_face_for_output(face, output_scale),
@@ -1444,6 +1463,7 @@ class RecognitionPipeline:
             threshold=threshold,
             stable=recognition.stable,
             should_alert=event.should_emit,
+            from_detection=from_detection,
             track_id=recognition.track_id,
             reason=event.reason if not event.should_emit else "accepted",
             face=_scale_face_for_output(face, output_scale),
