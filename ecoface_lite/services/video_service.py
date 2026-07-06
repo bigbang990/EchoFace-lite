@@ -175,6 +175,39 @@ async def save_uploaded_video(upload: UploadFile, settings: Settings) -> str:
     return name
 
 
+def _extract_face_crop(inference_frame, bbox, landmarks):
+    """Cut a padded, display-ready face crop from ``inference_frame`` for ``bbox``.
+
+    Returns ``(crop_bgr, blur_score, pose_bucket)`` or ``(None, None, None)`` when the
+    bbox falls outside the frame. Used both to cache detection-frame crops and as the
+    per-alert fallback, so the two paths produce identical crops.
+    """
+    import cv2
+
+    from ecoface_lite.ai_engine.pose_estimator import classify_pose_bucket
+
+    ih, iw = inference_frame.shape[:2]
+    x1 = max(0, int(bbox.x1))
+    y1 = max(0, int(bbox.y1))
+    x2 = min(iw, int(bbox.x2))
+    y2 = min(ih, int(bbox.y2))
+    px = max(4, int((x2 - x1) * 0.15))
+    py = max(4, int((y2 - y1) * 0.15))
+    crop = inference_frame[max(0, y1 - py):min(ih, y2 + py), max(0, x1 - px):min(iw, x2 + px)]
+    if crop.size == 0:
+        return None, None, None
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    blur_score = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    pose = classify_pose_bucket(landmarks, bbox) if landmarks is not None else None
+    pose_bucket = pose.name if pose is not None else None
+    # Upscale crops narrower than ArcFace's 112px minimum for readable display.
+    ch, cw = crop.shape[:2]
+    if cw < 112 or ch < 112:
+        cscale = 112 / min(cw, ch)
+        crop = cv2.resize(crop, (int(cw * cscale), int(ch * cscale)), interpolation=cv2.INTER_CUBIC)
+    return crop, blur_score, pose_bucket
+
+
 async def process_prerecorded_video(
     session: AsyncSession,
     pipeline: RecognitionPipeline,
@@ -246,7 +279,15 @@ async def process_prerecorded_video(
     job_diagnostics = VideoJobDiagnostics(job_id=job_id)
     preview_writer = VideoPreviewWriter(settings, job_id)
     last_sighting_frame_by_person: dict[int, int] = {}  # controls sighting write frequency
-    last_snapshot_by_person: dict[int, str] = {}  # last detection-origin crop, reused on skip frames
+    last_snapshot_by_person: dict[int, str] = {}  # last written crop path, final fallback
+    # Freshest DETECTION-frame crop (array, blur, pose). Alerts frequently fire on
+    # detector-skip frames whose predicted bbox has drifted off the face; the alert
+    # snapshot is cut from a cached detection crop instead of the drifted box.
+    # Keyed by TRACK (exact same face that alerted) and, as a cross-track fallback,
+    # by PERSON but only from high-confidence detections (a low-conf false match to
+    # the wrong face must not pollute the person's snapshot).
+    last_detection_crop_by_track: dict[object, tuple] = {}
+    last_detection_crop_by_person: dict[int, tuple] = {}
     pipeline.reset_session()
     started_at = perf_counter()
     metrics.observe("job_setup_duration_ms", (started_at - _setup_t0) * 1000.0)
@@ -278,6 +319,19 @@ async def process_prerecorded_video(
             job_diagnostics.observe_confidence(m.confidence)
             if m.person_id is None or m.confidence is None:
                 continue
+            # Cache the freshest detection-frame crop for this person BEFORE the alert
+            # gate, so it is available even when this person only ever alerts on skip
+            # frames (the common case that produced neck/half-face snapshots).
+            if m.from_detection and m.face is not None:
+                _dcrop, _dblur, _dpose = _extract_face_crop(
+                    inference_frame, m.face.bbox, m.face.landmarks
+                )
+                if _dcrop is not None:
+                    _entry = (_dcrop, _dblur, _dpose)
+                    if m.track_id is not None:
+                        last_detection_crop_by_track[m.track_id] = _entry
+                    if m.confidence is not None and m.confidence >= 0.70:
+                        last_detection_crop_by_person[m.person_id] = _entry
             if not m.should_alert:
                 continue
             # Gender gate — reject cross-gender false positives BEFORE dedupe window
@@ -317,43 +371,36 @@ async def process_prerecorded_video(
                 continue
             last_sighting_frame_by_person[m.person_id] = packet.index
 
-            # Save face crop snapshot — but only cut a NEW crop from a real detection
-            # box. On detector-skip frames m.face.bbox is a Kalman-predicted box that
-            # lags the moving face and yields half-face crops, so reuse this person's
-            # most recent detection-origin snapshot when this frame is predicted.
-            from ecoface_lite.ai_engine.pose_estimator import classify_pose_bucket
+            # Save face crop snapshot. Prefer this person's freshest DETECTION-frame
+            # crop (clean, on-face); only cut from the current bbox when no detection
+            # crop has been cached yet (avoids the drifted skip-frame neck/half-face).
             _blur_score = None
             _pose_bucket = None
-            _cached_snap = last_snapshot_by_person.get(m.person_id)
-            if m.from_detection or _cached_snap is None:
+            # Prefer the alerting track's own detection crop (exact same face); fall back
+            # to any high-confidence detection crop for this person; last resort is the
+            # current bbox (only reached before any detection crop exists for the track).
+            _cached_crop = None
+            if m.track_id is not None:
+                _cached_crop = last_detection_crop_by_track.get(m.track_id)
+            if _cached_crop is None:
+                _cached_crop = last_detection_crop_by_person.get(m.person_id)
+            if _cached_crop is not None:
+                _face_crop, _blur_score, _pose_bucket = _cached_crop
+            elif m.face is not None:
+                _face_crop, _blur_score, _pose_bucket = _extract_face_crop(
+                    inference_frame, m.face.bbox, m.face.landmarks
+                )
+            else:
+                _face_crop = None
+            if _face_crop is not None:
                 name = f"{uuid.uuid4().hex}.jpg"
                 snap_path = settings.resolved_snapshots_dir() / name
-                _ih, _iw = inference_frame.shape[:2]
-                _x1 = max(0, int(m.face.bbox.x1))
-                _y1 = max(0, int(m.face.bbox.y1))
-                _x2 = min(_iw, int(m.face.bbox.x2))
-                _y2 = min(_ih, int(m.face.bbox.y2))
-                _px = max(4, int((_x2 - _x1) * 0.15))
-                _py = max(4, int((_y2 - _y1) * 0.15))
-                _face_crop = inference_frame[
-                    max(0, _y1 - _py):min(_ih, _y2 + _py),
-                    max(0, _x1 - _px):min(_iw, _x2 + _px),
-                ]
-                # Compute quality fields from the crop
-                _gray = cv2.cvtColor(_face_crop, cv2.COLOR_BGR2GRAY) if _face_crop.size > 0 else None
-                _blur_score = float(cv2.Laplacian(_gray, cv2.CV_64F).var()) if _gray is not None else None
-                _pose = classify_pose_bucket(m.face.landmarks, m.face.bbox) if m.face.landmarks is not None else None
-                _pose_bucket = _pose.name if _pose is not None else None
-                # Upscale crops narrower than ArcFace's 112px minimum for readable display
-                _ch, _cw = _face_crop.shape[:2]
-                if _cw < 112 or _ch < 112:
-                    _cscale = 112 / min(_cw, _ch)
-                    _face_crop = cv2.resize(_face_crop, (int(_cw * _cscale), int(_ch * _cscale)), interpolation=cv2.INTER_CUBIC)
                 cv2.imwrite(str(snap_path), _face_crop)
                 rel_snap = str(Path("data/snapshots") / name)
                 last_snapshot_by_person[m.person_id] = rel_snap
             else:
-                rel_snap = _cached_snap
+                # No usable crop this frame — reuse the last written path if any.
+                rel_snap = last_snapshot_by_person.get(m.person_id)
 
             # Audit log: one DetectionEvent per written frame (source of truth for raw detections)
             det = DetectionEvent(
